@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.AspectRatio
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HighQuality
@@ -127,11 +128,14 @@ fun ReelsTopBar(
     showNichesAccountRow: Boolean = false,
     // Content-preferences entry (contract v20): enabled only while logged in.
     showContentPrefsAccountRow: Boolean = false,
+    // Blocked-tags entry (contract v20): enabled only while logged in.
+    showBlockedTagsAccountRow: Boolean = false,
     onLoginRequest: () -> Unit = {},
     onLogout: () -> Unit = {},
     onOpenCustomFeeds: () -> Unit = {},
     onOpenNiches: () -> Unit = {},
     onOpenContentPrefs: () -> Unit = {},
+    onOpenBlockedTags: () -> Unit = {},
     // Creator chrome (contract v18): Follow/Following action on the creator page. The
     // follows-screen entry moved into the library hub.
     showFollowToggle: Boolean = false,
@@ -424,11 +428,13 @@ fun ReelsTopBar(
                                 showFollowsRow = showFollowsAccountRow,
                                 showNichesRow = showNichesAccountRow,
                                 showContentPrefsRow = showContentPrefsAccountRow,
+                                showBlockedTagsRow = showBlockedTagsAccountRow,
                                 onLoginRequest = onLoginRequest,
                                 onLogout = onLogout,
                                 onOpenCustomFeeds = onOpenCustomFeeds,
                                 onOpenNiches = onOpenNiches,
                                 onOpenContentPrefs = onOpenContentPrefs,
+                                onOpenBlockedTags = onOpenBlockedTags,
                                 onOpenFollows = onOpenFollows,
                                 onDismiss = { openHub = HubMenu.NONE },
                             )
@@ -662,6 +668,7 @@ fun ReelsTopBar(
                     SearchSuggestionTabs(
                         suggestions = searchSuggestions,
                         onSuggestionClick = onSuggestionClick,
+                        onAllClick = { onSearch(textInput) },
                     )
                 }
             }
@@ -671,12 +678,14 @@ fun ReelsTopBar(
 
 /**
  * Categorized search hits (contract v20): site-like tabs (Niches/Creators/Tags) with preview
- * rows; empty sections are hidden. Taps route through [onSuggestionClick].
+ * rows; empty sections are hidden. The trailing "All" tab submits the flat gif search (the
+ * reel stream itself is the site's All tab). Taps route through [onSuggestionClick].
  */
 @Composable
 private fun SearchSuggestionTabs(
     suggestions: SearchSuggestions,
     onSuggestionClick: (SearchSuggestion) -> Unit,
+    onAllClick: () -> Unit,
 ) {
     val tabs = listOf(
         Pair(MR.strings.reels_search_tab_niches, suggestions.niches),
@@ -713,6 +722,20 @@ private fun SearchSuggestionTabs(
                     fontWeight = FontWeight.SemiBold,
                 )
             }
+        }
+        // Site parity: the All tab = the flat gif search (the reel stream below).
+        Box(
+            modifier = Modifier
+                .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                .clickable { onAllClick() }
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        ) {
+            Text(
+                text = stringResource(MR.strings.reels_search_tab_all),
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
     LazyColumn(
@@ -960,11 +983,13 @@ private fun ReelsAccountMenu(
     showFollowsRow: Boolean,
     showNichesRow: Boolean,
     showContentPrefsRow: Boolean,
+    showBlockedTagsRow: Boolean,
     onLoginRequest: () -> Unit,
     onLogout: () -> Unit,
     onOpenCustomFeeds: () -> Unit,
     onOpenNiches: () -> Unit,
     onOpenContentPrefs: () -> Unit,
+    onOpenBlockedTags: () -> Unit,
     onOpenFollows: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1030,6 +1055,18 @@ private fun ReelsAccountMenu(
                 ) {
                     if (isLoggedIn) {
                         onOpenContentPrefs()
+                        onDismiss()
+                    }
+                }
+            }
+            if (showBlockedTagsRow) {
+                HubMenuRow(
+                    icon = { HubMenuIcon(Icons.Outlined.Block) },
+                    label = stringResource(MR.strings.reels_blocked_tags),
+                    enabled = isLoggedIn,
+                ) {
+                    if (isLoggedIn) {
+                        onOpenBlockedTags()
                         onDismiss()
                     }
                 }

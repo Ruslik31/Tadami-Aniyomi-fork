@@ -7,6 +7,7 @@ import androidx.core.graphics.drawable.toBitmap
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.tachiyomi.animesource.AnimeBlockedTagsSource
 import eu.kanade.tachiyomi.animesource.AnimeCategorizedSearchSource
 import eu.kanade.tachiyomi.animesource.AnimeCategorySubscriptionSource
 import eu.kanade.tachiyomi.animesource.AnimeContentPreferencesSource
@@ -268,6 +269,7 @@ class ReelsFeedScreenModel(
             val webLoginCapable = rawSource is AnimeFeedWebLoginSource
             val browseCapable = rawSource is AnimeFeedBrowseSource
             val contentPrefsCapable = rawSource is AnimeContentPreferencesSource
+            val blockedTagsCapable = rawSource is AnimeBlockedTagsSource
             val categorySubCapable = rawSource is AnimeCategorySubscriptionSource
             // Non-global modes need their matching capability (e.g. the plugin was downgraded
             // between sessions): refuse instead of silently serving the wrong feed.
@@ -376,6 +378,12 @@ class ReelsFeedScreenModel(
                     isContentPreferencesOpen = false,
                     isContentPreferencesLoading = false,
                     contentPreferencesError = null,
+                    // Blocked tags (v20): per source, reset on switch.
+                    isBlockedTagsCapable = blockedTagsCapable,
+                    blockedTags = null,
+                    isBlockedTagsOpen = false,
+                    isBlockedTagsLoading = false,
+                    blockedTagsError = null,
                     customFeeds = persistentListOf(),
                     isCustomFeedsOpen = false,
                     isCustomFeedsLoading = false,
@@ -1062,6 +1070,53 @@ class ReelsFeedScreenModel(
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Blocked tags (contract v20)
+    // ---------------------------------------------------------------------------
+
+    /** Opens/closes the blocked-tags editor; opening (re)loads the account list. */
+    fun toggleBlockedTags(open: Boolean) {
+        mutableState.update {
+            it.copy(
+                isBlockedTagsOpen = open,
+                blockedTagsError = if (open) null else it.blockedTagsError,
+            )
+        }
+        if (open) loadBlockedTags()
+    }
+
+    private fun loadBlockedTags() {
+        val src = source as? AnimeBlockedTagsSource ?: return
+        val sourceId = state.value.currentSourceId
+        mutableState.update { it.copy(isBlockedTagsLoading = true, blockedTagsError = null) }
+        screenModelScope.launch(ioDispatcher) {
+            val result = runCatching { src.getBlockedTags() }
+            mutableState.update { current ->
+                if (current.currentSourceId != sourceId) {
+                    return@update current.copy(isBlockedTagsLoading = false)
+                }
+                current.copy(
+                    isBlockedTagsLoading = false,
+                    blockedTags = result.getOrNull()?.toImmutableList(),
+                    blockedTagsError = result.exceptionOrNull()?.localizedMessage,
+                )
+            }
+        }
+    }
+
+    /** Persists the replaced blocked-tag set; reloads the sheet list on success. */
+    fun saveBlockedTags(tags: List<String>) {
+        val src = source as? AnimeBlockedTagsSource ?: return
+        screenModelScope.launch(NonCancellable + ioDispatcher) {
+            val ok = runCatching { src.setBlockedTags(tags) }.getOrDefault(false)
+            if (ok) {
+                loadBlockedTags()
+            } else {
+                mutableState.update { it.copy(blockedTagsError = "Save failed") }
+            }
+        }
+    }
+
     /** Opens/closes the custom-feeds picker; opening also (re)loads the feed list. */
     fun toggleCustomFeeds(open: Boolean) {
         mutableState.update {
@@ -1388,6 +1443,13 @@ class ReelsFeedScreenModel(
         val isContentPreferencesOpen: Boolean = false,
         val isContentPreferencesLoading: Boolean = false,
         val contentPreferencesError: String? = null,
+        // Blocked tags (v20): the current source implements AnimeBlockedTagsSource; gates the
+        // account-hub blocked-tags row.
+        val isBlockedTagsCapable: Boolean = false,
+        val blockedTags: ImmutableList<String>? = null,
+        val isBlockedTagsOpen: Boolean = false,
+        val isBlockedTagsLoading: Boolean = false,
+        val blockedTagsError: String? = null,
         // Loaded list for the picker sheet.
         val customFeeds: ImmutableList<CustomFeedRef> = persistentListOf(),
         val isCustomFeedsOpen: Boolean = false,

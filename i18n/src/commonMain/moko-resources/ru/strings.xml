@@ -1726,8 +1726,12 @@
     <string name="reels_search_tab_niches">Ниши</string>
     <string name="reels_search_tab_creators">Креаторы</string>
     <string name="reels_search_tab_tags">Теги</string>
+    <string name="reels_search_tab_all">Все</string>
     <string name="reels_content_prefs">Настройки контента</string>
     <string name="reels_content_prefs_empty">Нет доступных настроек контента</string>
+    <string name="reels_blocked_tags">Заблокированные теги</string>
+    <string name="reels_blocked_tags_add">Добавить тег</string>
+    <string name="reels_blocked_tags_empty">Нет заблокированных тегов</string>
     <string name="reels_custom_feed_new">Новая лента</string>
     <string name="reels_custom_feed_edit">Изменить ленту</string>
     <string name="reels_custom_feed_delete">Удалить ленту</string>

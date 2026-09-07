@@ -75,6 +75,15 @@ class AnimeFeedContractV20Test {
         }
     }
 
+    private class FakeBlockedTags : AnimeBlockedTagsSource {
+        var blocked = listOf("t1")
+        override suspend fun getBlockedTags(): List<String> = blocked
+        override suspend fun setBlockedTags(tags: List<String>): Boolean {
+            blocked = tags
+            return true
+        }
+    }
+
     @Test
     fun webLoginCapabilityIsInstanceofDetected() {
         val source: Any = FakeWebLogin()
@@ -103,6 +112,13 @@ class AnimeFeedContractV20Test {
         val source: Any = FakeSubscriptions()
         assertTrue(source is AnimeCategorySubscriptionSource)
         assertFalse(source is AnimeFeedBrowseSource)
+    }
+
+    @Test
+    fun blockedTagsCapabilityIsInstanceofDetected() {
+        val source: Any = FakeBlockedTags()
+        assertTrue(source is AnimeBlockedTagsSource)
+        assertFalse(source is AnimeContentPreferencesSource)
     }
 
     @Test

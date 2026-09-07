@@ -65,6 +65,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.tachiyomi.animesource.model.CustomFeedRef
 import eu.kanade.tachiyomi.animesource.model.SearchSuggestionKind
 import eu.kanade.tachiyomi.ui.browse.anime.source.browse.SourceFilterAnimeDialog
+import eu.kanade.tachiyomi.ui.reels.components.ReelsBlockedTagsSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsContentPreferencesSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsCustomFeedsSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsEmptySearchState
@@ -498,6 +499,7 @@ data class ReelsFeedScreen(
                     showNichesAccountRow = state.isBrowseCapable &&
                         state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
                     showContentPrefsAccountRow = state.isContentPreferencesCapable,
+                    showBlockedTagsAccountRow = state.isBlockedTagsCapable,
                     showSourcePicker = !state.isOffline &&
                         state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL &&
                         state.availableSources.size > 1,
@@ -523,6 +525,7 @@ data class ReelsFeedScreen(
                     onOpenCustomFeeds = { screenModel.toggleCustomFeeds(true) },
                     onOpenNiches = { navigator.push(ReelsNichesScreen(sourceId = state.currentSourceId)) },
                     onOpenContentPrefs = { screenModel.toggleContentPreferences(true) },
+                    onOpenBlockedTags = { screenModel.toggleBlockedTags(true) },
                     onToggleAutoAdvance = screenModel::toggleAutoAdvance,
                     onToggleCropMode = screenModel::toggleCropMode,
                     onToggleQuality = screenModel::toggleQuality,
@@ -604,6 +607,17 @@ data class ReelsFeedScreen(
                     error = state.contentPreferencesError,
                     onSave = screenModel::saveContentPreferences,
                     onDismiss = { screenModel.toggleContentPreferences(false) },
+                )
+            }
+
+            // Blocked tags editor (contract v20)
+            if (state.isBlockedTagsOpen) {
+                ReelsBlockedTagsSheet(
+                    initialTags = state.blockedTags.orEmpty(),
+                    isLoading = state.isBlockedTagsLoading,
+                    error = state.blockedTagsError,
+                    onSave = screenModel::saveBlockedTags,
+                    onDismiss = { screenModel.toggleBlockedTags(false) },
                 )
             }
 

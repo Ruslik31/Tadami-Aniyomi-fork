@@ -129,6 +129,12 @@ empty set / false.
 feed by per-account content preferences. Requires login; logged-out sources answer with an
 empty list / false. The host renders them as a switch sheet from the account hub.
 
+## Blocked tags (v20 capability interface)
+
+`AnimeBlockedTagsSource` exposes the account's blocked-tag list (`getBlockedTags` /
+`setBlockedTags`, replace-semantics). Login-gated; the host renders a tag editor sheet from
+the account hub.
+
 ## Pagination: the sticky protocol (the important part)
 
 Two modes. The mode is locked by the **host** for the whole feed *generation*
