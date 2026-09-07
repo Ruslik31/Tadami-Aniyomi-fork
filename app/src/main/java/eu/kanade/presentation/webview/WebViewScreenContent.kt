@@ -50,6 +50,8 @@ import eu.kanade.presentation.components.WarningBanner
 import eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginAssetBindings
 import eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginIdentitySource
 import eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginWebViewCoordinator
+import eu.kanade.tachiyomi.network.interceptor.CloudflareChallengeDetector
+import eu.kanade.tachiyomi.network.interceptor.CloudflareInteractiveChallengeTracker
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
@@ -60,6 +62,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import logcat.LogPriority
 import logcat.logcat
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -112,7 +115,16 @@ fun WebViewScreenContent(
     }
 
     var currentUrl by remember { mutableStateOf(url) }
-    var showCloudflareHelp by remember { mutableStateOf(false) }
+    // P6: a recent interactive-challenge failure for this host means the user is very likely
+    // about to face the human-verification wall - show the guidance banner immediately.
+    var showCloudflareHelp by remember {
+        mutableStateOf(
+            CloudflareInteractiveChallengeTracker.freshEntry(
+                host = url.toHttpUrlOrNull()?.host.orEmpty(),
+                clock = { android.os.SystemClock.elapsedRealtime() },
+            ) != null,
+        )
+    }
     var isActive by remember { mutableStateOf(true) }
 
     DisposableEffect(Unit) {
@@ -136,6 +148,15 @@ fun WebViewScreenContent(
                     url = url,
                     title = view.title,
                 )
+                if (!showCloudflareHelp) {
+                    // P7: URL/title markers miss widget-only interactive challenges - probe
+                    // the DOM once per page finish (callback runs on the main thread).
+                    view.evaluateJavascript(
+                        CloudflareChallengeDetector.interactiveWidgetProbeJs,
+                    ) { result ->
+                        if (result == "true") showCloudflareHelp = true
+                    }
+                }
                 if (!showCloudflareHelp) {
                     novelPluginId?.let { pluginId ->
                         scope.launch {

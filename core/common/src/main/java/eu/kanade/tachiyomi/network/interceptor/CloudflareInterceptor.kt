@@ -17,6 +17,8 @@ class CloudflareInterceptor(
     private val cookieManager: AndroidCookieJar,
     defaultUserAgentProvider: () -> String,
     private val challengeResolver: CloudflareChallengeResolver? = null,
+    // P3: injectable clock for the interactive-host negative cache (JVM-testable).
+    private val clock: () -> Long = android.os.SystemClock::elapsedRealtime,
 ) : WebViewInterceptor(context, defaultUserAgentProvider) {
 
     private val challengeLockByHost = ConcurrentHashMap<String, Any>()
@@ -59,6 +61,13 @@ class CloudflareInterceptor(
             // retained lock objects are negligible.
             val hostLock = challengeLockByHost.getOrPut(host) { Any() }
             synchronized(hostLock) {
+                // P3: negative cache - an interactive challenge needs a human; retrying the
+                // WebView solve every cycle only serializes latency on the global gate.
+                if (CloudflareInteractiveChallengeTracker.freshEntry(host, clock) != null) {
+                    throw IOException(
+                        context.stringResource(MR.strings.information_cloudflare_interactive_challenge),
+                    )
+                }
                 val oldCookie = cookieManager.get(request.url)
                     .firstOrNull { it.name == "cf_clearance" }
 
@@ -69,6 +78,7 @@ class CloudflareInterceptor(
                 if (oldCookie != null) {
                     val immediateRetry = chain.proceed(request)
                     if (!shouldIntercept(immediateRetry)) {
+                        CloudflareInteractiveChallengeTracker.clear(host)
                         return immediateRetry
                     }
                     immediateRetry.close()
@@ -86,17 +96,20 @@ class CloudflareInterceptor(
 
                 val firstAttempt = chain.proceed(request)
                 if (!shouldIntercept(firstAttempt)) {
+                    CloudflareInteractiveChallengeTracker.clear(host)
                     return firstAttempt
                 }
                 // The cookie set on CookieManager may not have propagated to OkHttp's
                 // CookieJar yet for the in-flight connection; close and retry once.
                 firstAttempt.close()
+                CloudflareInteractiveChallengeTracker.clear(host)
                 return chain.proceed(request)
             }
         }
         // Because OkHttp's enqueue only handles IOExceptions, wrap the exception so that
         // we don't crash the entire app
         catch (e: CloudflareInteractiveChallengeException) {
+            CloudflareInteractiveChallengeTracker.record(request.url.toString(), clock())
             throw IOException(
                 context.stringResource(MR.strings.information_cloudflare_interactive_challenge),
                 e,
@@ -109,7 +122,10 @@ class CloudflareInterceptor(
     }
 }
 
-internal val ERROR_CODES = listOf(403, 503)
+// P2: CF serves managed/interactive challenges with 401/429 as well as the classic 403/503
+// (429 rate-limit-plus-challenge combos, 401 behind managed rules). Non-challenge 401/429
+// bodies carry no challenge markers, so the marker gate below still rejects them.
+internal val ERROR_CODES = listOf(401, 403, 429, 503)
 private val COOKIE_NAMES = listOf("cf_clearance")
 
 // Global (process-wide) gate for Cloudflare challenge solves: one WebView solve at a time,

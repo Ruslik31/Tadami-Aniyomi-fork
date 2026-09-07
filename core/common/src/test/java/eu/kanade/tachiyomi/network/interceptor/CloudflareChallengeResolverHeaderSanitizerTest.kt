@@ -30,4 +30,17 @@ class CloudflareChallengeResolverHeaderSanitizerTest {
         headers.shouldNotContainKey("sec-ch-ua")
         headers.shouldNotContainKey("sec-ch-ua-full-version-list")
     }
+
+    @Test
+    fun `sanitizeCloudflareReplayHeaders keeps non fingerprinting requested with values`() {
+        val headers = sanitizeCloudflareReplayHeaders(
+            requestHeaders = mapOf(
+                "X-Requested-With" to "XMLHttpRequest",
+            ),
+            contextPackageName = "com.tadami.aurora.localdev",
+            spoofedPackageName = "com.android.chrome",
+        )
+
+        headers shouldContain ("X-Requested-With" to "XMLHttpRequest")
+    }
 }
