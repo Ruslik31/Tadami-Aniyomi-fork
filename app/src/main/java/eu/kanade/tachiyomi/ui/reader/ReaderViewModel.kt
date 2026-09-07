@@ -577,23 +577,31 @@ class ReaderViewModel @JvmOverloads constructor(
 
     /**
      * Called when the user is going to load the prev/next chapter through the toolbar buttons.
+     * Returns true only when the chapter became active (see [loadNextChapter]).
      */
-    private suspend fun loadAdjacent(chapter: ReaderChapter) {
-        val loader = loader ?: return
+    private suspend fun loadAdjacent(chapter: ReaderChapter): Boolean {
+        // WEBTOON-ARROWS: re-entrancy guard - the progress dialog is shown asynchronously, so a
+        // fast double tap used to start two overlapping adjacent switches.
+        if (state.value.isLoadingAdjacentChapter) return false
+        val loader = loader ?: return false
 
         logcat { "Loading adjacent ${chapter.chapter.url}" }
 
         mutableState.update { it.copy(isLoadingAdjacentChapter = true) }
-        try {
+        return try {
             prepareAdjacentChapterSwitch(::flushReadTimer, ::restartReadTimer)
             withIOContext {
                 loadChapter(loader, chapter)
             }
+            true
         } catch (e: Throwable) {
             if (e is CancellationException) {
                 throw e
             }
+            // WEBTOON-ARROWS (H2): the failure is reported to the caller instead of only being
+            // logged - the activity no longer re-anchors the viewer on a failed switch.
             logcat(LogPriority.ERROR, e)
+            false
         } finally {
             mutableState.update { it.copy(isLoadingAdjacentChapter = false) }
         }
@@ -1072,18 +1080,25 @@ class ReaderViewModel @JvmOverloads constructor(
 
     /**
      * Called from the activity to load and set the next chapter as active.
+     *
+     * WEBTOON-ARROWS (H2): returns whether the chapter ACTUALLY became active - the activity
+     * must only re-anchor the viewer in that case. The old silent `return` (no next chapter,
+     * null loader, swallowed load error) still let the activity run moveToPageIndex(0), which
+     * scrolled the CURRENT chapter to its start ("the chapter didn't switch, it rewound to the
+     * beginning").
      */
-    suspend fun loadNextChapter() {
-        val nextChapter = state.value.viewerChapters?.nextChapter ?: return
-        loadAdjacent(nextChapter)
+    suspend fun loadNextChapter(): Boolean {
+        val nextChapter = state.value.viewerChapters?.nextChapter ?: return false
+        return loadAdjacent(nextChapter)
     }
 
     /**
      * Called from the activity to load and set the previous chapter as active.
+     * See [loadNextChapter] for the Boolean contract.
      */
-    suspend fun loadPreviousChapter() {
-        val prevChapter = state.value.viewerChapters?.prevChapter ?: return
-        loadAdjacent(prevChapter)
+    suspend fun loadPreviousChapter(): Boolean {
+        val prevChapter = state.value.viewerChapters?.prevChapter ?: return false
+        return loadAdjacent(prevChapter)
     }
 
     /**

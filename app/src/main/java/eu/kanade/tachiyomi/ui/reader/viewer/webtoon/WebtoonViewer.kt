@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.app.ActivityCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
@@ -447,9 +448,16 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
             moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
             recycler.isVisible = true
         } else {
-            recycler.post {
-                onScrolled()
-            }
+            // WEBTOON-ARROWS (H1): was `recycler.post { onScrolled() }` - the posted runnable
+            // ran BEFORE the pending re-layout, so findLastEndVisibleItemPosition() returned a
+            // position from the OLD layout which was then indexed into the NEW adapter items.
+            // Right after a toolbar chapter switch the stale index regularly mapped into the
+            // 2-page tail window of the OLD chapter -> onPageSelected(old page) -> the VM
+            // bounced straight back via loadNewChapter (the chapter "didn't switch", or the
+            // scroll landed on a window edge). doOnLayout defers the report until the layout
+            // pass that also applies any pending scrollToPositionWithOffset, so the reported
+            // page always matches what the user actually sees.
+            recycler.doOnLayout { onScrolled() }
         }
 
         val page = currentPage as? ReaderPage

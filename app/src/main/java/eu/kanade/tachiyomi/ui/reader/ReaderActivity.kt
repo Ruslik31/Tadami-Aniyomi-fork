@@ -1118,8 +1118,12 @@ class ReaderActivity : BaseActivity() {
      */
     private fun loadNextChapter() {
         lifecycleScope.launch {
-            viewModel.loadNextChapter()
-            moveToPageIndex(0)
+            // WEBTOON-ARROWS (H2): re-anchor ONLY when the switch actually happened - the
+            // unconditional moveToPageIndex(0) used to scroll the CURRENT chapter to its start
+            // whenever the load silently no-op'd (no next chapter / swallowed error).
+            if (viewModel.loadNextChapter()) {
+                moveToPageIndex(0)
+            }
         }
     }
 
@@ -1129,8 +1133,10 @@ class ReaderActivity : BaseActivity() {
      */
     private fun loadPreviousChapter() {
         lifecycleScope.launch {
-            viewModel.loadPreviousChapter()
-            moveToPageIndex(0)
+            // WEBTOON-ARROWS (H2): see loadNextChapter.
+            if (viewModel.loadPreviousChapter()) {
+                moveToPageIndex(0)
+            }
         }
     }
 
