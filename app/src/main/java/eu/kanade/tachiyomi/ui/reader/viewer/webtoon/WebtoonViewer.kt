@@ -440,6 +440,12 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     override fun setChapters(chapters: ViewerChapters) {
         // Setting controls the info screen display. Do not force it based on previously being on a transition item.
         val forceTransition = config.alwaysShowChapterTransition
+        // WEBTOON-ARROWS-2: a toolbar/jump switch must be detected BEFORE the adapter re-centers.
+        // isLoadingAdjacentChapter is true exactly while ReaderViewModel.loadAdjacent runs, and
+        // this method executes inline inside its state update - gesture-driven switches
+        // (loadNewChapter) and preload refreshes arrive with the flag false.
+        val isProgrammaticSwitch = adapter.currentChapter != chapters.currChapter &&
+            activity.viewModel.state.value.isLoadingAdjacentChapter
         adapter.setChapters(chapters, forceTransition)
 
         if (recycler.isGone) {
@@ -448,15 +454,28 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
             moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
             recycler.isVisible = true
         } else {
+            if (isProgrammaticSwitch) {
+                // WEBTOON-ARROWS-2: the toolbar switch used to rely on ReaderActivity's
+                // moveToPageIndex(0) running AFTER this rebuild - but a layout frame can slip
+                // between the two (vsync traversal outruns the queued coroutine resumption).
+                // In that frame RecyclerView re-anchored to a RETAINED page of the OLD chapter
+                // (the 2-page window the adapter keeps around curr), and the resulting - fully
+                // layout-consistent - report bounced the VM straight back via loadNewChapter.
+                // Logcat proof: "Loading adjacent X" -> onPageSelected(4/5 of OLD) ->
+                // "Setting OLD as active". Anchor to the new chapter's first page in the SAME
+                // main-thread block as the rebuild: scrollToPositionWithOffset registers the
+                // pending position before the first post-rebuild layout, so that single layout
+                // already sits on the new chapter and every scroll report is consistent.
+                val pages = chapters.currChapter.pages
+                if (pages != null) {
+                    moveToPage(pages[0])
+                }
+            }
             // WEBTOON-ARROWS (H1): was `recycler.post { onScrolled() }` - the posted runnable
             // ran BEFORE the pending re-layout, so findLastEndVisibleItemPosition() returned a
             // position from the OLD layout which was then indexed into the NEW adapter items.
-            // Right after a toolbar chapter switch the stale index regularly mapped into the
-            // 2-page tail window of the OLD chapter -> onPageSelected(old page) -> the VM
-            // bounced straight back via loadNewChapter (the chapter "didn't switch", or the
-            // scroll landed on a window edge). doOnLayout defers the report until the layout
-            // pass that also applies any pending scrollToPositionWithOffset, so the reported
-            // page always matches what the user actually sees.
+            // doOnLayout defers the report until after the layout pass that also applies the
+            // pending scroll position, so the reported page matches what the user sees.
             recycler.doOnLayout { onScrolled() }
         }
 
