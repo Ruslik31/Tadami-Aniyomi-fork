@@ -65,6 +65,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.tachiyomi.animesource.model.CustomFeedRef
 import eu.kanade.tachiyomi.animesource.model.SearchSuggestionKind
 import eu.kanade.tachiyomi.ui.browse.anime.source.browse.SourceFilterAnimeDialog
+import eu.kanade.tachiyomi.ui.reels.components.CfBootstrapWebView
 import eu.kanade.tachiyomi.ui.reels.components.ReelsBlockedTagsSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsContentPreferencesSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsCustomFeedsSheet
@@ -619,6 +620,19 @@ data class ReelsFeedScreen(
                     onSave = screenModel::saveBlockedTags,
                     onDismiss = { screenModel.toggleBlockedTags(false) },
                 )
+            }
+
+            // Silent Cloudflare bootstrap (web-login-capable sources): an offscreen WebView
+            // solves the managed challenge and lifts the cookies — no user interaction; the
+            // import verification reloads the feed and unmounts the view on success.
+            if (state.cfBootstrapAttempt > 0) {
+                screenModel.webLoginUrl()?.let { url ->
+                    CfBootstrapWebView(
+                        startUrl = url,
+                        attempt = state.cfBootstrapAttempt,
+                        onCookies = { cookies -> screenModel.tryImportWebSession(cookies, emptyMap()) },
+                    )
+                }
             }
 
             // Custom feeds picker (contract v19)

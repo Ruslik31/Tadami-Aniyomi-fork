@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -289,6 +290,47 @@ fun ReelsWebLoginDialog(
             }
         }
     }
+}
+
+/**
+ * Offscreen (1dp) WebView that silently passes the service's Cloudflare managed challenge
+ * and lifts the resulting cookies into the source — zero user interaction. Mounted while the
+ * model's bootstrap counter is >0; a successful import verification reloads the feed and
+ * unmounts this view. Invisible to the user; the challenge usually auto-solves in seconds.
+ */
+@Composable
+fun CfBootstrapWebView(
+    startUrl: String,
+    attempt: Int,
+    onCookies: (Map<String, String>) -> Unit,
+) {
+    var fired by remember { mutableStateOf(false) }
+    var view by remember { mutableStateOf<WebView?>(null) }
+    LaunchedEffect(attempt) {
+        fired = false
+        view?.reload()
+    }
+    AndroidView(
+        modifier = Modifier.size(1.dp),
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.userAgentString = WEBVIEW_USER_AGENT
+                CookieManager.getInstance().setAcceptCookie(true)
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(page: WebView, url: String?) {
+                        page.postDelayed({
+                            if (fired) return@postDelayed
+                            fired = true
+                            onCookies(cookieDump())
+                        }, 3500)
+                    }
+                }
+                loadUrl(startUrl)
+            }.also { view = it }
+        },
+    )
 }
 
 /** True when [url] is on the service domain (from [startUrl]) outside its /auth routes. */

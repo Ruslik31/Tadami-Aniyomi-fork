@@ -541,6 +541,13 @@ class ReelsFeedScreenModel(
                         current.copy(isLoading = false, pageError = t.localizedMessage ?: "Failed to load feed")
                     }
                 }
+                // Cloudflare managed challenge (403 challenge page on web-login-capable
+                // sources): bootstrap the session cookies via an offscreen WebView without
+                // any user interaction; the import verification reloads the feed on success.
+                val msg = t.localizedMessage.orEmpty()
+                if ("403" in msg && source is AnimeFeedWebLoginSource) {
+                    mutableState.update { it.copy(cfBootstrapAttempt = it.cfBootstrapAttempt + 1) }
+                }
             }
         }
     }
@@ -987,6 +994,7 @@ class ReelsFeedScreenModel(
             current.copy(
                 isWebLoginDialogOpen = false,
                 webLoginHint = false,
+                cfBootstrapAttempt = 0,
                 loggedInAccount = loginSource?.takeIf { it.isLoggedIn() }?.loggedInAccount(),
             )
         }
@@ -1450,6 +1458,9 @@ class ReelsFeedScreenModel(
         val isBlockedTagsOpen: Boolean = false,
         val isBlockedTagsLoading: Boolean = false,
         val blockedTagsError: String? = null,
+        // Silent Cloudflare bootstrap counter (web-login-capable sources): >0 mounts an
+        // offscreen WebView that solves the managed challenge and lifts the cookies.
+        val cfBootstrapAttempt: Int = 0,
         // Loaded list for the picker sheet.
         val customFeeds: ImmutableList<CustomFeedRef> = persistentListOf(),
         val isCustomFeedsOpen: Boolean = false,
