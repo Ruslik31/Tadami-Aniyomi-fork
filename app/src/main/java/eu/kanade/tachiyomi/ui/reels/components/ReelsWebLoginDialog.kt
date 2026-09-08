@@ -294,20 +294,22 @@ fun ReelsWebLoginDialog(
 
 /**
  * Offscreen (1dp) WebView that silently passes the service's Cloudflare managed challenge
- * and lifts the resulting cookies into the source — zero user interaction. Mounted while the
- * model's bootstrap counter is >0; a successful import verification reloads the feed and
- * unmounts this view. Invisible to the user; the challenge usually auto-solves in seconds.
+ * AND re-lifts a fresh SPA session (cookies + instrumented localStorage bearer) — zero user
+ * interaction. Mounted while the model's bootstrap counter is >0; a successful import
+ * verification reloads the feed/sheets and unmounts this view. The challenge usually
+ * auto-solves in seconds; the dump fires twice (4s/9s) because the SPA performs its first
+ * authenticated api calls only after boot.
  */
 @Composable
 fun CfBootstrapWebView(
     startUrl: String,
     attempt: Int,
-    onCookies: (Map<String, String>) -> Unit,
+    onSession: (cookies: Map<String, String>, localStorage: Map<String, String>) -> Unit,
 ) {
-    var fired by remember { mutableStateOf(false) }
+    var firesLeft by remember(attempt) { mutableStateOf(2) }
     var view by remember { mutableStateOf<WebView?>(null) }
     LaunchedEffect(attempt) {
-        fired = false
+        firesLeft = 2
         view?.reload()
     }
     AndroidView(
@@ -320,11 +322,18 @@ fun CfBootstrapWebView(
                 CookieManager.getInstance().setAcceptCookie(true)
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(page: WebView, url: String?) {
-                        page.postDelayed({
-                            if (fired) return@postDelayed
-                            fired = true
-                            onCookies(cookieDump())
-                        }, 3500)
+                        page.postDelayed({ dump(page) }, 4000)
+                        page.postDelayed({ dump(page) }, 9000)
+                    }
+
+                    private fun dump(page: WebView) {
+                        if (firesLeft <= 0) return
+                        firesLeft -= 1
+                        page.evaluateJavascript(INSTRUMENT_JS) {
+                            page.evaluateJavascript(LOCAL_STORAGE_DUMP_JS) { raw ->
+                                onSession(cookieDump(), parseJsonStringMap(raw))
+                            }
+                        }
                     }
                 }
                 loadUrl(startUrl)

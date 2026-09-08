@@ -998,6 +998,9 @@ class ReelsFeedScreenModel(
                 loggedInAccount = loginSource?.takeIf { it.isLoggedIn() }?.loggedInAccount(),
             )
         }
+        // A re-lifted session must refresh whatever account sheet is open right now.
+        if (state.value.isContentPreferencesOpen) loadContentPreferences()
+        if (state.value.isBlockedTagsOpen) loadBlockedTags()
         loadFeed(reset = true)
     }
 
@@ -1061,6 +1064,11 @@ class ReelsFeedScreenModel(
                     contentPreferences = result.getOrNull()?.toImmutableList(),
                     contentPreferencesError = result.exceptionOrNull()?.localizedMessage,
                 )
+            }
+            // Account session expired (short-lived Kinde bearer, no refresh token): silently
+            // re-lift a fresh one through the bootstrap WebView; the sheet reloads on success.
+            if (result.getOrNull().isNullOrEmpty() && source is AnimeFeedWebLoginSource) {
+                mutableState.update { it.copy(cfBootstrapAttempt = it.cfBootstrapAttempt + 1) }
             }
         }
     }

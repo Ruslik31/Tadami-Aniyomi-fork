@@ -630,7 +630,9 @@ data class ReelsFeedScreen(
                     CfBootstrapWebView(
                         startUrl = url,
                         attempt = state.cfBootstrapAttempt,
-                        onCookies = { cookies -> screenModel.tryImportWebSession(cookies, emptyMap()) },
+                        onSession = { cookies, localStorage ->
+                            screenModel.tryImportWebSession(cookies, localStorage)
+                        },
                     )
                 }
             }
