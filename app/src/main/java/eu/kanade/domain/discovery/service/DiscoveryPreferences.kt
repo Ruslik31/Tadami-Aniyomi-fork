@@ -32,4 +32,8 @@ class DiscoveryPreferences(private val preferenceStore: PreferenceStore) {
 
     fun teaserCount(): Preference<Int> = preferenceStore.getInt("discovery_teaser_count", 16)
     fun showReasons(): Preference<Boolean> = preferenceStore.getBoolean("discovery_show_reasons", true)
+
+    fun collageRotationIntervalHours(): Preference<Int> = preferenceStore.getInt("collage_rotation_interval_hours", 2)
+    fun collageAnimationSpeed(): Preference<String> = preferenceStore.getString("collage_animation_speed", "normal")
+    fun collageLastRotationTime(): Preference<Long> = preferenceStore.getLong("collage_last_rotation_time", 0L)
 }

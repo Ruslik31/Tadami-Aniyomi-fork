@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toPersistentList
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
@@ -55,6 +56,8 @@ object SettingsDiscoveryScreen : SearchableSettings {
         val rowSource by discoveryPreferences.rowSourceEnabled().collectAsStateWithLifecycle()
         val seedCompleted by discoveryPreferences.seedCompleted().collectAsStateWithLifecycle()
         val seedActive14 by discoveryPreferences.seedActive14().collectAsStateWithLifecycle()
+        val homeHeroMode by discoveryPreferences.homeHeroMode().collectAsStateWithLifecycle()
+        val isCollageMode = homeHeroMode == "collage"
 
         if (showResetHiddenDialog) {
             AlertDialog(
@@ -89,28 +92,64 @@ object SettingsDiscoveryScreen : SearchableSettings {
         return listOf(
             Preference.PreferenceGroup(
                 title = stringResource(AYMR.strings.pref_discovery_group_general),
-                preferenceItems = persistentListOf(
-                    Preference.PreferenceItem.SwitchPreference(
-                        preference = discoveryPreferences.discoveryEnabled(),
-                        title = stringResource(AYMR.strings.pref_discovery_enabled),
-                        subtitle = stringResource(AYMR.strings.pref_discovery_enabled_summary),
-                        onValueChanged = {
-                            DiscoveryUpdateJob.setupTask(context)
-                            true
-                        },
-                    ),
-                    Preference.PreferenceItem.ListPreference(
-                        preference = discoveryPreferences.homeHeroMode(),
-                        entries = persistentMapOf(
-                            "continue" to stringResource(AYMR.strings.pref_home_hero_mode_continue),
-                            "collage" to stringResource(AYMR.strings.pref_home_hero_mode_collage),
-                            "hybrid" to stringResource(AYMR.strings.pref_home_hero_mode_hybrid),
+                preferenceItems = buildList {
+                    add(
+                        Preference.PreferenceItem.SwitchPreference(
+                            preference = discoveryPreferences.discoveryEnabled(),
+                            title = stringResource(AYMR.strings.pref_discovery_enabled),
+                            subtitle = stringResource(AYMR.strings.pref_discovery_enabled_summary),
+                            onValueChanged = {
+                                DiscoveryUpdateJob.setupTask(context)
+                                true
+                            },
                         ),
-                        title = stringResource(AYMR.strings.pref_home_hero_mode),
-                        subtitleProvider = { value, entries -> entries[value] },
-                        enabled = enabled,
-                    ),
-                ),
+                    )
+                    add(
+                        Preference.PreferenceItem.ListPreference(
+                            preference = discoveryPreferences.homeHeroMode(),
+                            entries = persistentMapOf(
+                                "continue" to stringResource(AYMR.strings.pref_home_hero_mode_continue),
+                                "collage" to stringResource(AYMR.strings.pref_home_hero_mode_collage),
+                                "hybrid" to stringResource(AYMR.strings.pref_home_hero_mode_hybrid),
+                            ),
+                            title = stringResource(AYMR.strings.pref_home_hero_mode),
+                            subtitleProvider = { value, entries -> entries[value] },
+                            enabled = enabled,
+                        ),
+                    )
+                    if (isCollageMode) {
+                        add(
+                            Preference.PreferenceItem.ListPreference(
+                                preference = discoveryPreferences.collageRotationIntervalHours(),
+                                entries = persistentMapOf(
+                                    0 to stringResource(AYMR.strings.pref_collage_rotation_interval_0),
+                                    1 to stringResource(AYMR.strings.pref_collage_rotation_interval_1),
+                                    2 to stringResource(AYMR.strings.pref_collage_rotation_interval_2),
+                                    4 to stringResource(AYMR.strings.pref_collage_rotation_interval_4),
+                                    6 to stringResource(AYMR.strings.pref_collage_rotation_interval_6),
+                                    12 to stringResource(AYMR.strings.pref_collage_rotation_interval_12),
+                                    24 to stringResource(AYMR.strings.pref_collage_rotation_interval_24),
+                                ),
+                                title = stringResource(AYMR.strings.pref_collage_rotation_interval),
+                                subtitleProvider = { value, entries -> entries[value] },
+                                enabled = enabled,
+                            ),
+                        )
+                        add(
+                            Preference.PreferenceItem.ListPreference(
+                                preference = discoveryPreferences.collageAnimationSpeed(),
+                                entries = persistentMapOf(
+                                    "fast" to stringResource(AYMR.strings.pref_collage_animation_speed_fast),
+                                    "normal" to stringResource(AYMR.strings.pref_collage_animation_speed_normal),
+                                    "smooth" to stringResource(AYMR.strings.pref_collage_animation_speed_smooth),
+                                ),
+                                title = stringResource(AYMR.strings.pref_collage_animation_speed),
+                                subtitleProvider = { value, entries -> entries[value] },
+                                enabled = enabled,
+                            ),
+                        )
+                    }
+                }.toPersistentList(),
             ),
             Preference.PreferenceGroup(
                 title = stringResource(AYMR.strings.pref_discovery_group_like),

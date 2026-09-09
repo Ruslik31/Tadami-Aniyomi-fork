@@ -29,6 +29,9 @@ class DiscoveryPreferencesTest {
         prefs.showReasons().get() shouldBe true
         prefs.trendSeason().get() shouldBe "current"
         prefs.trendSort().get() shouldBe "popularity"
+        prefs.collageRotationIntervalHours().get() shouldBe 2
+        prefs.collageAnimationSpeed().get() shouldBe "normal"
+        prefs.collageLastRotationTime().get() shouldBe 0L
     }
 
     @Test

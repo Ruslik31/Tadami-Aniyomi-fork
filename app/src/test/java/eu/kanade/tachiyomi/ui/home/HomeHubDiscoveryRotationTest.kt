@@ -109,4 +109,19 @@ class HomeHubDiscoveryRotationTest {
             hasDiscovery = false,
         ) shouldBe true
     }
+
+    @Test
+    fun `resolveCollageSlotTransition produces instant transitions on EInk and animated on standard display`() {
+        val eInkTransition = resolveCollageSlotTransition(delayMillis = 0, isEInk = true)
+        (eInkTransition != null) shouldBe true
+
+        val standardTransition = resolveCollageSlotTransition(delayMillis = 140, isEInk = false)
+        (standardTransition != null) shouldBe true
+
+        val fastTransition = resolveCollageSlotTransition(delayMillis = 40, isEInk = false, speed = "fast")
+        (fastTransition != null) shouldBe true
+
+        val smoothTransition = resolveCollageSlotTransition(delayMillis = 110, isEInk = false, speed = "smooth")
+        (smoothTransition != null) shouldBe true
+    }
 }

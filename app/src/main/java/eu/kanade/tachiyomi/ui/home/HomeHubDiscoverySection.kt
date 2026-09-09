@@ -1,11 +1,19 @@
 package eu.kanade.tachiyomi.ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +46,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -68,6 +77,8 @@ import eu.kanade.presentation.components.AuroraCoverPlaceholderVariant
 import eu.kanade.presentation.components.buildAuroraCoverImageRequest
 import eu.kanade.presentation.components.rememberCoverReloadTick
 import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
+import eu.kanade.presentation.entries.components.aurora.AuroraGlassCtaSurface
+import eu.kanade.presentation.entries.components.aurora.AuroraHeroCtaMode
 import eu.kanade.presentation.entries.components.aurora.rememberAuroraPosterColorFilter
 import eu.kanade.presentation.theme.AuroraSurfaceLevel
 import eu.kanade.presentation.theme.AuroraTheme
@@ -83,6 +94,8 @@ import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
 import eu.kanade.tachiyomi.ui.discovery.BadgeColorKind
 import eu.kanade.tachiyomi.ui.discovery.DiscoveryBadge
 import eu.kanade.tachiyomi.ui.discovery.badgeColor
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
@@ -605,14 +618,15 @@ internal fun HybridDiscoveryStrip(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                stringResource(AYMR.strings.aurora_for_you),
-                color = colors.textSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-            )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(AYMR.strings.aurora_for_you),
+                    color = colors.textSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                )
                 if (onRefreshClick != null) {
+                    Spacer(Modifier.width(10.dp))
                     val rotationAnim = rememberInfiniteTransition(label = "hybrid_refresh_rot")
                     val rotationAngle by if (isRefreshing) {
                         rotationAnim.animateFloat(
@@ -698,19 +712,18 @@ internal fun HybridDiscoveryStrip(
                                 .graphicsLayer { rotationZ = rotationAngle },
                         )
                     }
-                    Spacer(Modifier.width(10.dp))
                 }
-                Text(
-                    stringResource(AYMR.strings.for_you_all_picks),
-                    color = colors.accent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable {
-                        appHaptics.tap()
-                        onMoreClick()
-                    },
-                )
             }
+            Text(
+                stringResource(AYMR.strings.for_you_all_picks),
+                color = colors.accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.clickable {
+                    appHaptics.tap()
+                    onMoreClick()
+                },
+            )
         }
         Spacer(Modifier.height(10.dp))
         LazyRow(
@@ -904,7 +917,43 @@ internal fun DiscoveryHeroCollage(
     if (items.isEmpty()) return
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
+    val discoveryPreferences = remember { Injekt.get<DiscoveryPreferences>() }
+    val intervalHours by discoveryPreferences.collageRotationIntervalHours().collectAsStateWithLifecycle()
+    val animSpeed by discoveryPreferences.collageAnimationSpeed().collectAsStateWithLifecycle()
     var offset by remember { mutableIntStateOf(0) }
+    var userInteractionToken by remember { mutableIntStateOf(0) }
+
+    // Авто-ротация с настраиваемым интервалом (от 1 до 24 ч, 0 = отключено)
+    if (!colors.isEInk && items.size > 5 && intervalHours > 0) {
+        LaunchedEffect(items.size, intervalHours, userInteractionToken) {
+            val intervalMillis = intervalHours * 3600_000L
+            while (isActive) {
+                val now = System.currentTimeMillis()
+                val lastTime = discoveryPreferences.collageLastRotationTime().get()
+                val elapsed = now - lastTime
+                if (lastTime == 0L) {
+                    discoveryPreferences.collageLastRotationTime().set(now)
+                    delay(intervalMillis)
+                } else if (elapsed >= intervalMillis) {
+                    offset += 1
+                    discoveryPreferences.collageLastRotationTime().set(now)
+                    delay(intervalMillis)
+                } else {
+                    val remaining = maxOf(1000L, intervalMillis - elapsed)
+                    delay(remaining)
+                    offset += 1
+                    discoveryPreferences.collageLastRotationTime().set(System.currentTimeMillis())
+                }
+            }
+        }
+    }
+
+    val staggerStep = when (animSpeed) {
+        "fast" -> 40
+        "smooth" -> 110
+        else -> 70
+    }
+
     // Окно до 5 плиток через seeded-shuffle: реролл (offset+1) всегда меняет порядок/состав
     // при любом размере ленты (фикс «мёртвого реролла» и дублей при <5 айтемов).
     val tiles = remember(items, offset) {
@@ -934,25 +983,51 @@ internal fun DiscoveryHeroCollage(
             ),
     ) {
         Row(Modifier.fillMaxSize().padding(5.dp)) {
-            CollageTile(
-                item = tiles[0],
-                big = true,
+            AnimatedContent(
+                targetState = tiles[0],
+                transitionSpec = {
+                    resolveCollageSlotTransition(
+                        delayMillis = 0,
+                        isEInk = colors.isEInk,
+                        speed = animSpeed,
+                    )
+                },
                 modifier = Modifier.weight(1.55f).fillMaxHeight(),
-                onClick = { onItemClick(tiles[0]) },
-                onLongClick = onLongClick?.let { { it(tiles[0]) } },
-            )
+                label = "collage_hero_slot",
+            ) { targetHero ->
+                CollageTile(
+                    item = targetHero,
+                    big = true,
+                    modifier = Modifier.fillMaxSize(),
+                    onClick = { onItemClick(targetHero) },
+                    onLongClick = onLongClick?.let { { it(targetHero) } },
+                )
+            }
             if (col1.isNotEmpty()) {
                 Spacer(Modifier.width(5.dp))
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     col1.forEachIndexed { index, item ->
                         if (index > 0) Spacer(Modifier.height(5.dp))
-                        CollageTile(
-                            item = item,
-                            big = false,
+                        AnimatedContent(
+                            targetState = item,
+                            transitionSpec = {
+                                resolveCollageSlotTransition(
+                                    delayMillis = staggerStep + index * staggerStep,
+                                    isEInk = colors.isEInk,
+                                    speed = animSpeed,
+                                )
+                            },
                             modifier = Modifier.weight(1f).fillMaxWidth(),
-                            onClick = { onItemClick(item) },
-                            onLongClick = onLongClick?.let { { it(item) } },
-                        )
+                            label = "collage_col1_$index",
+                        ) { targetItem ->
+                            CollageTile(
+                                item = targetItem,
+                                big = false,
+                                modifier = Modifier.fillMaxSize(),
+                                onClick = { onItemClick(targetItem) },
+                                onLongClick = onLongClick?.let { { it(targetItem) } },
+                            )
+                        }
                     }
                 }
             }
@@ -961,79 +1036,133 @@ internal fun DiscoveryHeroCollage(
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     col2.forEachIndexed { index, item ->
                         if (index > 0) Spacer(Modifier.height(5.dp))
-                        CollageTile(
-                            item = item,
-                            big = false,
+                        AnimatedContent(
+                            targetState = item,
+                            transitionSpec = {
+                                resolveCollageSlotTransition(
+                                    delayMillis = (staggerStep * 3) + index * staggerStep,
+                                    isEInk = colors.isEInk,
+                                    speed = animSpeed,
+                                )
+                            },
                             modifier = Modifier.weight(1f).fillMaxWidth(),
-                            onClick = { onItemClick(item) },
-                            onLongClick = onLongClick?.let { { it(item) } },
-                        )
+                            label = "collage_col2_$index",
+                        ) { targetItem ->
+                            CollageTile(
+                                item = targetItem,
+                                big = false,
+                                modifier = Modifier.fillMaxSize(),
+                                onClick = { onItemClick(targetItem) },
+                                onLongClick = onLongClick?.let { { it(targetItem) } },
+                            )
+                        }
                     }
                 }
             }
         }
 
-        Row(
+        // Кнопка обновления в правом верхнем углу: высокий контраст на любых фонах
+        Box(
             Modifier
-                .align(Alignment.TopStart)
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                stringResource(AYMR.strings.for_you_collage_header),
-                color = if (colors.isEInk) colors.textPrimary else Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.weight(1f))
-            Box(
-                Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (colors.isEInk) {
-                            colors.cardBackground
-                        } else if (colors.isDark) {
-                            Color.Black.copy(alpha = 0.40f)
-                        } else {
-                            Color.White.copy(alpha = 0.75f)
-                        },
-                    )
-                    .clickable {
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(
+                    if (colors.isEInk) {
+                        colors.cardBackground
+                    } else if (colors.isDark) {
+                        Color.Black.copy(alpha = 0.75f)
+                    } else {
+                        Color.White.copy(alpha = 0.90f)
+                    },
+                )
+                .border(
+                    BorderStroke(
+                        width = 1.dp,
+                        color = if (colors.isEInk) colors.divider else Color.White.copy(alpha = 0.22f),
+                    ),
+                    CircleShape,
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = false, radius = 20.dp),
+                    onClick = {
                         appHaptics.tap()
+                        discoveryPreferences.collageLastRotationTime().set(System.currentTimeMillis())
+                        userInteractionToken++
                         offset = offset + 1
                     },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Filled.Refresh,
-                    contentDescription = stringResource(AYMR.strings.for_you_collage_reroll),
-                    tint = if (colors.isDark && !colors.isEInk) Color.White else colors.textPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Refresh,
+                contentDescription = stringResource(AYMR.strings.for_you_collage_reroll),
+                tint = if (colors.isDark && !colors.isEInk) colors.accent else colors.textPrimary,
+                modifier = Modifier.size(20.dp),
+            )
         }
 
-        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) {
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(colors.glass.copy(alpha = if (colors.isDark) 0.22f else 0.85f))
-                    .clickable {
-                        appHaptics.tap()
-                        onMoreClick()
-                    }
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    stringResource(AYMR.strings.for_you_all_picks),
-                    color = if (colors.isEInk) colors.textPrimary else Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+        // Кнопка перехода в стиле Aurora Hero CTA («Продолжить / Читать»)
+        Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp)) {
+            val buttonInteractionSource = remember { MutableInteractionSource() }
+            AuroraGlassCtaSurface(
+                mode = AuroraHeroCtaMode.Aurora,
+                onClick = {
+                    appHaptics.tap()
+                    onMoreClick()
+                },
+                modifier = Modifier.height(44.dp),
+                isHome = true,
+                shape = CircleShape,
+                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 8.dp),
+                interactionSource = buttonInteractionSource,
+            ) { contentColor ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.AutoAwesome,
+                        contentDescription = null,
+                        tint = contentColor,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(AYMR.strings.for_you_all_picks),
+                        color = contentColor,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
+    }
+}
+
+internal fun resolveCollageSlotTransition(
+    delayMillis: Int,
+    isEInk: Boolean,
+    speed: String = "normal",
+): ContentTransform {
+    return if (isEInk) {
+        fadeIn(animationSpec = tween(0)) togetherWith fadeOut(animationSpec = tween(0))
+    } else {
+        val (enterDuration, exitDuration) = when (speed) {
+            "fast" -> 250 to 200
+            "smooth" -> 700 to 500
+            else -> 420 to 300
+        }
+        val enter = fadeIn(animationSpec = tween(durationMillis = enterDuration, delayMillis = delayMillis)) +
+            scaleIn(
+                initialScale = 0.95f,
+                animationSpec = tween(durationMillis = enterDuration, delayMillis = delayMillis),
+            )
+        val exit = fadeOut(animationSpec = tween(durationMillis = exitDuration)) +
+            scaleOut(targetScale = 1.02f, animationSpec = tween(durationMillis = exitDuration))
+        enter togetherWith exit
     }
 }
 
