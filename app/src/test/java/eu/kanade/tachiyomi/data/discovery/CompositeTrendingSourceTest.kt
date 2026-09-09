@@ -168,4 +168,45 @@ class CompositeTrendingSourceTest {
         result shouldBe expectedMeta
         mangadex.fetchMetaCalled shouldBe true
     }
+
+    @Test
+    fun `fetchMeta queries Shikimori first when locale is Russian`() = runTest {
+        val shikimoriMeta = DiscoveryMeta("Русское описание", listOf("Экшен"), "Оригинальное имя")
+        val shikimori = MockTrendingSource("shikimori", meta = shikimoriMeta)
+        val mangadex = MockTrendingSource("mangadex", meta = DiscoveryMeta("English desc", emptyList(), null))
+
+        val composite = CompositeTrendingSource(
+            shikimori = shikimori,
+            mangadex = mangadex,
+            jikan = MockTrendingSource("jikan"),
+            anilist = MockTrendingSource("anilist"),
+            isRussianLocaleProvider = { true },
+        )
+
+        val result = composite.fetchMeta("Тайтл Тест", DiscoveryMediaType.MANGA)
+        result shouldBe shikimoriMeta
+        shikimori.fetchMetaCalled shouldBe true
+        mangadex.fetchMetaCalled shouldBe false
+    }
+
+    @Test
+    fun `fetchMeta auto-translates foreign description when locale is Russian`() = runTest {
+        val englishMeta = DiscoveryMeta("A great story about hunters", listOf("Action"), "Original Name")
+        val mangadex = MockTrendingSource("mangadex", meta = englishMeta)
+        val service = io.mockk.mockk<eu.kanade.tachiyomi.ui.reader.novel.translation.GoogleTranslationService>()
+        io.mockk.coEvery { service.translateSingle("A great story about hunters", "auto", "ru", any()) } returns
+            "Отличная история об охотниках"
+
+        val composite = CompositeTrendingSource(
+            shikimori = MockTrendingSource("shikimori", shouldFail = true),
+            mangadex = mangadex,
+            jikan = MockTrendingSource("jikan"),
+            anilist = MockTrendingSource("anilist"),
+            isRussianLocaleProvider = { true },
+            translationServiceProvider = { service },
+        )
+
+        val result = composite.fetchMeta("Solo Leveling RU", DiscoveryMediaType.MANGA)
+        result?.description shouldBe "Отличная история об охотниках"
+    }
 }

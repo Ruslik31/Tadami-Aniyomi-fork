@@ -717,6 +717,7 @@ private fun HomeHubScreen(
                     previewItem = null
                     onDiscoveryLongClick?.invoke(item)
                 },
+                hazeState = LocalHomeHazeState.current,
             )
         }
     }

@@ -1814,7 +1814,7 @@
     <string name="for_you_hide">Скрыть</string>
     <string name="for_you_hidden_snackbar">Скрыто. Не будет появляться в подборках</string>
     <string name="for_you_undo">Отменить</string>
-    <string name="for_you_add_library">Добавить в библиотеку</string>
+    <string name="for_you_add_library">В библиотеку</string>
     <string name="for_you_added_snackbar">«%1$s» добавлен в библиотеку</string>
     <string name="for_you_collage_reroll">Перемешать подборку</string>
     <string name="for_you_refresh">Обновить подборку</string>
@@ -1846,7 +1846,7 @@
     <string name="pref_discovery_seed_count">Тайтлов-основ</string>
     <string name="pref_discovery_seed_count_summary">Тайтлов-основ для подборки: %1$d</string>
     <string name="for_you_add_not_found">Не найдено в установленных источниках: «%1$s»</string>
-    <string name="for_you_sheet_find">Найти в источниках</string>
+    <string name="for_you_sheet_find">В источниках</string>
     <string name="for_you_badge_taste">🎯 твой вкус</string>
     <string name="for_you_badge_season">🔥 топ сезона</string>
     <string name="for_you_badge_trend">🔥 тренд</string>

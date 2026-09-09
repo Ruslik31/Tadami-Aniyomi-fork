@@ -298,6 +298,7 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                         screenModel.hide(item)
                         sheetItem = null
                     },
+                    hazeState = hazeState,
                 )
             }
         }

@@ -1,15 +1,28 @@
 package eu.kanade.tachiyomi.data.discovery
 
+import eu.kanade.tachiyomi.ui.reader.novel.translation.GoogleTranslationService
 import kotlinx.coroutines.CancellationException
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.normalizeDiscoveryTitle
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class CompositeTrendingSource(
     private val shikimori: DiscoveryTrendingSource = ShikimoriTrendingSource(),
     private val mangadex: DiscoveryTrendingSource = MangaDexTrendingSource(),
     private val jikan: DiscoveryTrendingSource = JikanTrendingSource(),
     private val anilist: DiscoveryTrendingSource = AniListTrendingSource(),
+    private val isRussianLocaleProvider: () -> Boolean = {
+        java.util.Locale.getDefault().language.equals("ru", ignoreCase = true)
+    },
+    private val translationServiceProvider: () -> GoogleTranslationService? = {
+        try {
+            Injekt.get<GoogleTranslationService>()
+        } catch (_: Throwable) {
+            null
+        }
+    },
 ) : DiscoveryTrendingSource {
 
     override suspend fun fetch(
@@ -83,28 +96,58 @@ class CompositeTrendingSource(
         val cacheKey = "${mediaType.key}:${normalizeDiscoveryTitle(title)}"
         globalMetaCache.get(cacheKey)?.let { return it }
 
+        val isRu = isRussianLocaleProvider()
         val providers: List<Pair<String, suspend () -> DiscoveryMeta?>> = when (mediaType) {
             DiscoveryMediaType.ANIME -> listOf(
                 "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
                 "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
                 "jikan" to suspend { jikan.fetchMeta(title, mediaType) },
             )
-            DiscoveryMediaType.MANGA -> listOf(
-                "mangadex" to suspend { mangadex.fetchMeta(title, mediaType) },
-                "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
-                "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
-            )
-            DiscoveryMediaType.NOVEL -> listOf(
-                "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
-                "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
-            )
+            DiscoveryMediaType.MANGA -> if (isRu) {
+                listOf(
+                    "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
+                    "mangadex" to suspend { mangadex.fetchMeta(title, mediaType) },
+                    "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
+                )
+            } else {
+                listOf(
+                    "mangadex" to suspend { mangadex.fetchMeta(title, mediaType) },
+                    "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
+                    "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
+                )
+            }
+            DiscoveryMediaType.NOVEL -> if (isRu) {
+                listOf(
+                    "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
+                    "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
+                )
+            } else {
+                listOf(
+                    "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
+                    "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
+                )
+            }
         }
         for ((name, action) in providers) {
             try {
                 val meta = action()
                 if (meta != null && (!meta.description.isNullOrBlank() || meta.genres.isNotEmpty())) {
-                    globalMetaCache.put(cacheKey, meta)
-                    return meta
+                    val resolvedMeta = if (isRu && !meta.description.isNullOrBlank() &&
+                        !hasCyrillic(meta.description)
+                    ) {
+                        val translatedDesc = runCatching {
+                            translationServiceProvider()?.translateSingle(meta.description, "auto", "ru")
+                        }.getOrNull()
+                        if (!translatedDesc.isNullOrBlank()) {
+                            meta.copy(description = translatedDesc)
+                        } else {
+                            meta
+                        }
+                    } else {
+                        meta
+                    }
+                    globalMetaCache.put(cacheKey, resolvedMeta)
+                    return resolvedMeta
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -115,7 +158,10 @@ class CompositeTrendingSource(
         return null
     }
 
+    private fun hasCyrillic(text: String): Boolean = cyrillicRegex.containsMatchIn(text)
+
     companion object {
         private val globalMetaCache = DiscoveryLruCache<String, DiscoveryMeta>(100)
+        private val cyrillicRegex = Regex("[а-яА-ЯёЁ]")
     }
 }
