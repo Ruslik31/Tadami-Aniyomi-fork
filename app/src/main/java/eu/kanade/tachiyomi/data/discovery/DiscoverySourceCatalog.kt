@@ -31,6 +31,11 @@ interface DiscoverySourceCatalog {
         sourceId: Long,
         genres: List<String>,
     ): List<DiscoveryRowItem>
+    suspend fun latest(
+        mediaType: DiscoveryMediaType,
+        sourceId: Long,
+        page: Int = 1,
+    ): List<DiscoveryRowItem>
 }
 
 class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
@@ -43,6 +48,50 @@ class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
         sourceId: Long,
         genres: List<String>,
     ): List<DiscoveryRowItem> = fetch(mediaType, sourceId, genres = genres)
+
+    override suspend fun latest(
+        mediaType: DiscoveryMediaType,
+        sourceId: Long,
+        page: Int,
+    ): List<DiscoveryRowItem> = try {
+        when (mediaType) {
+            DiscoveryMediaType.MANGA -> {
+                val source = Injekt.get<MangaSourceManager>().getOrStub(sourceId) as? CatalogueSource
+                    ?: return emptyList()
+                val pageData = if (source.supportsLatest) {
+                    runCatching { source.getLatestUpdates(page) }.getOrElse { source.getPopularManga(page) }
+                } else {
+                    source.getPopularManga(page)
+                }
+                pageData.mangas.mapIndexed { idx, m -> rowItem(m.title, m.thumbnail_url, source.name, idx) }
+            }
+            DiscoveryMediaType.ANIME -> {
+                val source = Injekt.get<AnimeSourceManager>().getOrStub(sourceId) as? AnimeCatalogueSource
+                    ?: return emptyList()
+                val pageData = if (source.supportsLatest) {
+                    runCatching { source.getLatestUpdates(page) }.getOrElse { source.getPopularAnime(page) }
+                } else {
+                    source.getPopularAnime(page)
+                }
+                pageData.animes.mapIndexed { idx, a -> rowItem(a.title, a.thumbnail_url, source.name, idx) }
+            }
+            DiscoveryMediaType.NOVEL -> {
+                val source = Injekt.get<NovelSourceManager>().getOrStub(sourceId) as? NovelCatalogueSource
+                    ?: return emptyList()
+                val pageData = if (source.supportsLatest) {
+                    runCatching { source.getLatestUpdates(page) }.getOrElse { source.getPopularNovels(page) }
+                } else {
+                    source.getPopularNovels(page)
+                }
+                pageData.novels.mapIndexed { idx, n -> rowItem(n.title, n.thumbnail_url, source.name, idx) }
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        logcat { "[DiscoverySourceCatalog] latest FAILED source=$sourceId: ${e.message}" }
+        emptyList()
+    }
 
     private suspend fun fetch(
         mediaType: DiscoveryMediaType,

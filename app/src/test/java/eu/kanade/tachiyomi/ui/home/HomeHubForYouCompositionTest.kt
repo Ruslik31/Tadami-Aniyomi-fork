@@ -37,10 +37,25 @@ class HomeHubForYouCompositionTest {
     }
 
     @Test
-    fun `teaser limit coerced into 3 to 10`() {
-        val items = (1..12).map { suggestion(DiscoveryRowType.LIKE, "L$it", it.toLong()) }
-        composeTeaserItems(items, limit = 99).size shouldBe 10
+    fun `teaser limit coerced into 3 to 20`() {
+        val items = (1..25).map { suggestion(DiscoveryRowType.LIKE, "L$it", it.toLong()) }
+        composeTeaserItems(items, limit = 99).size shouldBe 20
         composeTeaserItems(items, limit = 1).size shouldBe 3
+    }
+
+    @Test
+    fun `for you items suppressed in hybrid with hero and in collage, visible in continue`() {
+        val dummy = listOf(
+            composeTeaserItems(listOf(suggestion(DiscoveryRowType.LIKE, "Title", 0)), 1).first(),
+        )
+        resolveForYouItems(eu.kanade.domain.ui.model.HomeHeroMode.Hybrid, hasHero = true, discovery = dummy) shouldBe
+            emptyList()
+        resolveForYouItems(eu.kanade.domain.ui.model.HomeHeroMode.Collage, hasHero = true, discovery = dummy) shouldBe
+            emptyList()
+        resolveForYouItems(eu.kanade.domain.ui.model.HomeHeroMode.Continue, hasHero = true, discovery = dummy) shouldBe
+            dummy
+        resolveForYouItems(eu.kanade.domain.ui.model.HomeHeroMode.Hybrid, hasHero = false, discovery = dummy) shouldBe
+            dummy
     }
 
     @Test

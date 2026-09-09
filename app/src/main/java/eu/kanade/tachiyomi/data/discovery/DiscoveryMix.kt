@@ -3,10 +3,10 @@ package eu.kanade.tachiyomi.data.discovery
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 
 data class DiscoveryMixQuotas(
-    val similar: Int = 6,
-    val taste: Int = 4,
-    val fresh: Int = 3,
-    val source: Int = 3,
+    val similar: Int = 10,
+    val taste: Int = 8,
+    val fresh: Int = 6,
+    val source: Int = 6,
 ) {
     val total: Int get() = similar + taste + fresh + source
 }
@@ -32,6 +32,7 @@ internal fun interleaveMix(
         ArrayDeque(rows[type].orEmpty())
     }
     val out = mutableListOf<DiscoveryRowItem>()
+    val seen = mutableSetOf<String>()
     val taken = mutableMapOf<DiscoveryRowType, Int>()
     var progressed = true
     while (out.size < total && progressed) {
@@ -39,19 +40,32 @@ internal fun interleaveMix(
         for (type in DiscoveryRowType.entries) {
             if (out.size >= total) break
             if ((taken[type] ?: 0) >= (quotaOf[type] ?: 0)) continue
-            val item = pools[type]?.removeFirstOrNull() ?: continue
-            out += item
+            val pool = pools[type] ?: continue
+            var candidate: DiscoveryRowItem? = null
+            while (pool.isNotEmpty()) {
+                val next = pool.removeFirst()
+                if (next.cleanTitle !in seen) {
+                    candidate = next
+                    break
+                }
+            }
+            if (candidate == null) continue
+            out += candidate
+            seen += candidate.cleanTitle
             taken[type] = (taken[type] ?: 0) + 1
             progressed = true
         }
     }
     if (out.size < total) {
-        val seen = out.mapTo(HashSet()) { it.cleanTitle }
         pools.values.flatten()
             .filterNot { it.cleanTitle in seen }
+            .distinctBy { it.cleanTitle }
             .sortedByDescending { it.score }
             .take(total - out.size)
-            .forEach { out += it }
+            .forEach { item ->
+                out += item
+                seen += item.cleanTitle
+            }
     }
     return out
 }
@@ -64,7 +78,7 @@ internal fun interleaveMix(
  */
 internal fun mergeSeedResults(
     perSeed: List<List<DiscoveryRowItem>>,
-    perSeedCap: Int = 2,
+    perSeedCap: Int = 4,
     overlapMultiplier: Double = 0.5,
 ): List<DiscoveryRowItem> {
     class Acc(val template: DiscoveryRowItem) {

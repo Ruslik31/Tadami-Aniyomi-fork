@@ -21,6 +21,8 @@ data class DiscoveryBuildContext(
     val hiddenCleanTitles: Set<String>,
     val tasteProfile: List<Pair<String, Double>> = emptyList(),
     val sourceId: Long = -1L,
+    val recentCleanTitles: Set<String> = emptySet(),
+    val pageOffset: Int = 1,
 )
 
 interface DiscoveryRowBuilder {

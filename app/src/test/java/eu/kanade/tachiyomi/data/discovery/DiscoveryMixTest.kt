@@ -29,6 +29,61 @@ class DiscoveryMixTest {
     }
 
     @Test
+    fun `default quotas sum to 30 items`() {
+        val quotas = DiscoveryMixQuotas()
+        quotas.total shouldBe 30
+        quotas.similar shouldBe 10
+        quotas.taste shouldBe 8
+        quotas.fresh shouldBe 6
+        quotas.source shouldBe 6
+    }
+
+    @Test
+    fun `interleave deduplicates by cleanTitle across rows`() {
+        val rows = mapOf(
+            DiscoveryRowType.LIKE to listOf(
+                item(DiscoveryRowType.LIKE, "Solo Leveling", 5.0),
+                item(DiscoveryRowType.LIKE, "Unique Like", 4.0),
+            ),
+            DiscoveryRowType.TASTE to listOf(
+                item(DiscoveryRowType.TASTE, "Solo Leveling", 4.5),
+                item(DiscoveryRowType.TASTE, "Unique Taste", 3.0),
+            ),
+            DiscoveryRowType.TREND to listOf(
+                item(DiscoveryRowType.TREND, "Solo Leveling", 4.0),
+                item(DiscoveryRowType.TREND, "Unique Trend", 2.0),
+            ),
+        )
+        val mix = interleaveMix(rows, total = 10)
+        mix.map { it.cleanTitle } shouldBe listOf("solo leveling", "unique taste", "unique trend", "unique like")
+        mix.size shouldBe 4
+    }
+
+    @Test
+    fun `interleave deduplicates intra-row duplicate items`() {
+        val rows = mapOf(
+            DiscoveryRowType.LIKE to listOf(
+                item(DiscoveryRowType.LIKE, "Solo Leveling", 5.0),
+                item(DiscoveryRowType.LIKE, "solo leveling", 4.8),
+                item(DiscoveryRowType.LIKE, "SOLO LEVELING", 4.6),
+                item(DiscoveryRowType.LIKE, "Frieren", 3.0),
+            ),
+        )
+        val mix = interleaveMix(rows, total = 10)
+        mix.map { it.cleanTitle } shouldBe listOf("solo leveling", "frieren")
+        mix.size shouldBe 2
+    }
+
+    @Test
+    fun `interleave handles zero or negative total and empty rows`() {
+        interleaveMix(emptyMap(), total = 10) shouldBe emptyList()
+        interleaveMix(mapOf(DiscoveryRowType.LIKE to listOf(item(DiscoveryRowType.LIKE, "A"))), total = 0) shouldBe
+            emptyList()
+        interleaveMix(mapOf(DiscoveryRowType.LIKE to listOf(item(DiscoveryRowType.LIKE, "A"))), total = -5) shouldBe
+            emptyList()
+    }
+
+    @Test
     fun `sparse rows yield fewer items without crash`() {
         val rows = mapOf(
             DiscoveryRowType.LIKE to listOf(item(DiscoveryRowType.LIKE, "L1", 1.0)),

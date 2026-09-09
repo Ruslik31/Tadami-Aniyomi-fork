@@ -60,11 +60,23 @@ class DiscoveryCoordinator(
         val rows = mutableMapOf<DiscoveryRowType, List<DiscoveryRowItem>>()
         for (type in DiscoveryRowType.entries) {
             val items = survivors[type] ?: continue
-            rows[type] = items
+            val valid = items
                 .filterNot { it.cleanTitle.isBlank() || it.cleanTitle in excluded || it.cleanTitle in seen }
                 .distinctBy { it.cleanTitle }
-                .onEach { seen += it.cleanTitle }
-                .take(rowLimit)
+
+            val selected = if (context.recentCleanTitles.isNotEmpty()) {
+                val fresh = valid.filterNot { it.cleanTitle in context.recentCleanTitles }
+                if (fresh.size >= rowLimit) {
+                    fresh.take(rowLimit)
+                } else {
+                    val stale = valid.filter { it.cleanTitle in context.recentCleanTitles }
+                    (fresh + stale).take(rowLimit)
+                }
+            } else {
+                valid.take(rowLimit)
+            }
+
+            rows[type] = selected.onEach { seen += it.cleanTitle }
         }
 
         DiscoveryFeed(

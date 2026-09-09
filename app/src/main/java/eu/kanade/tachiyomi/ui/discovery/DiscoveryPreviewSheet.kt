@@ -260,12 +260,12 @@ internal fun DiscoveryPreviewSheet(
                         .weight(1f)
                         .height(44.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(colors.accent),
+                        .background(colors.accent)
+                        .clickable { onAdd() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { onAdd() },
                     ) {
                         Icon(Icons.Outlined.Add, null, tint = colors.textOnAccent, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
@@ -283,12 +283,12 @@ internal fun DiscoveryPreviewSheet(
                         .height(44.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(colors.cardBackground)
-                        .border(1.dp, colors.divider, RoundedCornerShape(14.dp)),
+                        .border(1.dp, colors.divider, RoundedCornerShape(14.dp))
+                        .clickable { onFind() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { onFind() },
                     ) {
                         Icon(Icons.Outlined.Search, null, tint = colors.textPrimary, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))

@@ -62,6 +62,9 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.presentation.theme.resolveAuroraSurfaceColor
+import eu.kanade.tachiyomi.data.discovery.CompositeTrendingSource
+import eu.kanade.tachiyomi.data.discovery.DiscoveryLibraryAdder
+import eu.kanade.tachiyomi.data.discovery.DiscoveryMeta
 import eu.kanade.tachiyomi.ui.browse.BrowseTab
 import eu.kanade.tachiyomi.ui.browse.anime.source.browse.BrowseAnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.GlobalAnimeSearchScreen
@@ -70,6 +73,7 @@ import eu.kanade.tachiyomi.ui.browse.manga.source.globalsearch.GlobalMangaSearch
 import eu.kanade.tachiyomi.ui.browse.novel.source.browse.BrowseNovelSourceScreen
 import eu.kanade.tachiyomi.ui.browse.novel.source.globalsearch.GlobalNovelSearchScreen
 import eu.kanade.tachiyomi.ui.discovery.DiscoveryFeedScreen
+import eu.kanade.tachiyomi.ui.discovery.DiscoveryPreviewSheet
 import eu.kanade.tachiyomi.ui.entries.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.entries.novel.NovelScreen
@@ -78,12 +82,14 @@ import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.history.HistoriesTab
 import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryTab
 import eu.kanade.tachiyomi.ui.reader.novel.NovelReaderScreen
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.launch
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.LocalAppHaptics
 import tachiyomi.presentation.core.util.collectAsStateWithLifecycle
+import tachiyomi.core.common.i18n.stringResource as contextStringResource
 
 @Composable
 internal fun AnimeHomeHub(
@@ -481,6 +487,21 @@ private fun HomeHubScreen(
         }
     }
 
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var previewItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }
+    var previewMeta by remember { mutableStateOf<DiscoveryMeta?>(null) }
+    var previewMetaLoading by remember { mutableStateOf(false) }
+    val trendingSource = remember { CompositeTrendingSource() }
+
+    LaunchedEffect(previewItem) {
+        val item = previewItem ?: return@LaunchedEffect
+        previewMeta = null
+        previewMetaLoading = true
+        previewMeta = runCatching { trendingSource.fetchMeta(item.title, item.mediaType) }.getOrNull()
+        previewMetaLoading = false
+    }
+
     val hero = filteredContent.hero
     val history = filteredContent.history
     val recommendations = filteredContent.recommendations
@@ -503,12 +524,12 @@ private fun HomeHubScreen(
         discoveryEnabled = state.discoveryEnabled,
         discoveryCount = state.discovery.size,
     )
-    // Коллаж сам является тизером; гибрид показывает первые 3 в стрипе — рельс получает остаток.
-    val forYouItems = when (heroPresentation) {
-        HomeHeroMode.Collage -> emptyList()
-        HomeHeroMode.Hybrid -> discovery.drop(3)
-        HomeHeroMode.Continue -> discovery
-    }
+    // Коллаж и гибрид уже отображают «Для тебя» в слоте героя; для них нижний дублирующий ряд не нужен.
+    val forYouItems = resolveForYouItems(
+        heroPresentation = heroPresentation,
+        hasHero = hero != null,
+        discovery = discovery,
+    )
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -529,7 +550,8 @@ private fun HomeHubScreen(
                         ForYouSection(
                             items = discovery,
                             onMoreClick = onForYouMoreClick,
-                            onItemClick = onDiscoveryItemClick,
+                            onItemClick = { previewItem = it },
+                            onLongClick = onDiscoveryLongClick,
                         )
                     }
                 }
@@ -540,7 +562,8 @@ private fun HomeHubScreen(
                             heroPresentation == HomeHeroMode.Collage -> DiscoveryHeroCollage(
                                 items = discovery,
                                 onMoreClick = onForYouMoreClick,
-                                onItemClick = onDiscoveryItemClick,
+                                onItemClick = { previewItem = it },
+                                onLongClick = onDiscoveryLongClick,
                             )
                             heroPresentation == HomeHeroMode.Hybrid && hero != null -> Column {
                                 HeroSection(
@@ -552,9 +575,10 @@ private fun HomeHubScreen(
                                     onEntryClick = { onEntryClick(hero.entryId) },
                                 )
                                 HybridDiscoveryStrip(
-                                    items = discovery.take(3),
+                                    items = discovery,
                                     onMoreClick = onForYouMoreClick,
-                                    onItemClick = onDiscoveryItemClick,
+                                    onItemClick = { previewItem = it },
+                                    onLongClick = onDiscoveryLongClick,
                                 )
                             }
                             hero != null -> HeroSection(
@@ -602,7 +626,7 @@ private fun HomeHubScreen(
                         ForYouSection(
                             items = forYouItems,
                             onMoreClick = onForYouMoreClick,
-                            onItemClick = onDiscoveryItemClick,
+                            onItemClick = { previewItem = it },
                             onLongClick = onDiscoveryLongClick,
                         )
                     }
@@ -651,6 +675,36 @@ private fun HomeHubScreen(
                     )
                 }
             }
+        }
+        previewItem?.let { item ->
+            DiscoveryPreviewSheet(
+                item = item.toDiscoverySuggestion(),
+                meta = previewMeta,
+                isMetaLoading = previewMetaLoading,
+                onDismiss = { previewItem = null },
+                onAdd = {
+                    previewItem = null
+                    scope.launch {
+                        val adder = DiscoveryLibraryAdder()
+                        val added = adder.addFirstMatch(item.mediaType, item.title)
+                        if (added) {
+                            context.toast(
+                                context.contextStringResource(AYMR.strings.for_you_added_snackbar, item.title),
+                            )
+                        } else {
+                            onDiscoveryItemClick(item)
+                        }
+                    }
+                },
+                onFind = {
+                    previewItem = null
+                    onDiscoveryItemClick(item)
+                },
+                onHide = {
+                    previewItem = null
+                    onDiscoveryLongClick?.invoke(item)
+                },
+            )
         }
     }
 }
@@ -792,4 +846,14 @@ internal fun shouldEnableHomeHubScroll(
     // Под Welcome-блоком скролл нужен, если есть discovery-контент (тизер под онбордингом).
     if (showWelcome) return discoveryCount > 0
     return historyCount > 0 || recommendationCount > 0 || discoveryCount > 0
+}
+
+internal fun resolveForYouItems(
+    heroPresentation: HomeHeroMode,
+    hasHero: Boolean,
+    discovery: List<HomeHubDiscoveryItem>,
+): List<HomeHubDiscoveryItem> = when {
+    heroPresentation == HomeHeroMode.Collage -> emptyList()
+    heroPresentation == HomeHeroMode.Hybrid && hasHero -> emptyList()
+    else -> discovery
 }

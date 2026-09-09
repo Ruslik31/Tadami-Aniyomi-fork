@@ -4,6 +4,7 @@ import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.suggestions.SuggestionCoordinator
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.firstOrNull
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
@@ -28,17 +29,32 @@ class DiscoveryRunner(
     private val seedSources: DiscoverySeedSources,
     private val coordinatorFactory: (List<DiscoveryRowBuilder>) -> DiscoveryCoordinator = { DiscoveryCoordinator(it) },
     private val seedSelector: DiscoverySeedSelector = DiscoverySeedSelector(),
-    private val trendingFactory: () -> AniListTrendingSource = { AniListTrendingSource() },
+    private val trendingFactory: () -> DiscoveryTrendingSource = { CompositeTrendingSource() },
     private val suggestionCoordinatorFactory: () -> SuggestionCoordinator = { SuggestionCoordinator() },
     private val sourceCatalog: DiscoverySourceCatalog = AppDiscoverySourceCatalog(),
     private val sourcePreferencesProvider: () -> SourcePreferences = { Injekt.get() },
+    private val fallbackSourceIdProvider: (DiscoveryMediaType) -> Long = { mediaType ->
+        runCatching {
+            when (mediaType) {
+                DiscoveryMediaType.ANIME -> Injekt.get<tachiyomi.domain.source.anime.service.AnimeSourceManager>()
+                    .getOnlineSources().firstOrNull()?.id ?: -1L
+                DiscoveryMediaType.MANGA -> Injekt.get<tachiyomi.domain.source.manga.service.MangaSourceManager>()
+                    .getOnlineSources().firstOrNull()?.id ?: -1L
+                DiscoveryMediaType.NOVEL -> Injekt.get<tachiyomi.domain.source.novel.service.NovelSourceManager>()
+                    .getOnlineSources().firstOrNull()?.id ?: -1L
+            }
+        }.getOrDefault(-1L)
+    },
 ) {
 
-    suspend fun run(mediaTypes: List<DiscoveryMediaType> = DiscoveryMediaType.entries) {
+    suspend fun run(
+        mediaTypes: List<DiscoveryMediaType> = DiscoveryMediaType.entries,
+        isManualRefresh: Boolean = false,
+    ) {
         if (!preferences.discoveryEnabled().get()) return
         for (mediaType in mediaTypes) {
             try {
-                runFor(mediaType)
+                runFor(mediaType, isManualRefresh = isManualRefresh)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -60,8 +76,9 @@ class DiscoveryRunner(
                     .getTracksByNovelId(entryId).map { it.title }
         }
 
-    private suspend fun runFor(mediaType: DiscoveryMediaType) {
+    private suspend fun runFor(mediaType: DiscoveryMediaType, isManualRefresh: Boolean = false) {
         val candidates = seedSources.candidates(mediaType)
+        val seedOffset = if (isManualRefresh) 2 else 0
         val seeds = seedSelector.select(
             candidates,
             SeedSettings(
@@ -70,17 +87,29 @@ class DiscoveryRunner(
                 useActive14 = preferences.seedActive14().get(),
                 useAdded = preferences.seedAdded().get(),
             ),
+            offset = seedOffset,
         )
         val sourcePreferences = sourcePreferencesProvider()
-        val sourceId = when (mediaType) {
+        val preferredSourceId = when (mediaType) {
             DiscoveryMediaType.ANIME -> sourcePreferences.lastUsedAnimeSource().get()
             DiscoveryMediaType.MANGA -> sourcePreferences.lastUsedMangaSource().get()
             DiscoveryMediaType.NOVEL -> sourcePreferences.lastUsedNovelSource().get()
         }
+        val sourceId = if (preferredSourceId > 0) preferredSourceId else fallbackSourceIdProvider(mediaType)
+
         val seedsWithTracks = seeds.map { seed ->
             val trackTitles = runCatching { trackTitles(mediaType, seed.entryId) }.getOrDefault(emptyList())
             if (trackTitles.isEmpty()) seed else seed.copy(altTitles = (seed.altTitles + trackTitles).distinct())
         }
+
+        val currentSuggestions = runCatching { repository.subscribe(mediaType).firstOrNull() }.getOrNull().orEmpty()
+        val recentCleanTitles = if (isManualRefresh) {
+            currentSuggestions.mapTo(HashSet()) { it.cleanTitle }
+        } else {
+            emptySet()
+        }
+        val pageOffset = if (isManualRefresh) 2 else 1
+
         val context = DiscoveryBuildContext(
             mediaType = mediaType,
             seeds = seedsWithTracks,
@@ -89,6 +118,8 @@ class DiscoveryRunner(
             hiddenCleanTitles = repository.getHiddenTitles(mediaType),
             tasteProfile = buildTasteProfile(candidates),
             sourceId = sourceId,
+            recentCleanTitles = recentCleanTitles,
+            pageOffset = pageOffset,
         )
         // Выключенные в настройках ряды: чистим их записи в БД, чтобы UI не показывал «зомби».
         if (!preferences.rowLikeEnabled().get()) {
@@ -114,6 +145,7 @@ class DiscoveryRunner(
                 add(
                     DiscoveryTrendRowBuilder(
                         trending = trendingFactory(),
+                        catalog = sourceCatalog,
                         seasonProvider = {
                             when (preferences.trendSeason().get()) {
                                 "next" -> TrendSeason.NEXT

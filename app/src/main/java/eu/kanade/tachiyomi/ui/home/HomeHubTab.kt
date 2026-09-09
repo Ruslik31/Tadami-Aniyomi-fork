@@ -940,7 +940,7 @@ object HomeHubTab : Tab {
                 HomeHubSection.Novel -> tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL
             }
             if (discoveryRepository.lastUpdatedAt(mediaType) == null) {
-                eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.refreshNow(context)
+                eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.refreshNow(context, mediaType)
             }
         }
         var hiddenSnackItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }

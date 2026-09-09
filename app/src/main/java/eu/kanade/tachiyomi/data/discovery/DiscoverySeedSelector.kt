@@ -25,7 +25,11 @@ data class SeedSettings(
 class DiscoverySeedSelector(
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
-    fun select(candidates: List<DiscoverySeedInput>, settings: SeedSettings): List<DiscoverySeedInput> {
+    fun select(
+        candidates: List<DiscoverySeedInput>,
+        settings: SeedSettings,
+        offset: Int = 0,
+    ): List<DiscoverySeedInput> {
         val now = nowMs()
         val valid = candidates.filter { it.title.isNotBlank() }
         val completedWindow = now - settings.completedWindowDays * DAY_MS
@@ -54,9 +58,13 @@ class DiscoverySeedSelector(
             emptyList()
         }
 
-        return (completed + active + added)
-            .distinctBy { it.entryId }
-            .take(settings.maxSeeds.coerceIn(1, 5))
+        val distinct = (completed + active + added).distinctBy { it.entryId }
+        val max = settings.maxSeeds.coerceIn(1, 5)
+        if (distinct.size <= max || offset <= 0) {
+            return distinct.take(max)
+        }
+        val safeOffset = offset % distinct.size
+        return (distinct.drop(safeOffset) + distinct.take(safeOffset)).take(max)
     }
 
     private companion object {

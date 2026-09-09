@@ -30,9 +30,10 @@ data class DiscoveryTrendingItem(
     val title: String,
     val cleanTitle: String,
     val coverUrl: String?,
-    val anilistId: Long,
+    val anilistId: Long = 0L,
     val seasonLabel: String?,
     val genres: List<String> = emptyList(),
+    val provider: String = "anilist_trend",
 )
 
 data class DiscoveryMeta(
@@ -42,7 +43,12 @@ data class DiscoveryMeta(
 )
 
 enum class TrendSeason { CURRENT, NEXT, BOTH }
-enum class TrendSort(val anilist: String) { POPULARITY("POPULARITY_DESC"), SCORE("SCORE_DESC") }
+
+enum class TrendSort(val anilist: String) {
+    POPULARITY("POPULARITY_DESC"),
+    SCORE("SCORE_DESC"),
+    TRENDING("TRENDING_DESC"),
+}
 
 internal fun resolveSeasonWindow(nowMonth: Int, nowYear: Int, next: Boolean): Pair<String, Int> {
     val order = listOf("WINTER", "SPRING", "SUMMER", "FALL")
@@ -67,21 +73,23 @@ internal fun parseTrendingPage(page: JsonObject, seasonLabel: String? = null): L
                 anilistId = media["id"]?.jsonPrimitive?.longOrNull ?: 0L,
                 seasonLabel = seasonLabel,
                 genres = (media["genres"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
+                provider = "anilist_trend",
             )
         }
         .orEmpty()
 
-class AniListTrendingSource(
+open class AniListTrendingSource(
     private val clientProvider: () -> okhttp3.OkHttpClient = { Injekt.get<NetworkHelper>().client },
     private val jsonProvider: () -> Json = { Injekt.get() }, // lazy: конструктор не требует Injekt-реестр (юнит-тесты)
-) {
+) : DiscoveryTrendingSource {
 
     private val metaCache = mutableMapOf<String, DiscoveryMeta>()
 
-    suspend fun fetch(
+    override suspend fun fetch(
         mediaType: DiscoveryMediaType,
         season: TrendSeason,
         sort: TrendSort,
+        page: Int,
     ): List<DiscoveryTrendingItem> {
         return try {
             when (mediaType) {
@@ -94,11 +102,11 @@ class AniListTrendingSource(
                     }
                     windows.flatMap { next ->
                         val (s, year) = resolveSeasonWindow(now.monthValue, now.year, next)
-                        querySeason(s, year, sort, if (next) "next" else "current")
+                        querySeason(s, year, sort, if (next) "next" else "current", page = page)
                     }
                 }
-                DiscoveryMediaType.MANGA -> queryPopular(type = "MANGA", format = null, sort = sort)
-                DiscoveryMediaType.NOVEL -> queryPopular(type = "MANGA", format = "NOVEL", sort = sort)
+                DiscoveryMediaType.MANGA -> queryPopular(type = "MANGA", format = null, sort = sort, page = page)
+                DiscoveryMediaType.NOVEL -> queryPopular(type = "MANGA", format = "NOVEL", sort = sort, page = page)
             }
         } catch (e: CancellationException) {
             throw e
@@ -114,12 +122,13 @@ class AniListTrendingSource(
         year: Int,
         sort: TrendSort,
         label: String,
+        page: Int = 1,
     ): List<DiscoveryTrendingItem> {
         val query = """
-            query (${'$'}season: MediaSeason, ${'$'}year: Int, ${'$'}sort: [MediaSort]) {
-              Page(page: 1, perPage: 20) {
+            query (${'$'}season: MediaSeason, ${'$'}year: Int, ${'$'}sort: [MediaSort], ${'$'}page: Int) {
+              Page(page: ${'$'}page, perPage: 50) {
                 media(type: ANIME, season: ${'$'}season, seasonYear: ${'$'}year, sort: ${'$'}sort) {
-                  id title { romaji } coverImage { large }
+                  id title { romaji english native } coverImage { large }
                 }
               }
             }
@@ -131,6 +140,7 @@ class AniListTrendingSource(
                 buildJsonObject {
                     put("season", season)
                     put("year", year)
+                    put("page", page)
                     put(
                         "sort",
                         buildJsonArray {
@@ -143,13 +153,18 @@ class AniListTrendingSource(
         return post(payload).let { parseTrendingPage(it, label) }
     }
 
-    private suspend fun queryPopular(type: String, format: String?, sort: TrendSort): List<DiscoveryTrendingItem> {
+    private suspend fun queryPopular(
+        type: String,
+        format: String?,
+        sort: TrendSort,
+        page: Int = 1,
+    ): List<DiscoveryTrendingItem> {
         val formatArg = if (format != null) ", format: ${'$'}format" else ""
         val query = """
-            query (${'$'}type: MediaType, ${'$'}sort: [MediaSort]${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
-              Page(page: 1, perPage: 20) {
+            query (${'$'}type: MediaType, ${'$'}sort: [MediaSort], ${'$'}page: Int${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
+              Page(page: ${'$'}page, perPage: 50) {
                 media(type: ${'$'}type, sort: ${'$'}sort$formatArg) {
-                  id title { romaji } coverImage { large }
+                  id title { romaji english native } coverImage { large }
                 }
               }
             }
@@ -160,6 +175,7 @@ class AniListTrendingSource(
                 "variables",
                 buildJsonObject {
                     put("type", type)
+                    put("page", page)
                     put(
                         "sort",
                         buildJsonArray {
@@ -174,10 +190,11 @@ class AniListTrendingSource(
     }
 
     /** Кандидаты ряда «Твой вкус»: AniList `genre_in` по топ-жанрам профиля. */
-    suspend fun fetchByGenres(
+    override suspend fun fetchByGenres(
         mediaType: DiscoveryMediaType,
         genres: List<String>,
         sort: TrendSort,
+        page: Int,
     ): List<DiscoveryTrendingItem> {
         if (genres.isEmpty()) return emptyList()
         return try {
@@ -186,7 +203,7 @@ class AniListTrendingSource(
                 DiscoveryMediaType.MANGA -> "MANGA" to null
                 DiscoveryMediaType.NOVEL -> "MANGA" to "NOVEL"
             }
-            queryByGenres(type, format, genres, sort)
+            queryByGenres(type, format, genres, sort, page = page)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -200,13 +217,14 @@ class AniListTrendingSource(
         format: String?,
         genres: List<String>,
         sort: TrendSort,
+        page: Int = 1,
     ): List<DiscoveryTrendingItem> {
         val formatArg = if (format != null) ", format: ${'$'}format" else ""
         val query = """
-            query (${'$'}type: MediaType, ${'$'}genres: [String], ${'$'}sort: [MediaSort]${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
-              Page(page: 1, perPage: 20) {
+            query (${'$'}type: MediaType, ${'$'}genres: [String], ${'$'}sort: [MediaSort], ${'$'}page: Int${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
+              Page(page: ${'$'}page, perPage: 50) {
                 media(type: ${'$'}type, genre_in: ${'$'}genres, sort: ${'$'}sort$formatArg) {
-                  id title { romaji } coverImage { large } genres
+                  id title { romaji english native } coverImage { large } genres
                 }
               }
             }
@@ -218,6 +236,7 @@ class AniListTrendingSource(
                 buildJsonObject {
                     put("type", type)
                     put("genres", buildJsonArray { genres.forEach { add(JsonPrimitive(it)) } })
+                    put("page", page)
                     put(
                         "sort",
                         buildJsonArray {
@@ -232,7 +251,7 @@ class AniListTrendingSource(
     }
 
     /** Лёгкие метаданные для превью-листа: описание/жанры/альт-тайтл по тайтлу (кэш в памяти). */
-    suspend fun fetchMeta(title: String, mediaType: DiscoveryMediaType): DiscoveryMeta? {
+    override suspend fun fetchMeta(title: String, mediaType: DiscoveryMediaType): DiscoveryMeta? {
         metaCache[title]?.let { return it }
         return try {
             val type = when (mediaType) {
@@ -273,7 +292,7 @@ class AniListTrendingSource(
                     ?.replace(Regex("<[^>]*>"), "")
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() },
-                genres = (media["genres"] as? JsonArray)?.mapNotNull { it.jsonPrimitive?.contentOrNull }.orEmpty(),
+                genres = (media["genres"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
                 altTitle = (media["title"] as? JsonObject)?.let { t ->
                     t["english"]?.jsonPrimitive?.contentOrNull ?: t["native"]?.jsonPrimitive?.contentOrNull
                 },

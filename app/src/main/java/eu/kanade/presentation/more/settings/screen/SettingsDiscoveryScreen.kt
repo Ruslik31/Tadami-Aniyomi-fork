@@ -140,6 +140,8 @@ object SettingsDiscoveryScreen : SearchableSettings {
                     Preference.PreferenceItem.ListPreference(
                         preference = discoveryPreferences.refreshIntervalHours(),
                         entries = persistentMapOf(
+                            2 to stringResource(AYMR.strings.pref_discovery_interval_2),
+                            6 to stringResource(AYMR.strings.pref_discovery_interval_6),
                             12 to stringResource(AYMR.strings.pref_discovery_interval_12),
                             24 to stringResource(AYMR.strings.pref_discovery_interval_24),
                             48 to stringResource(AYMR.strings.pref_discovery_interval_48),
@@ -184,6 +186,9 @@ object SettingsDiscoveryScreen : SearchableSettings {
                             8 to "8",
                             9 to "9",
                             10 to "10",
+                            12 to "12",
+                            16 to "16",
+                            20 to "20",
                         ),
                         title = stringResource(AYMR.strings.pref_discovery_teaser_count),
                         subtitleProvider = { value, _ -> value.toString() },

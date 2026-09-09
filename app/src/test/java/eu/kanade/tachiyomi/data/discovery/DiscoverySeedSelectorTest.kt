@@ -56,4 +56,17 @@ class DiscoverySeedSelectorTest {
         )
         out shouldBe emptyList()
     }
+
+    @Test
+    fun `offset shifts selected seeds circularly`() {
+        val seeds = (1..6).map { seed(it.toLong()).copy(isCompleted = true, completedAt = now) }
+        val out0 = selector.select(seeds, SeedSettings(maxSeeds = 3), offset = 0)
+        out0.map { it.entryId } shouldBe listOf(1L, 2L, 3L)
+
+        val out2 = selector.select(seeds, SeedSettings(maxSeeds = 3), offset = 2)
+        out2.map { it.entryId } shouldBe listOf(3L, 4L, 5L)
+
+        val out5 = selector.select(seeds, SeedSettings(maxSeeds = 3), offset = 5)
+        out5.map { it.entryId } shouldBe listOf(6L, 1L, 2L)
+    }
 }

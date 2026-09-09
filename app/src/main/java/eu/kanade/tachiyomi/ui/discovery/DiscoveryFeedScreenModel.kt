@@ -171,7 +171,7 @@ class DiscoveryFeedScreenModel(
     fun refreshNow() {
         val now = System.currentTimeMillis()
         if (!canManualRefresh(state.value.lastUpdatedAt, now)) return
-        DiscoveryUpdateJob.refreshNow(context)
+        DiscoveryUpdateJob.refreshNow(context, state.value.mediaType)
     }
 
     fun hide(item: DiscoverySuggestion) {

@@ -12,8 +12,8 @@ class DiscoveryPreferencesTest {
         val prefs = DiscoveryPreferences(InMemoryPreferenceStore())
         prefs.discoveryEnabled().get() shouldBe true
         prefs.homeHeroMode().get() shouldBe "continue"
-        prefs.refreshIntervalHours().get() shouldBe 24
-        prefs.teaserCount().get() shouldBe 6
+        prefs.refreshIntervalHours().get() shouldBe 2
+        prefs.teaserCount().get() shouldBe 16
         prefs.seedCount().get() shouldBe 5
         prefs.seedCompleted().get() shouldBe true
         prefs.seedActive14().get() shouldBe true

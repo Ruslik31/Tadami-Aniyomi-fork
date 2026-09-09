@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.Icon
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,7 +81,7 @@ internal fun composeTeaserItems(
     items: List<DiscoverySuggestion>,
     limit: Int,
 ): List<HomeHubDiscoveryItem> {
-    val capped = limit.coerceIn(3, 10)
+    val capped = limit.coerceIn(3, 20)
     val rows = items.groupBy { it.rowType }
         .mapValues { (_, row) ->
             row.map { s ->
@@ -158,6 +160,21 @@ internal fun HomeHubDiscoveryItem.toSuggestionItem(): SuggestionItem = Suggestio
     },
 )
 
+internal fun HomeHubDiscoveryItem.toDiscoverySuggestion(): DiscoverySuggestion = DiscoverySuggestion(
+    id = 0L,
+    mediaType = mediaType,
+    rowType = rowType,
+    title = title,
+    cleanTitle = cleanTitle,
+    coverUrl = coverUrl,
+    reason = reasonPayload,
+    seedTitle = seedTitle,
+    provider = provider,
+    score = 1.0,
+    position = 0L,
+    createdAt = 0L,
+)
+
 // ============================ UI ============================
 
 /** Микро-бейдж сигнала для home-карточки (маппинг HomeHubDiscoveryItem → бейдж). */
@@ -180,7 +197,6 @@ internal fun DiscoveryPosterCard(
     subtitle: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    badge: DiscoveryBadge? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
@@ -201,24 +217,7 @@ internal fun DiscoveryPosterCard(
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
                 .clip(posterShape)
-                .background(colors.cardBackground)
-                .then(
-                    if (colors.isDark || colors.isEInk) {
-                        Modifier.border(
-                            width = 1.dp,
-                            color = if (colors.isDark) {
-                                Color.White.copy(
-                                    alpha = 0.06f,
-                                )
-                            } else {
-                                Color.Black.copy(alpha = 0.04f)
-                            },
-                            shape = posterShape,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
+                .background(colors.cardBackground),
         ) {
             AsyncImage(
                 model = coverUrl,
@@ -229,23 +228,6 @@ internal fun DiscoveryPosterCard(
                 error = fallbackPainter,
                 fallback = fallbackPainter,
             )
-            badge?.let { b ->
-                Box(
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(badgeColor(b.colorKind))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Text(
-                        stringResource(b.textRes),
-                        color = colors.textOnAccent,
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
-            }
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -253,6 +235,7 @@ internal fun DiscoveryPosterCard(
             color = colors.textPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
+            minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             lineHeight = 15.sp,
@@ -264,8 +247,10 @@ internal fun DiscoveryPosterCard(
                 color = colors.accent,
                 fontSize = 10.5.sp,
                 fontWeight = FontWeight.SemiBold,
+                minLines = 1,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                lineHeight = 13.sp,
                 modifier = Modifier.padding(start = 2.dp, end = 2.dp, top = 3.dp),
             )
         }
@@ -280,7 +265,7 @@ private fun discoveryReasonOrNull(item: HomeHubDiscoveryItem): String? {
     val similarTemplate = stringResource(AYMR.strings.for_you_reason_similar)
     val trendTemplate = stringResource(AYMR.strings.for_you_reason_trending)
     val nextTemplate = stringResource(AYMR.strings.for_you_reason_season_next)
-    return discoveryReasonText(item, similarTemplate, trendTemplate, nextTemplate)
+    return discoveryReasonText(item, similarTemplate, trendTemplate, nextTemplate).orEmpty()
 }
 
 /** Тизер-секция «Для тебя» на Home Hub: заголовок + «Ещё» + горизонтальный рельс карточек. */
@@ -359,7 +344,6 @@ internal fun ForYouSection(
                     title = item.title,
                     coverUrl = item.coverUrl,
                     subtitle = discoveryReasonOrNull(item),
-                    badge = discoveryBadgeOf(item),
                     onLongClick = onLongClick?.let { { it(item) } },
                     onClick = {
                         appHaptics.tap()
@@ -377,6 +361,7 @@ internal fun HybridDiscoveryStrip(
     items: List<HomeHubDiscoveryItem>,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
+    onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
     val colors = AuroraTheme.colors
@@ -415,28 +400,41 @@ internal fun HybridDiscoveryStrip(
             )
         }
         Spacer(Modifier.height(10.dp))
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items.forEach { item ->
+            items(
+                items = items,
+                key = { it.rowType.key + ":" + it.cleanTitle },
+                contentType = { "hybrid_discovery_tile" },
+            ) { item ->
                 Box(
                     Modifier
-                        .weight(1f)
+                        .width(136.dp)
                         .height(150.dp)
                         .clip(tileShape)
                         .background(colors.cardBackground)
                         .then(
-                            if (colors.isDark || colors.isEInk) {
-                                Modifier.border(1.dp, colors.divider, tileShape)
+                            if (onLongClick != null) {
+                                Modifier.combinedClickable(
+                                    onClick = {
+                                        appHaptics.tap()
+                                        onItemClick(item)
+                                    },
+                                    onLongClick = {
+                                        appHaptics.tap()
+                                        onLongClick(item)
+                                    },
+                                )
                             } else {
-                                Modifier
+                                Modifier.clickable {
+                                    appHaptics.tap()
+                                    onItemClick(item)
+                                }
                             },
-                        )
-                        .clickable {
-                            appHaptics.tap()
-                            onItemClick(item)
-                        },
+                        ),
                 ) {
                     AsyncImage(
                         model = item.coverUrl,
@@ -463,6 +461,7 @@ internal fun HybridDiscoveryStrip(
                             color = if (colors.isEInk) Color.Black else Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
+                            minLines = 2,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             lineHeight = 15.sp,
@@ -473,9 +472,66 @@ internal fun HybridDiscoveryStrip(
                                 color = colors.accent,
                                 fontSize = 9.5.sp,
                                 fontWeight = FontWeight.SemiBold,
+                                minLines = 1,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(top = 3.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            if (items.isNotEmpty()) {
+                item(key = "hybrid_discovery_more", contentType = "hybrid_discovery_more") {
+                    Box(
+                        modifier = Modifier
+                            .width(110.dp)
+                            .height(150.dp)
+                            .clip(tileShape)
+                            .background(colors.cardBackground)
+                            .border(
+                                1.dp,
+                                Brush.verticalGradient(
+                                    listOf(
+                                        colors.accent.copy(alpha = 0.35f),
+                                        Color.Transparent,
+                                    ),
+                                ),
+                                tileShape,
+                            )
+                            .clickable {
+                                appHaptics.tap()
+                                onMoreClick()
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(12.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.accent.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.ArrowForward,
+                                    contentDescription = null,
+                                    tint = colors.accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                stringResource(AYMR.strings.for_you_all_picks),
+                                color = colors.textPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 14.sp,
                             )
                         }
                     }
@@ -494,6 +550,7 @@ internal fun DiscoveryHeroCollage(
     items: List<HomeHubDiscoveryItem>,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
+    onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
     val colors = AuroraTheme.colors
@@ -533,6 +590,7 @@ internal fun DiscoveryHeroCollage(
                 big = true,
                 modifier = Modifier.weight(1.55f).fillMaxHeight(),
                 onClick = { onItemClick(tiles[0]) },
+                onLongClick = onLongClick?.let { { it(tiles[0]) } },
             )
             if (col1.isNotEmpty()) {
                 Spacer(Modifier.width(5.dp))
@@ -544,6 +602,7 @@ internal fun DiscoveryHeroCollage(
                             big = false,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             onClick = { onItemClick(item) },
+                            onLongClick = onLongClick?.let { { it(item) } },
                         )
                     }
                 }
@@ -558,6 +617,7 @@ internal fun DiscoveryHeroCollage(
                             big = false,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             onClick = { onItemClick(item) },
+                            onLongClick = onLongClick?.let { { it(item) } },
                         )
                     }
                 }
@@ -634,9 +694,11 @@ private fun CollageTile(
     big: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
+    val appHaptics = LocalAppHaptics.current
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Wide)
     val tileShape = RoundedCornerShape(16.dp)
 
@@ -651,7 +713,25 @@ private fun CollageTile(
                     Modifier
                 },
             )
-            .clickable(onClick = onClick),
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        onClick = {
+                            appHaptics.tap()
+                            onClick()
+                        },
+                        onLongClick = {
+                            appHaptics.tap()
+                            onLongClick()
+                        },
+                    )
+                } else {
+                    Modifier.clickable {
+                        appHaptics.tap()
+                        onClick()
+                    }
+                },
+            ),
     ) {
         AsyncImage(
             model = buildAuroraCoverImageRequest(context, item.coverUrl),

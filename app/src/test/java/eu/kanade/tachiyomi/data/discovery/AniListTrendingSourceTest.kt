@@ -39,4 +39,21 @@ class AniListTrendingSourceTest {
         val json = Json.parseToJsonElement("""{"data":{"Page":{"media":[]}}}""") as JsonObject
         parseTrendingPage(json) shouldBe emptyList()
     }
+
+    @Test
+    fun `parse falls back to english and native when romaji is null`() {
+        val json = Json.parseToJsonElement(
+            """
+            {"data":{"Page":{"media":[
+              {"id":1,"title":{"romaji":null,"english":"Solo Leveling","native":"나 혼자만 레벨업"},"coverImage":{"large":"http://c/1.jpg"}},
+              {"id":2,"title":{"romaji":null,"english":null,"native":"葬送のフリーレン"},"coverImage":{"large":"http://c/2.jpg"}},
+              {"id":3,"title":{"romaji":null,"english":null,"native":null},"coverImage":{"large":"http://c/3.jpg"}}
+            ]}}}
+            """.trimIndent(),
+        ) as JsonObject
+        val items = parseTrendingPage(json)
+        items.map { it.title } shouldBe listOf("Solo Leveling", "葬送のフリーレン")
+        items[0].cleanTitle shouldBe "solo leveling"
+        items[1].cleanTitle shouldBe "葬送のフリーレン"
+    }
 }

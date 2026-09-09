@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -14,6 +15,7 @@ import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.CancellationException
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.TimeUnit
@@ -30,7 +32,14 @@ class DiscoveryUpdateJob(context: Context, workerParams: WorkerParameters) :
         val preferences = Injekt.get<DiscoveryPreferences>()
         if (!preferences.discoveryEnabled().get()) return Result.success()
         return try {
-            Injekt.get<DiscoveryRunner>().run()
+            val targetKey = inputData.getString(KEY_TARGET_MEDIA_TYPE)
+            val mediaTypes = if (targetKey != null) {
+                listOfNotNull(DiscoveryMediaType.fromKey(targetKey))
+            } else {
+                DiscoveryMediaType.entries
+            }
+            val isManual = tags.contains(TAG_MANUAL)
+            Injekt.get<DiscoveryRunner>().run(mediaTypes, isManualRefresh = isManual)
             Result.success()
         } catch (e: CancellationException) {
             throw e
@@ -88,11 +97,19 @@ class DiscoveryUpdateJob(context: Context, workerParams: WorkerParameters) :
             context.workManager.enqueueUniqueWork(TAG_AFTER_LIBRARY, ExistingWorkPolicy.REPLACE, request)
         }
 
-        fun refreshNow(context: Context) {
+        const val KEY_TARGET_MEDIA_TYPE = "target_media_type"
+
+        fun refreshNow(context: Context, mediaType: DiscoveryMediaType? = null) {
             val preferences = Injekt.get<DiscoveryPreferences>()
             if (!preferences.discoveryEnabled().get()) return
+            val inputData = Data.Builder().apply {
+                if (mediaType != null) {
+                    putString(KEY_TARGET_MEDIA_TYPE, mediaType.key)
+                }
+            }.build()
             val request = OneTimeWorkRequestBuilder<DiscoveryUpdateJob>()
                 .addTag(TAG_MANUAL)
+                .setInputData(inputData)
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(networkType(preferences))

@@ -1852,6 +1852,8 @@
     <string name="pref_discovery_trend_sort_score">Рейтинг</string>
     <string name="pref_discovery_group_updates">Обновление и сеть</string>
     <string name="pref_discovery_refresh_interval">Интервал фонового обновления</string>
+    <string name="pref_discovery_interval_2">Каждые 2 часа</string>
+    <string name="pref_discovery_interval_6">Каждые 6 часов</string>
     <string name="pref_discovery_interval_12">Каждые 12 часов</string>
     <string name="pref_discovery_interval_24">Каждые 24 часа</string>
     <string name="pref_discovery_interval_48">Каждые 48 часов</string>

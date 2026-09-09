@@ -22,10 +22,10 @@ class DiscoveryPreferences(private val preferenceStore: PreferenceStore) {
     fun trendSeason(): Preference<String> = preferenceStore.getString("discovery_trend_season", "current")
     fun trendSort(): Preference<String> = preferenceStore.getString("discovery_trend_sort", "popularity")
 
-    fun refreshIntervalHours(): Preference<Int> = preferenceStore.getInt("discovery_refresh_interval", 24)
+    fun refreshIntervalHours(): Preference<Int> = preferenceStore.getInt("discovery_refresh_interval", 2)
     fun refreshAfterLibrary(): Preference<Boolean> = preferenceStore.getBoolean("discovery_refresh_after_library", true)
     fun refreshWifiOnly(): Preference<Boolean> = preferenceStore.getBoolean("discovery_refresh_wifi_only", false)
 
-    fun teaserCount(): Preference<Int> = preferenceStore.getInt("discovery_teaser_count", 6)
+    fun teaserCount(): Preference<Int> = preferenceStore.getInt("discovery_teaser_count", 16)
     fun showReasons(): Preference<Boolean> = preferenceStore.getBoolean("discovery_show_reasons", true)
 }

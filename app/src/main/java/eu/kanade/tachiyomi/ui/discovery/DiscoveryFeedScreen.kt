@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,8 +50,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,8 +80,10 @@ import eu.kanade.presentation.components.buildAuroraCoverImageRequest
 import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
 import eu.kanade.presentation.entries.components.aurora.rememberAuroraPosterColorFilter
 import eu.kanade.presentation.theme.AuroraTheme
+import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
+import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.data.discovery.AniListTrendingSource
+import eu.kanade.tachiyomi.data.discovery.CompositeTrendingSource
 import eu.kanade.tachiyomi.data.discovery.DiscoveryMeta
 import eu.kanade.tachiyomi.ui.browse.anime.source.browse.BrowseAnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.GlobalAnimeSearchScreen
@@ -135,7 +143,7 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
         var sheetItem by remember { mutableStateOf<DiscoverySuggestion?>(null) }
         var sheetMeta by remember { mutableStateOf<DiscoveryMeta?>(null) }
         var sheetMetaLoading by remember { mutableStateOf(false) }
-        val trendingSource = remember { AniListTrendingSource() }
+        val trendingSource = remember { CompositeTrendingSource() }
 
         val navigateFor: (DiscoverySuggestion) -> Unit = { item ->
             scope.launch {
@@ -176,30 +184,74 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
             sheetMetaLoading = false
         }
 
-        Box(Modifier.fillMaxSize().background(AuroraTheme.colors.background)) {
-            Column(Modifier.fillMaxSize()) {
-                FeedToolbar(
-                    state = state,
-                    hazeState = hazeState,
-                    onBack = { navigator.pop() },
-                    onRefresh = { screenModel.refreshNow() },
-                )
-                FeedTabs(tab = tab, onTab = { tab = it })
-                FeedProviderChips(
-                    options = providerOptions(state),
-                    selected = provider,
-                    onSelect = { provider = it },
-                )
-                FeedBody(
-                    state = state,
-                    hazeState = hazeState,
-                    tab = tab,
-                    provider = provider,
-                    onItemClick = { sheetItem = it },
-                    onItemLongClick = { screenModel.hide(it) },
-                    onItemAdd = { screenModel.addToLibrary(it) },
-                    onRetry = { screenModel.refreshNow() },
-                )
+        val colors = AuroraTheme.colors
+        val auroraAdaptiveSpec = rememberAuroraAdaptiveSpec()
+        val contentMaxWidthDp = auroraAdaptiveSpec.updatesMaxWidthDp ?: auroraAdaptiveSpec.entryMaxWidthDp
+        var topBarHeightPx by remember { mutableIntStateOf(0) }
+        val density = LocalDensity.current
+        val topBarHeightDp = with(density) { topBarHeightPx.toDp() }
+
+        Box(Modifier.fillMaxSize().background(colors.background)) {
+            FeedBody(
+                state = state,
+                hazeState = hazeState,
+                tab = tab,
+                provider = provider,
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = if (topBarHeightDp > 0.dp) topBarHeightDp + 8.dp else 140.dp,
+                    bottom = 24.dp,
+                ),
+                onItemClick = { sheetItem = it },
+                onItemLongClick = { screenModel.hide(it) },
+                onItemAdd = { screenModel.addToLibrary(it) },
+                onRetry = { screenModel.refreshNow() },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .auroraCenteredMaxWidth(contentMaxWidthDp),
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .onSizeChanged { topBarHeightPx = it.height }
+                    .hazeEffect(
+                        state = hazeState,
+                        style = HazeStyle(
+                            backgroundColor = colors.background,
+                            tint = HazeTint(colors.surface.copy(alpha = if (colors.isDark) 0.72f else 0.82f)),
+                            blurRadius = 22.dp,
+                            noiseFactor = 0.10f,
+                        ),
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .auroraCenteredMaxWidth(contentMaxWidthDp),
+                ) {
+                    FeedToolbar(
+                        state = state,
+                        onBack = { navigator.pop() },
+                        onRefresh = { screenModel.refreshNow() },
+                    )
+                    val tabCounts = remember(state) {
+                        FeedSignalTab.entries.associateWith { itemsForTab(state, it).size }
+                    }
+                    FeedTabs(tab = tab, counts = tabCounts, onTab = { tab = it })
+                    FeedProviderChips(
+                        options = providerOptions(state),
+                        selected = provider,
+                        onSelect = { provider = it },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
             }
             FeedSnackbar(
                 state = state,
@@ -235,7 +287,6 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
 @Composable
 private fun FeedToolbar(
     state: DiscoveryFeedUiState,
-    hazeState: HazeState,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
 ) {
@@ -253,15 +304,6 @@ private fun FeedToolbar(
         Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .hazeEffect(
-                state = hazeState,
-                style = HazeStyle(
-                    backgroundColor = colors.background,
-                    tint = HazeTint(colors.surface.copy(alpha = if (colors.isDark) 0.72f else 0.82f)),
-                    blurRadius = 22.dp,
-                    noiseFactor = 0.10f,
-                ),
-            )
             .padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -299,8 +341,13 @@ private fun FeedToolbar(
 }
 
 @Composable
-private fun FeedTabs(tab: FeedSignalTab, onTab: (FeedSignalTab) -> Unit) {
+private fun FeedTabs(
+    tab: FeedSignalTab,
+    counts: Map<FeedSignalTab, Int>,
+    onTab: (FeedSignalTab) -> Unit,
+) {
     val colors = AuroraTheme.colors
+    val isDark = colors.isDark
     val appHaptics = LocalAppHaptics.current
     Row(
         Modifier
@@ -318,31 +365,122 @@ private fun FeedTabs(tab: FeedSignalTab, onTab: (FeedSignalTab) -> Unit) {
                 FeedSignalTab.SOURCE -> stringResource(AYMR.strings.for_you_tab_source)
             }
             val active = tab == signal
-            Box(
+            val count = counts[signal] ?: 0
+
+            val topBgAlpha = when {
+                active -> if (isDark) 0.28f else 0.18f
+                isDark -> 0.08f
+                else -> 0.05f
+            }
+            val bottomBgAlpha = when {
+                active -> if (isDark) 0.08f else 0.05f
+                isDark -> 0.02f
+                else -> 0.01f
+            }
+            val topBorderAlpha = when {
+                active -> if (isDark) 0.85f else 0.95f
+                isDark -> 0.22f
+                else -> 0.18f
+            }
+            val bottomBorderAlpha = when {
+                active -> if (isDark) 0.25f else 0.18f
+                isDark -> 0.06f
+                else -> 0.04f
+            }
+
+            val bgBrush = if (active) {
+                Brush.verticalGradient(
+                    listOf(
+                        colors.accent.copy(alpha = topBgAlpha),
+                        colors.accent.copy(alpha = bottomBgAlpha),
+                    ),
+                )
+            } else {
+                val tint = if (isDark) Color.White else Color.Black
+                Brush.verticalGradient(
+                    listOf(
+                        tint.copy(alpha = topBgAlpha),
+                        tint.copy(alpha = bottomBgAlpha),
+                    ),
+                )
+            }
+
+            val borderBrush = if (active) {
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = topBorderAlpha),
+                        colors.accent.copy(alpha = bottomBorderAlpha),
+                    ),
+                )
+            } else {
+                val borderTint = if (isDark) Color.White else Color.Black
+                Brush.verticalGradient(
+                    listOf(
+                        borderTint.copy(alpha = topBorderAlpha),
+                        borderTint.copy(alpha = bottomBorderAlpha),
+                    ),
+                )
+            }
+
+            val chipShape = RoundedCornerShape(50)
+
+            Row(
                 Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (active) colors.accent else colors.cardBackground)
-                    .then(
-                        if (!active && (colors.isDark || colors.isEInk)) {
-                            Modifier.border(1.dp, colors.divider, RoundedCornerShape(12.dp))
-                        } else {
-                            Modifier
-                        },
-                    )
+                    .clip(chipShape)
+                    .background(bgBrush, chipShape)
+                    .border(1.dp, borderBrush, chipShape)
                     .clickable {
                         appHaptics.tap()
                         onTab(signal)
                     }
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-                contentAlignment = Alignment.Center,
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     label,
-                    color = if (active) colors.textOnAccent else colors.textSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    color = if (active) {
+                        if (colors.isEInk) {
+                            colors.textOnAccent
+                        } else if (isDark) {
+                            colors.textPrimary
+                        } else {
+                            colors.accent
+                        }
+                    } else {
+                        colors.textSecondary
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                     maxLines = 1,
                 )
+                if (count > 0) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                if (active) {
+                                    Brush.verticalGradient(listOf(colors.accent, colors.accentVariant))
+                                } else {
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            (if (isDark) Color.White else Color.Black).copy(alpha = 0.12f),
+                                            (if (isDark) Color.White else Color.Black).copy(alpha = 0.05f),
+                                        ),
+                                    )
+                                },
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = count.toString(),
+                            color = if (active) colors.textOnAccent else colors.textSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
             }
         }
     }
@@ -355,6 +493,7 @@ private fun FeedProviderChips(
     onSelect: (String?) -> Unit,
 ) {
     val colors = AuroraTheme.colors
+    val isDark = colors.isDark
     val appHaptics = LocalAppHaptics.current
     if (options.isEmpty()) return
     LazyRow(
@@ -363,28 +502,73 @@ private fun FeedProviderChips(
     ) {
         lazyRowItems(items = listOf(null) + options, key = { it ?: "all" }) { option ->
             val active = option == selected
+
+            val topBgAlpha = if (active) 0.24f else 0.06f
+            val bottomBgAlpha = if (active) 0.08f else 0.02f
+            val topBorderAlpha = if (active) 0.85f else 0.20f
+            val bottomBorderAlpha = if (active) 0.25f else 0.05f
+
+            val bgBrush = if (active) {
+                Brush.verticalGradient(
+                    listOf(
+                        colors.accent.copy(alpha = topBgAlpha),
+                        colors.accent.copy(alpha = bottomBgAlpha),
+                    ),
+                )
+            } else {
+                val tint = if (isDark) Color.White else Color.Black
+                Brush.verticalGradient(
+                    listOf(
+                        tint.copy(alpha = topBgAlpha),
+                        tint.copy(alpha = bottomBgAlpha),
+                    ),
+                )
+            }
+
+            val borderBrush = if (active) {
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = topBorderAlpha),
+                        colors.accent.copy(alpha = bottomBorderAlpha),
+                    ),
+                )
+            } else {
+                val borderTint = if (isDark) Color.White else Color.Black
+                Brush.verticalGradient(
+                    listOf(
+                        borderTint.copy(alpha = topBorderAlpha),
+                        borderTint.copy(alpha = bottomBorderAlpha),
+                    ),
+                )
+            }
+            val chipShape = RoundedCornerShape(50)
+
             Box(
                 Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(if (active) colors.accent else colors.cardBackground)
-                    .then(
-                        if (!active && (colors.isDark || colors.isEInk)) {
-                            Modifier.border(1.dp, colors.divider, RoundedCornerShape(50))
-                        } else {
-                            Modifier
-                        },
-                    )
+                    .clip(chipShape)
+                    .background(bgBrush, chipShape)
+                    .border(1.dp, borderBrush, chipShape)
                     .clickable {
                         appHaptics.tap()
                         onSelect(option)
                     }
-                    .padding(horizontal = 13.dp, vertical = 7.dp),
+                    .padding(horizontal = 13.dp, vertical = 6.dp),
             ) {
                 Text(
                     option ?: stringResource(AYMR.strings.home_all_sources),
-                    color = if (active) colors.textOnAccent else colors.textSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    color = if (active) {
+                        if (colors.isEInk) {
+                            colors.textOnAccent
+                        } else if (isDark) {
+                            colors.textPrimary
+                        } else {
+                            colors.accent
+                        }
+                    } else {
+                        colors.textSecondary
+                    },
+                    fontSize = 11.5.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                 )
             }
         }
@@ -397,10 +581,12 @@ private fun FeedBody(
     hazeState: HazeState,
     tab: FeedSignalTab,
     provider: String?,
+    contentPadding: PaddingValues,
     onItemClick: (DiscoverySuggestion) -> Unit,
     onItemLongClick: (DiscoverySuggestion) -> Unit,
     onItemAdd: (DiscoverySuggestion) -> Unit,
     onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
@@ -414,12 +600,20 @@ private fun FeedBody(
     }
 
     when {
-        state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        state.isLoading -> Box(
+            modifier
+                .padding(contentPadding)
+                .fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
             CircularProgressIndicator(color = colors.accent)
         }
 
         items.isEmpty() -> Column(
-            Modifier.fillMaxSize().padding(32.dp),
+            modifier
+                .padding(contentPadding)
+                .fillMaxSize()
+                .padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -464,17 +658,16 @@ private fun FeedBody(
 
         else -> LazyVerticalGrid(
             columns = GridCells.Adaptive(130.dp),
-            modifier = Modifier
-                .fillMaxSize()
+            modifier = modifier
                 .hazeSource(hazeState),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+            contentPadding = contentPadding,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(items = items, key = { it.rowType.key + ":" + it.cleanTitle }) { item ->
                 val homeItem = remember(item) { item.toHomeHubDiscoveryItem() }
                 val reason = if (showReasons) {
-                    discoveryReasonText(homeItem, similarTemplate, trendTemplate, nextTemplate)
+                    discoveryReasonText(homeItem, similarTemplate, trendTemplate, nextTemplate).orEmpty()
                 } else {
                     null
                 }
@@ -482,7 +675,6 @@ private fun FeedBody(
                     item = item,
                     reason = reason,
                     isAdding = item.title in state.addingTitles,
-                    badge = discoveryBadge(item),
                     onClick = {
                         appHaptics.tap()
                         onItemClick(item)
@@ -506,29 +698,39 @@ private fun FeedCard(
     item: DiscoverySuggestion,
     reason: String?,
     isAdding: Boolean,
-    badge: DiscoveryBadge? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onAdd: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
+    val isDark = colors.isDark
     val context = LocalContext.current
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
     val containerShape = RoundedCornerShape(18.dp)
     val posterShape = RoundedCornerShape(16.dp)
 
+    val borderBrush = if (isDark) {
+        Brush.verticalGradient(
+            listOf(
+                Color.White.copy(alpha = 0.12f),
+                Color.White.copy(alpha = 0.02f),
+            ),
+        )
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                Color.Black.copy(alpha = 0.08f),
+                Color.Black.copy(alpha = 0.02f),
+            ),
+        )
+    }
+
     Column(
         Modifier
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .clip(containerShape)
-            .background(if (colors.isDark) colors.glass.copy(alpha = 0.10f) else colors.cardBackground)
-            .then(
-                if (colors.isDark || colors.isEInk) {
-                    Modifier.border(1.dp, colors.divider, containerShape)
-                } else {
-                    Modifier
-                },
-            )
+            .background(if (isDark) colors.glass.copy(alpha = 0.10f) else colors.cardBackground)
+            .border(1.dp, borderBrush, containerShape)
             .padding(6.dp),
     ) {
         Box(
@@ -536,14 +738,7 @@ private fun FeedCard(
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
                 .clip(posterShape)
-                .background(colors.cardBackground)
-                .then(
-                    if (colors.isDark || colors.isEInk) {
-                        Modifier.border(1.dp, colors.divider, posterShape)
-                    } else {
-                        Modifier
-                    },
-                ),
+                .background(colors.cardBackground),
         ) {
             AsyncImage(
                 model = buildAuroraCoverImageRequest(context, item.coverUrl),
@@ -554,23 +749,6 @@ private fun FeedCard(
                 error = fallbackPainter,
                 fallback = fallbackPainter,
             )
-            badge?.let { b ->
-                Box(
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(badgeColor(b.colorKind))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    Text(
-                        stringResource(b.textRes),
-                        color = colors.textOnAccent,
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
-            }
             Box(
                 Modifier
                     .align(Alignment.BottomEnd)
@@ -607,6 +785,7 @@ private fun FeedCard(
             color = colors.textPrimary,
             fontSize = 11.5.sp,
             fontWeight = FontWeight.Bold,
+            minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             lineHeight = 14.sp,
@@ -618,8 +797,10 @@ private fun FeedCard(
                 color = colors.accent,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.SemiBold,
+                minLines = 1,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                lineHeight = 12.sp,
                 modifier = Modifier.padding(top = 3.dp, start = 2.dp, end = 2.dp, bottom = 4.dp),
             )
         }
