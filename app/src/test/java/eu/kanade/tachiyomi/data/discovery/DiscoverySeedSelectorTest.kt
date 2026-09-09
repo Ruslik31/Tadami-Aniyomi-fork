@@ -32,6 +32,29 @@ class DiscoverySeedSelectorTest {
     }
 
     @Test
+    fun `custom completed and active windows are respected`() {
+        val completedAt40Days = seed(1).copy(
+            isCompleted = true,
+            completedAt = now - 40 * day,
+            lastInteraction =
+            now - 40 * day,
+        )
+        val activeAt20Days = seed(2).copy(lastInteraction = now - 20 * day)
+
+        val outDefault = selector.select(
+            listOf(completedAt40Days, activeAt20Days),
+            SeedSettings(maxSeeds = 3),
+        )
+        outDefault shouldBe emptyList()
+
+        val outCustom = selector.select(
+            listOf(completedAt40Days, activeAt20Days),
+            SeedSettings(maxSeeds = 3, completedWindowDays = 60, activeWindowDays = 30),
+        )
+        outCustom.map { it.entryId } shouldBe listOf(1L, 2L)
+    }
+
+    @Test
     fun `maxSeeds caps and dedupes by entryId`() {
         val a = seed(1).copy(isCompleted = true, completedAt = now)
         val b = seed(1).copy(lastInteraction = now) // тот же entry

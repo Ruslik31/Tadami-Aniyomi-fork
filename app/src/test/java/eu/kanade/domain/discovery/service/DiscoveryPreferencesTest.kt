@@ -19,7 +19,11 @@ class DiscoveryPreferencesTest {
         prefs.seedActive14().get() shouldBe true
         prefs.seedAdded().get() shouldBe false
         prefs.rowLikeEnabled().get() shouldBe true
+        prefs.rowTasteEnabled().get() shouldBe true
         prefs.rowTrendEnabled().get() shouldBe true
+        prefs.rowSourceEnabled().get() shouldBe true
+        prefs.seedCompletedDays().get() shouldBe 30
+        prefs.seedActiveDays().get() shouldBe 14
         prefs.refreshWifiOnly().get() shouldBe false
         prefs.refreshAfterLibrary().get() shouldBe true
         prefs.showReasons().get() shouldBe true

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.discovery
 import kotlinx.coroutines.CancellationException
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
+import tachiyomi.domain.discovery.model.normalizeDiscoveryTitle
 
 class CompositeTrendingSource(
     private val shikimori: DiscoveryTrendingSource = ShikimoriTrendingSource(),
@@ -79,6 +80,9 @@ class CompositeTrendingSource(
     }
 
     override suspend fun fetchMeta(title: String, mediaType: DiscoveryMediaType): DiscoveryMeta? {
+        val cacheKey = "${mediaType.key}:${normalizeDiscoveryTitle(title)}"
+        globalMetaCache.get(cacheKey)?.let { return it }
+
         val providers: List<Pair<String, suspend () -> DiscoveryMeta?>> = when (mediaType) {
             DiscoveryMediaType.ANIME -> listOf(
                 "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
@@ -99,6 +103,7 @@ class CompositeTrendingSource(
             try {
                 val meta = action()
                 if (meta != null && (!meta.description.isNullOrBlank() || meta.genres.isNotEmpty())) {
+                    globalMetaCache.put(cacheKey, meta)
                     return meta
                 }
             } catch (e: CancellationException) {
@@ -108,5 +113,9 @@ class CompositeTrendingSource(
             }
         }
         return null
+    }
+
+    companion object {
+        private val globalMetaCache = DiscoveryLruCache<String, DiscoveryMeta>(100)
     }
 }

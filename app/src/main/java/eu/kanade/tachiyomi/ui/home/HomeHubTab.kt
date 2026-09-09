@@ -675,6 +675,7 @@ internal data class HomeHubUiState(
     val recommendations: List<HomeHubRecommendation> = emptyList(),
     val discovery: List<HomeHubDiscoveryItem> = emptyList(),
     val discoveryEnabled: Boolean = false,
+    val isDiscoveryRefreshing: Boolean = false,
     val userName: String,
     val userAvatar: String,
     val greeting: dev.icerock.moko.resources.StringResource,

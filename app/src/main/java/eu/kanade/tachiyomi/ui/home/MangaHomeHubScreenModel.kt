@@ -160,10 +160,50 @@ internal class MangaHomeHubScreenModel(
                 items.filterNot { it.cleanTitle in hidden } to (enabled to count)
             }
                 .collectLatest { (visible, prefs) ->
+                    cachedDiscoveryPool = visible
                     val (enabled, count) = prefs
-                    val teaser = if (enabled) composeTeaserItems(visible, count) else emptyList()
+                    val teaser = if (enabled) {
+                        composeTeaserItems(
+                            visible,
+                            count,
+                            offset = discoveryOffset,
+                        )
+                    } else {
+                        emptyList()
+                    }
                     mutableState.update { it.copy(discovery = teaser, discoveryEnabled = enabled) }
                 }
+        }
+    }
+
+    private var cachedDiscoveryPool: List<tachiyomi.domain.discovery.model.DiscoverySuggestion> = emptyList()
+    private var discoveryOffset: Int = 0
+
+    override fun rotateOrRefreshDiscovery() {
+        if (!discoveryPreferences.discoveryEnabled().get()) return
+        val count = discoveryPreferences.teaserCount().get().coerceIn(3, 20)
+        val pool = cachedDiscoveryPool
+        if (pool.size > count) {
+            val nextOffset = discoveryOffset + count
+            if (nextOffset < pool.size) {
+                discoveryOffset = nextOffset
+                val teaser = composeTeaserItems(pool, count, offset = discoveryOffset)
+                mutableState.update { it.copy(discovery = teaser) }
+                return
+            }
+        }
+        discoveryOffset = 0
+        if (state.value.isDiscoveryRefreshing) return
+        mutableState.update { it.copy(isDiscoveryRefreshing = true) }
+        screenModelScope.launchIO {
+            try {
+                Injekt.get<eu.kanade.tachiyomi.data.discovery.DiscoveryRunner>().run(
+                    listOf(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+                    isManualRefresh = true,
+                )
+            } finally {
+                mutableState.update { it.copy(isDiscoveryRefreshing = false) }
+            }
         }
     }
 

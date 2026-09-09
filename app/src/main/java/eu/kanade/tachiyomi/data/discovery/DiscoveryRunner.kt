@@ -30,9 +30,11 @@ class DiscoveryRunner(
     private val coordinatorFactory: (List<DiscoveryRowBuilder>) -> DiscoveryCoordinator = { DiscoveryCoordinator(it) },
     private val seedSelector: DiscoverySeedSelector = DiscoverySeedSelector(),
     private val trendingFactory: () -> DiscoveryTrendingSource = { CompositeTrendingSource() },
-    private val suggestionCoordinatorFactory: () -> SuggestionCoordinator = { SuggestionCoordinator() },
-    private val sourceCatalog: DiscoverySourceCatalog = AppDiscoverySourceCatalog(),
     private val sourcePreferencesProvider: () -> SourcePreferences = { Injekt.get() },
+    private val suggestionCoordinatorFactory: () -> SuggestionCoordinator = {
+        SuggestionCoordinator(sourcePreferencesProvider())
+    },
+    private val sourceCatalog: DiscoverySourceCatalog = AppDiscoverySourceCatalog(),
     private val fallbackSourceIdProvider: (DiscoveryMediaType) -> Long = { mediaType ->
         runCatching {
             when (mediaType) {
@@ -86,6 +88,8 @@ class DiscoveryRunner(
                 useCompleted = preferences.seedCompleted().get(),
                 useActive14 = preferences.seedActive14().get(),
                 useAdded = preferences.seedAdded().get(),
+                completedWindowDays = preferences.seedCompletedDays().get().toLong(),
+                activeWindowDays = preferences.seedActiveDays().get().toLong(),
             ),
             offset = seedOffset,
         )
@@ -125,22 +129,30 @@ class DiscoveryRunner(
         if (!preferences.rowLikeEnabled().get()) {
             repository.replaceRows(mediaType, tachiyomi.domain.discovery.model.DiscoveryRowType.LIKE, emptyList())
         }
+        if (!preferences.rowTasteEnabled().get()) {
+            repository.replaceRows(mediaType, tachiyomi.domain.discovery.model.DiscoveryRowType.TASTE, emptyList())
+        }
         if (!preferences.rowTrendEnabled().get()) {
             repository.replaceRows(mediaType, tachiyomi.domain.discovery.model.DiscoveryRowType.TREND, emptyList())
+        }
+        if (!preferences.rowSourceEnabled().get()) {
+            repository.replaceRows(mediaType, tachiyomi.domain.discovery.model.DiscoveryRowType.SOURCE, emptyList())
         }
         val builders = buildList {
             if (preferences.rowLikeEnabled().get()) {
                 add(DiscoveryLikeRowBuilder(suggestionCoordinatorFactory()))
             }
-            add(
-                DiscoveryTasteRowBuilder(
-                    trending = trendingFactory(),
-                    catalog = sourceCatalog,
-                    sortProvider = {
-                        if (preferences.trendSort().get() == "score") TrendSort.SCORE else TrendSort.POPULARITY
-                    },
-                ),
-            )
+            if (preferences.rowTasteEnabled().get()) {
+                add(
+                    DiscoveryTasteRowBuilder(
+                        trending = trendingFactory(),
+                        catalog = sourceCatalog,
+                        sortProvider = {
+                            if (preferences.trendSort().get() == "score") TrendSort.SCORE else TrendSort.POPULARITY
+                        },
+                    ),
+                )
+            }
             if (preferences.rowTrendEnabled().get()) {
                 add(
                     DiscoveryTrendRowBuilder(
@@ -159,18 +171,19 @@ class DiscoveryRunner(
                     ),
                 )
             }
-            add(DiscoverySourceRowBuilder(sourceCatalog))
+            if (preferences.rowSourceEnabled().get()) {
+                add(DiscoverySourceRowBuilder(sourceCatalog))
+            }
         }
         if (builders.isEmpty()) return
 
-        val feed = coordinatorFactory(builders).buildFeed(context)
-        for ((rowType, items) in feed.rows) {
-            if (rowType in feed.failedRows) continue
+        val coordinator = coordinatorFactory(builders)
+        val feed = coordinator.streamFeed(context) { rowType, items ->
             // Пустой ряд НЕ перезаписывает кэш: прежняя подборка живёт до следующего
             // успешного непустого результата (защита от «всё пропало» при деградации провайдеров).
             if (items.isEmpty()) {
                 logcat { "[DiscoveryRunner] $mediaType row $rowType empty — cache preserved" }
-                continue
+                return@streamFeed
             }
             repository.replaceRows(
                 mediaType = mediaType,
@@ -189,7 +202,7 @@ class DiscoveryRunner(
                         score = item.score,
                         // Перезаписывается индексом списка внутри replaceRows.
                         position = 0L,
-                        createdAt = feed.generatedAt,
+                        createdAt = System.currentTimeMillis(),
                     )
                 },
             )

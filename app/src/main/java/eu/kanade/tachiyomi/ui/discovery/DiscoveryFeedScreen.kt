@@ -37,8 +37,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -77,11 +77,13 @@ import eu.kanade.domain.source.manga.interactor.GetEnabledMangaSources
 import eu.kanade.domain.source.novel.interactor.GetEnabledNovelSources
 import eu.kanade.presentation.components.AuroraCoverPlaceholderVariant
 import eu.kanade.presentation.components.buildAuroraCoverImageRequest
+import eu.kanade.presentation.components.rememberCoverReloadTick
 import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
 import eu.kanade.presentation.entries.components.aurora.rememberAuroraPosterColorFilter
 import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
+import eu.kanade.presentation.theme.auroraHeaderIconSurface
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.discovery.CompositeTrendingSource
 import eu.kanade.tachiyomi.data.discovery.DiscoveryMeta
@@ -95,12 +97,14 @@ import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
 import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.home.discoveryReasonText
 import eu.kanade.tachiyomi.ui.home.toHomeHubDiscoveryItem
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
+import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.LocalAppHaptics
@@ -109,6 +113,7 @@ import uy.kohesive.injekt.api.get
 import java.io.Serializable
 import androidx.compose.foundation.lazy.items as lazyRowItems
 import cafe.adriel.voyager.core.screen.Screen as VoyagerScreenInterface
+import tachiyomi.core.common.i18n.stringResource as contextStringResource
 import tachiyomi.presentation.core.util.collectAsStateWithLifecycle as prefCollectAsStateWithLifecycle
 
 /**
@@ -160,9 +165,9 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                     if (sourceId != null) {
                         navigator.push(
                             when (state.mediaType) {
-                                DiscoveryMediaType.ANIME -> BrowseAnimeSourceScreen(sourceId, null)
-                                DiscoveryMediaType.MANGA -> BrowseMangaSourceScreen(sourceId, null)
-                                DiscoveryMediaType.NOVEL -> BrowseNovelSourceScreen(sourceId, null)
+                                DiscoveryMediaType.ANIME -> BrowseAnimeSourceScreen(sourceId, item.title)
+                                DiscoveryMediaType.MANGA -> BrowseMangaSourceScreen(sourceId, item.title)
+                                DiscoveryMediaType.NOVEL -> BrowseNovelSourceScreen(sourceId, item.title)
                             },
                         )
                         return@launch
@@ -216,14 +221,22 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .onSizeChanged { topBarHeightPx = it.height }
-                    .hazeEffect(
-                        state = hazeState,
-                        style = HazeStyle(
-                            backgroundColor = colors.background,
-                            tint = HazeTint(colors.surface.copy(alpha = if (colors.isDark) 0.72f else 0.82f)),
-                            blurRadius = 22.dp,
-                            noiseFactor = 0.10f,
-                        ),
+                    .then(
+                        if (colors.isEInk) {
+                            Modifier
+                                .background(colors.surface)
+                                .border(1.dp, colors.divider)
+                        } else {
+                            Modifier.hazeEffect(
+                                state = hazeState,
+                                style = HazeStyle(
+                                    backgroundColor = colors.background,
+                                    tint = HazeTint(colors.surface.copy(alpha = if (colors.isDark) 0.72f else 0.82f)),
+                                    blurRadius = 22.dp,
+                                    noiseFactor = 0.10f,
+                                ),
+                            )
+                        },
                     )
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -239,7 +252,14 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                     FeedToolbar(
                         state = state,
                         onBack = { navigator.pop() },
-                        onRefresh = { screenModel.refreshNow() },
+                        onRefresh = {
+                            val cooldown = screenModel.refreshNow()
+                            if (cooldown > 0L) {
+                                context.toast(
+                                    context.contextStringResource(AYMR.strings.for_you_refresh_cooldown, cooldown),
+                                )
+                            }
+                        },
                     )
                     val tabCounts = remember(state) {
                         FeedSignalTab.entries.associateWith { itemsForTab(state, it).size }
@@ -304,16 +324,32 @@ private fun FeedToolbar(
         Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = {
-            appHaptics.tap()
-            onBack()
-        }) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = colors.textPrimary)
+        Box(
+            modifier = Modifier
+                .auroraHeaderIconSurface(colors = colors)
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = false, radius = 22.dp),
+                    onClick = {
+                        appHaptics.tap()
+                        onBack()
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = stringResource(MR.strings.action_bar_up_description),
+                tint = colors.textPrimary,
+                modifier = Modifier.size(22.dp),
+            )
         }
-        Column(Modifier.padding(start = 4.dp)) {
+        Column(Modifier.padding(start = 12.dp)) {
             Text(
                 stringResource(AYMR.strings.aurora_for_you),
                 color = colors.textPrimary,
@@ -323,17 +359,34 @@ private fun FeedToolbar(
             Text(updatedLabel, color = colors.textSecondary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.weight(1f))
-        IconButton(onClick = {
-            appHaptics.tap()
-            onRefresh()
-        }, enabled = !state.isRefreshing) {
+        Box(
+            modifier = Modifier
+                .auroraHeaderIconSurface(colors = colors)
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable(
+                    enabled = !state.isRefreshing,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = false, radius = 22.dp),
+                    onClick = {
+                        appHaptics.tap()
+                        onRefresh()
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
             if (state.isRefreshing) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = colors.accent, strokeWidth = 2.dp)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = colors.accent,
+                    strokeWidth = 2.dp,
+                )
             } else {
                 Icon(
                     Icons.Filled.Refresh,
                     contentDescription = stringResource(AYMR.strings.for_you_refresh),
                     tint = colors.accent,
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }
@@ -659,7 +712,7 @@ private fun FeedBody(
         else -> LazyVerticalGrid(
             columns = GridCells.Adaptive(130.dp),
             modifier = modifier
-                .hazeSource(hazeState),
+                .then(if (colors.isEInk) Modifier else Modifier.hazeSource(hazeState)),
             contentPadding = contentPadding,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -706,6 +759,10 @@ private fun FeedCard(
     val isDark = colors.isDark
     val context = LocalContext.current
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
+    val coverReloadTick = rememberCoverReloadTick()
+    val coverRequest = remember(context, item.coverUrl, coverReloadTick) {
+        buildAuroraCoverImageRequest(context, item.coverUrl)
+    }
     val containerShape = RoundedCornerShape(18.dp)
     val posterShape = RoundedCornerShape(16.dp)
 
@@ -741,7 +798,7 @@ private fun FeedCard(
                 .background(colors.cardBackground),
         ) {
             AsyncImage(
-                model = buildAuroraCoverImageRequest(context, item.coverUrl),
+                model = coverRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 colorFilter = rememberAuroraPosterColorFilter(),

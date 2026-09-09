@@ -153,7 +153,7 @@ internal fun HomeHubPinnedHeader(
                         scrollable = false,
                     )
                 }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(14.dp))
             }
         },
         modifier = Modifier

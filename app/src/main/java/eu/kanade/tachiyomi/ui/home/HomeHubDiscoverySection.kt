@@ -1,9 +1,16 @@
 package eu.kanade.tachiyomi.ui.home
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,16 +36,24 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -50,12 +66,15 @@ import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.domain.ui.model.HomeHeroMode
 import eu.kanade.presentation.components.AuroraCoverPlaceholderVariant
 import eu.kanade.presentation.components.buildAuroraCoverImageRequest
+import eu.kanade.presentation.components.rememberCoverReloadTick
 import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
 import eu.kanade.presentation.entries.components.aurora.rememberAuroraPosterColorFilter
+import eu.kanade.presentation.theme.AuroraSurfaceLevel
 import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.AuroraDeviceClass
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
+import eu.kanade.presentation.theme.resolveAuroraSurfaceColor
 import eu.kanade.tachiyomi.data.discovery.DiscoveryRowItem
 import eu.kanade.tachiyomi.data.discovery.interleaveMix
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
@@ -80,6 +99,7 @@ import uy.kohesive.injekt.api.get
 internal fun composeTeaserItems(
     items: List<DiscoverySuggestion>,
     limit: Int,
+    offset: Int = 0,
 ): List<HomeHubDiscoveryItem> {
     val capped = limit.coerceIn(3, 20)
     val rows = items.groupBy { it.rowType }
@@ -88,8 +108,14 @@ internal fun composeTeaserItems(
                 DiscoveryRowItem(s.title, s.cleanTitle, s.coverUrl, s.reason, s.seedTitle, s.provider, s.score)
             }
         }
-    val mixed = interleaveMix(rows, total = capped)
-    return mixed.mapNotNull { row ->
+    val fullMix = interleaveMix(rows, total = items.size)
+    val rotated = if (fullMix.size <= capped || offset <= 0) {
+        fullMix.take(capped)
+    } else {
+        val safeOffset = offset % fullMix.size
+        (fullMix.drop(safeOffset) + fullMix.take(safeOffset)).take(capped)
+    }
+    return rotated.mapNotNull { row ->
         items.firstOrNull { it.cleanTitle == row.cleanTitle }?.toHomeHubDiscoveryItem()
     }
 }
@@ -189,7 +215,33 @@ internal fun discoveryBadgeOf(item: HomeHubDiscoveryItem): DiscoveryBadge? = whe
     DiscoveryRowType.LIKE -> null
 }
 
-/** Карточка discovery: постер 2:3 (радиус 16dp) + тайтл + обоснование. Обложка — удалённый URL. */
+internal data class HybridDiscoveryStripLayoutSpec(
+    val cardWidth: Int,
+    val sectionHorizontalPadding: Int,
+    val rowSpacing: Int,
+)
+
+internal fun resolveHybridDiscoveryStripLayoutSpec(deviceClass: AuroraDeviceClass): HybridDiscoveryStripLayoutSpec {
+    return when (deviceClass) {
+        AuroraDeviceClass.Phone -> HybridDiscoveryStripLayoutSpec(
+            cardWidth = 128,
+            sectionHorizontalPadding = 24,
+            rowSpacing = 14,
+        )
+        AuroraDeviceClass.TabletCompact -> HybridDiscoveryStripLayoutSpec(
+            cardWidth = 152,
+            sectionHorizontalPadding = 28,
+            rowSpacing = 16,
+        )
+        AuroraDeviceClass.TabletExpanded -> HybridDiscoveryStripLayoutSpec(
+            cardWidth = 176,
+            sectionHorizontalPadding = 32,
+            rowSpacing = 18,
+        )
+    }
+}
+
+/** Карточка discovery: гармонизирована с HomeHubRecentPosterCard (постер 0.9, скругление 16dp/18dp, текст под постером). */
 @Composable
 internal fun DiscoveryPosterCard(
     title: String,
@@ -197,62 +249,203 @@ internal fun DiscoveryPosterCard(
     subtitle: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    deviceClass: AuroraDeviceClass = AuroraDeviceClass.Phone,
     onLongClick: (() -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
-    val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
+    val appHaptics = LocalAppHaptics.current
+    val posterSpec = remember(deviceClass) {
+        resolveHomeHubRecentPosterCardSpec(deviceClass)
+    }
+    val surfaceSpec = remember(colors.isDark) {
+        resolveHomeHubRecentPosterSurfaceSpec(colors.isDark)
+    }
+    val cardShape = RoundedCornerShape(18.dp)
     val posterShape = RoundedCornerShape(16.dp)
+    val fallbackPainter = rememberThemeAwareCoverErrorPainter(
+        variant = AuroraCoverPlaceholderVariant.Portrait,
+    )
+    val isLightTheme = !colors.isDark && !colors.isEInk
+    val outerSurface = if (colors.isDark) {
+        colors.glass.copy(alpha = surfaceSpec.containerAlpha)
+    } else if (colors.isEInk) {
+        resolveAuroraSurfaceColor(colors, AuroraSurfaceLevel.Glass)
+    } else {
+        Color.Transparent
+    }
+    val posterSurface = if (colors.isDark) {
+        colors.cardBackground.copy(alpha = surfaceSpec.posterAlpha)
+    } else {
+        resolveAuroraSurfaceColor(colors, AuroraSurfaceLevel.Subtle)
+    }
 
-    Column(
-        modifier = modifier.then(
-            if (onLongClick != null) {
-                Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            } else {
-                Modifier.clickable(onClick = onClick)
-            },
-        ),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f)
-                .clip(posterShape)
-                .background(colors.cardBackground),
-        ) {
-            AsyncImage(
-                model = coverUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                colorFilter = rememberAuroraPosterColorFilter(),
-                modifier = Modifier.fillMaxSize(),
-                error = fallbackPainter,
-                fallback = fallbackPainter,
-            )
+    val cardContent: @Composable () -> Unit = {
+        Column(modifier = Modifier.padding(6.dp)) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(posterSpec.posterAspectRatio)
+                    .clip(posterShape)
+                    .background(posterSurface)
+                    .then(
+                        if (colors.isDark || colors.isEInk) {
+                            Modifier.border(
+                                width = 1.dp,
+                                color = if (colors.isDark) {
+                                    Color.White.copy(alpha = 0.06f)
+                                } else {
+                                    Color.Black.copy(alpha = 0.04f)
+                                },
+                                shape = posterShape,
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+            ) {
+                val posterContext = LocalContext.current
+                val posterCoverReloadTick = rememberCoverReloadTick()
+                val posterCoverRequest = remember(posterContext, coverUrl, posterCoverReloadTick) {
+                    buildAuroraCoverImageRequest(posterContext, coverUrl)
+                }
+                AsyncImage(
+                    model = posterCoverRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    colorFilter = rememberAuroraPosterColorFilter(),
+                    modifier = Modifier.fillMaxSize(),
+                    error = fallbackPainter,
+                    fallback = fallbackPainter,
+                )
+            }
+            Spacer(Modifier.height(posterSpec.textTopSpacingDp.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = posterSpec.textBlockMinHeightDp.dp)
+                    .padding(horizontal = posterSpec.textHorizontalPaddingDp.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = title,
+                    color = colors.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = posterSpec.titleMaxLines,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 17.sp,
+                )
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        color = colors.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            title,
-            color = colors.textPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            minLines = 2,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            lineHeight = 15.sp,
-            modifier = Modifier.padding(horizontal = 2.dp),
+    }
+
+    val clickModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = ripple(),
+            onClick = {
+                appHaptics.tap()
+                onClick()
+            },
+            onLongClick = {
+                appHaptics.tap()
+                onLongClick()
+            },
         )
-        if (subtitle != null) {
-            Text(
-                subtitle,
-                color = colors.accent,
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                minLines = 1,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 13.sp,
-                modifier = Modifier.padding(start = 2.dp, end = 2.dp, top = 3.dp),
-            )
+    } else {
+        Modifier.clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = ripple(),
+            onClick = {
+                appHaptics.tap()
+                onClick()
+            },
+        )
+    }
+
+    if (isLightTheme) {
+        Box(
+            modifier = modifier
+                .drawBehind {
+                    val radius = 18.dp.toPx()
+                    val cornerRadius = CornerRadius(radius, radius)
+                    val neutralOffsetY = 3.dp.toPx()
+                    val warmOffsetY = 5.dp.toPx()
+                    val neutralInset = 1.dp.toPx()
+                    val warmInset = 3.dp.toPx()
+
+                    drawRoundRect(
+                        color = Color.Black.copy(alpha = 0.035f),
+                        topLeft = Offset(x = neutralInset, y = neutralOffsetY),
+                        size = Size(width = size.width - neutralInset * 2, height = size.height),
+                        cornerRadius = cornerRadius,
+                    )
+                    drawRoundRect(
+                        color = Color(0xFF6B4E28).copy(alpha = 0.04f),
+                        topLeft = Offset(x = warmInset, y = warmOffsetY),
+                        size = Size(width = size.width - warmInset * 2, height = size.height),
+                        cornerRadius = cornerRadius,
+                    )
+                }
+                .background(
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.78f),
+                            Color.White.copy(alpha = 0.68f),
+                            Color.White.copy(alpha = 0.60f),
+                        ),
+                    ),
+                    shape = cardShape,
+                )
+                .border(
+                    width = 1.dp,
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.75f),
+                            Color.White.copy(alpha = 0.28f),
+                            Color.White.copy(alpha = 0.12f),
+                        ),
+                    ),
+                    shape = cardShape,
+                )
+                .clip(cardShape)
+                .then(clickModifier),
+        ) {
+            cardContent()
+        }
+    } else {
+        Box(
+            modifier = modifier
+                .clip(cardShape)
+                .background(outerSurface)
+                .then(
+                    if (colors.isDark || colors.isEInk) {
+                        Modifier.border(
+                            width = 1.dp,
+                            color = if (colors.isDark) {
+                                Color.White.copy(alpha = 0.06f)
+                            } else {
+                                Color.Black.copy(alpha = 0.05f)
+                            },
+                            shape = cardShape,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .then(clickModifier),
+        ) {
+            cardContent()
         }
     }
 }
@@ -344,6 +537,7 @@ internal fun ForYouSection(
                     title = item.title,
                     coverUrl = item.coverUrl,
                     subtitle = discoveryReasonOrNull(item),
+                    deviceClass = auroraAdaptiveSpec.deviceClass,
                     onLongClick = onLongClick?.let { { it(item) } },
                     onClick = {
                         appHaptics.tap()
@@ -355,30 +549,59 @@ internal fun ForYouSection(
     }
 }
 
-/** Полоса из 3 плиток под compact-hero в гибридном режиме (прототип: variant 4). */
+/** Полоса из 3 плиток под compact-hero в гибридном режиме (гармонизирована с HomeHubRecentPosterCard). */
 @Composable
 internal fun HybridDiscoveryStrip(
     items: List<HomeHubDiscoveryItem>,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
     onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
+    isRefreshing: Boolean = false,
+    onRefreshClick: (() -> Unit)? = null,
 ) {
     if (items.isEmpty()) return
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
-    val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Wide)
-    val tileShape = RoundedCornerShape(16.dp)
     val stripAdaptiveSpec = rememberAuroraAdaptiveSpec()
     val stripMaxWidthDp = stripAdaptiveSpec.updatesMaxWidthDp ?: stripAdaptiveSpec.entryMaxWidthDp
+    val layoutSpec = remember(stripAdaptiveSpec.deviceClass) {
+        resolveHybridDiscoveryStripLayoutSpec(stripAdaptiveSpec.deviceClass)
+    }
+    val cardWidth = layoutSpec.cardWidth.dp
+    val sectionHorizontalPadding = layoutSpec.sectionHorizontalPadding.dp
+    val rowSpacing = layoutSpec.rowSpacing.dp
+    val posterSpec = remember(stripAdaptiveSpec.deviceClass) {
+        resolveHomeHubRecentPosterCardSpec(stripAdaptiveSpec.deviceClass)
+    }
+    val surfaceSpec = remember(colors.isDark) {
+        resolveHomeHubRecentPosterSurfaceSpec(colors.isDark)
+    }
+    val cardShape = RoundedCornerShape(18.dp)
+    val posterShape = RoundedCornerShape(16.dp)
+    val isLightTheme = !colors.isDark && !colors.isEInk
+    val outerSurface = if (colors.isDark) {
+        colors.glass.copy(alpha = surfaceSpec.containerAlpha)
+    } else if (colors.isEInk) {
+        resolveAuroraSurfaceColor(colors, AuroraSurfaceLevel.Glass)
+    } else {
+        Color.Transparent
+    }
+    val posterSurface = if (colors.isDark) {
+        colors.cardBackground.copy(alpha = surfaceSpec.posterAlpha)
+    } else {
+        resolveAuroraSurfaceColor(colors, AuroraSurfaceLevel.Subtle)
+    }
 
     Column(
         Modifier
             .fillMaxWidth()
             .auroraCenteredMaxWidth(stripMaxWidthDp)
-            .padding(top = 12.dp),
+            .padding(top = 12.dp, bottom = 16.dp),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = sectionHorizontalPadding),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -388,151 +611,277 @@ internal fun HybridDiscoveryStrip(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
             )
-            Text(
-                stringResource(AYMR.strings.for_you_all_picks),
-                color = colors.accent,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable {
-                    appHaptics.tap()
-                    onMoreClick()
-                },
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onRefreshClick != null) {
+                    val rotationAnim = rememberInfiniteTransition(label = "hybrid_refresh_rot")
+                    val rotationAngle by if (isRefreshing) {
+                        rotationAnim.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 1000, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart,
+                            ),
+                            label = "refresh_angle",
+                        )
+                    } else {
+                        remember { mutableFloatStateOf(0f) }
+                    }
+
+                    val refreshRimBrush = remember(colors) {
+                        if (colors.isEInk) {
+                            SolidColor(colors.divider)
+                        } else {
+                            Brush.verticalGradient(
+                                listOf(
+                                    if (colors.isDark) {
+                                        Color.White.copy(
+                                            alpha = 0.18f,
+                                        )
+                                    } else {
+                                        Color.White.copy(alpha = 0.50f)
+                                    },
+                                    Color.Transparent,
+                                ),
+                            )
+                        }
+                    }
+                    val refreshTintBrush = remember(colors) {
+                        if (colors.isEInk) {
+                            SolidColor(Color.Transparent)
+                        } else {
+                            Brush.verticalGradient(
+                                listOf(
+                                    if (colors.isDark) {
+                                        Color.White.copy(
+                                            alpha = 0.08f,
+                                        )
+                                    } else {
+                                        Color.White.copy(alpha = 0.20f)
+                                    },
+                                    Color.Transparent,
+                                ),
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color.Transparent)
+                            .border(
+                                1.dp,
+                                refreshRimBrush,
+                                CircleShape,
+                            )
+                            .background(
+                                brush = refreshTintBrush,
+                                shape = CircleShape,
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = false, radius = 16.dp),
+                                onClick = {
+                                    appHaptics.tap()
+                                    onRefreshClick()
+                                },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = stringResource(AYMR.strings.for_you_refresh),
+                            tint = if (colors.isDark && !colors.isEInk) colors.accent else colors.textPrimary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .graphicsLayer { rotationZ = rotationAngle },
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                }
+                Text(
+                    stringResource(AYMR.strings.for_you_all_picks),
+                    color = colors.accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable {
+                        appHaptics.tap()
+                        onMoreClick()
+                    },
+                )
+            }
         }
         Spacer(Modifier.height(10.dp))
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = sectionHorizontalPadding),
+            horizontalArrangement = Arrangement.spacedBy(rowSpacing),
         ) {
             items(
                 items = items,
                 key = { it.rowType.key + ":" + it.cleanTitle },
                 contentType = { "hybrid_discovery_tile" },
             ) { item ->
-                Box(
-                    Modifier
-                        .width(136.dp)
-                        .height(150.dp)
-                        .clip(tileShape)
-                        .background(colors.cardBackground)
-                        .then(
-                            if (onLongClick != null) {
-                                Modifier.combinedClickable(
-                                    onClick = {
-                                        appHaptics.tap()
-                                        onItemClick(item)
-                                    },
-                                    onLongClick = {
-                                        appHaptics.tap()
-                                        onLongClick(item)
-                                    },
-                                )
-                            } else {
-                                Modifier.clickable {
-                                    appHaptics.tap()
-                                    onItemClick(item)
-                                }
-                            },
-                        ),
-                ) {
-                    AsyncImage(
-                        model = item.coverUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        colorFilter = rememberAuroraPosterColorFilter(),
-                        modifier = Modifier.fillMaxSize(),
-                        error = fallbackPainter,
-                        fallback = fallbackPainter,
-                    )
-                    Box(
-                        Modifier.fillMaxSize().background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.Transparent,
-                                    if (colors.isEInk) Color.White.copy(alpha = 0.95f) else Color(0xE004060A),
-                                ),
-                            ),
-                        ),
-                    )
-                    Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
-                        Text(
-                            item.title,
-                            color = if (colors.isEInk) Color.Black else Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            minLines = 2,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            lineHeight = 15.sp,
-                        )
-                        discoveryReasonOrNull(item)?.let { reason ->
-                            Text(
-                                reason,
-                                color = colors.accent,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                minLines = 1,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 3.dp),
-                            )
-                        }
-                    }
-                }
+                DiscoveryPosterCard(
+                    modifier = Modifier.width(cardWidth),
+                    title = item.title,
+                    coverUrl = item.coverUrl,
+                    subtitle = discoveryReasonOrNull(item),
+                    deviceClass = stripAdaptiveSpec.deviceClass,
+                    onClick = {
+                        appHaptics.tap()
+                        onItemClick(item)
+                    },
+                    onLongClick = onLongClick?.let { { it(item) } },
+                )
             }
             if (items.isNotEmpty()) {
                 item(key = "hybrid_discovery_more", contentType = "hybrid_discovery_more") {
-                    Box(
-                        modifier = Modifier
-                            .width(110.dp)
-                            .height(150.dp)
-                            .clip(tileShape)
-                            .background(colors.cardBackground)
-                            .border(
-                                1.dp,
-                                Brush.verticalGradient(
-                                    listOf(
-                                        colors.accent.copy(alpha = 0.35f),
-                                        Color.Transparent,
-                                    ),
-                                ),
-                                tileShape,
-                            )
-                            .clickable {
-                                appHaptics.tap()
-                                onMoreClick()
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(12.dp),
-                        ) {
+                    val moreContent: @Composable () -> Unit = {
+                        Column(modifier = Modifier.padding(6.dp)) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.accent.copy(alpha = 0.15f)),
+                                    .fillMaxWidth()
+                                    .aspectRatio(posterSpec.posterAspectRatio)
+                                    .clip(posterShape)
+                                    .background(posterSurface)
+                                    .border(
+                                        1.dp,
+                                        Brush.verticalGradient(
+                                            listOf(
+                                                colors.accent.copy(alpha = 0.40f),
+                                                Color.Transparent,
+                                            ),
+                                        ),
+                                        posterShape,
+                                    ),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(
-                                    Icons.AutoMirrored.Outlined.ArrowForward,
-                                    contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(18.dp),
-                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(12.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(colors.accent.copy(alpha = 0.15f)),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Outlined.ArrowForward,
+                                            contentDescription = null,
+                                            tint = colors.accent,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        stringResource(AYMR.strings.for_you_all_picks),
+                                        color = colors.textPrimary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center,
+                                        lineHeight = 14.sp,
+                                    )
+                                }
                             }
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                stringResource(AYMR.strings.for_you_all_picks),
-                                color = colors.textPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 14.sp,
-                            )
+                            Spacer(Modifier.height(posterSpec.textTopSpacingDp.dp))
+                            Spacer(Modifier.height(posterSpec.textBlockMinHeightDp.dp))
+                        }
+                    }
+
+                    if (isLightTheme) {
+                        Box(
+                            modifier = Modifier
+                                .width(cardWidth)
+                                .drawBehind {
+                                    val radius = 18.dp.toPx()
+                                    val cornerRadius = CornerRadius(radius, radius)
+                                    val neutralOffsetY = 3.dp.toPx()
+                                    val warmOffsetY = 5.dp.toPx()
+                                    val neutralInset = 1.dp.toPx()
+                                    val warmInset = 3.dp.toPx()
+
+                                    drawRoundRect(
+                                        color = Color.Black.copy(alpha = 0.035f),
+                                        topLeft = Offset(x = neutralInset, y = neutralOffsetY),
+                                        size = Size(width = size.width - neutralInset * 2, height = size.height),
+                                        cornerRadius = cornerRadius,
+                                    )
+                                    drawRoundRect(
+                                        color = Color(0xFF6B4E28).copy(alpha = 0.04f),
+                                        topLeft = Offset(x = warmInset, y = warmOffsetY),
+                                        size = Size(width = size.width - warmInset * 2, height = size.height),
+                                        cornerRadius = cornerRadius,
+                                    )
+                                }
+                                .background(
+                                    brush = Brush.verticalGradient(
+                                        listOf(
+                                            Color.White.copy(alpha = 0.78f),
+                                            Color.White.copy(alpha = 0.68f),
+                                            Color.White.copy(alpha = 0.60f),
+                                        ),
+                                    ),
+                                    shape = cardShape,
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    brush = Brush.verticalGradient(
+                                        listOf(
+                                            Color.White.copy(alpha = 0.75f),
+                                            Color.White.copy(alpha = 0.28f),
+                                            Color.White.copy(alpha = 0.12f),
+                                        ),
+                                    ),
+                                    shape = cardShape,
+                                )
+                                .clip(cardShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(),
+                                    onClick = {
+                                        appHaptics.tap()
+                                        onMoreClick()
+                                    },
+                                ),
+                        ) {
+                            moreContent()
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .width(cardWidth)
+                                .clip(cardShape)
+                                .background(outerSurface)
+                                .then(
+                                    if (colors.isDark || colors.isEInk) {
+                                        Modifier.border(
+                                            width = 1.dp,
+                                            color = if (colors.isDark) {
+                                                Color.White.copy(alpha = 0.06f)
+                                            } else {
+                                                Color.Black.copy(alpha = 0.05f)
+                                            },
+                                            shape = cardShape,
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(),
+                                    onClick = {
+                                        appHaptics.tap()
+                                        onMoreClick()
+                                    },
+                                ),
+                        ) {
+                            moreContent()
                         }
                     }
                 }
@@ -699,6 +1048,10 @@ private fun CollageTile(
     val colors = AuroraTheme.colors
     val context = LocalContext.current
     val appHaptics = LocalAppHaptics.current
+    val coverReloadTick = rememberCoverReloadTick()
+    val coverRequest = remember(context, item.coverUrl, coverReloadTick) {
+        buildAuroraCoverImageRequest(context, item.coverUrl)
+    }
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Wide)
     val tileShape = RoundedCornerShape(16.dp)
 
@@ -734,7 +1087,7 @@ private fun CollageTile(
             ),
     ) {
         AsyncImage(
-            model = buildAuroraCoverImageRequest(context, item.coverUrl),
+            model = coverRequest,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             colorFilter = rememberAuroraPosterColorFilter(),

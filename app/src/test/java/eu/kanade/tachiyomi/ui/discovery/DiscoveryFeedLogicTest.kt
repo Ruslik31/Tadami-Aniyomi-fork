@@ -32,6 +32,17 @@ class DiscoveryFeedLogicTest {
     }
 
     @Test
+    fun `remaining cooldown seconds calculated correctly`() {
+        val now = 1_000_000L
+        val cooldownMs = 300_000L
+        remainingCooldownSeconds(lastRefreshAt = now - 60_000L, now = now, cooldownMs = cooldownMs) shouldBe 240L
+        remainingCooldownSeconds(lastRefreshAt = now - 270_000L, now = now, cooldownMs = cooldownMs) shouldBe 30L
+        remainingCooldownSeconds(lastRefreshAt = now - 300_000L, now = now, cooldownMs = cooldownMs) shouldBe 0L
+        remainingCooldownSeconds(lastRefreshAt = now - 350_000L, now = now, cooldownMs = cooldownMs) shouldBe 0L
+        remainingCooldownSeconds(lastRefreshAt = null, now = now, cooldownMs = cooldownMs) shouldBe 0L
+    }
+
+    @Test
     fun `rows grouped by type keeping like before trend`() {
         val grouped = groupFeedRows(
             listOf(

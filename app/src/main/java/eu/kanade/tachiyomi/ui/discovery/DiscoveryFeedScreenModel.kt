@@ -60,11 +60,26 @@ internal fun providerOptions(state: DiscoveryFeedUiState): List<String> =
 
 internal const val DISCOVERY_REFRESH_COOLDOWN_MS = 5 * 60_000L
 
+internal fun remainingCooldownSeconds(
+    lastRefreshAt: Long?,
+    now: Long,
+    cooldownMs: Long = DISCOVERY_REFRESH_COOLDOWN_MS,
+): Long {
+    if (lastRefreshAt == null) return 0L
+    val elapsed = now - lastRefreshAt
+    return if (elapsed in 0 until cooldownMs) {
+        val remainingMs = cooldownMs - elapsed
+        (remainingMs + 999L) / 1000L
+    } else {
+        0L
+    }
+}
+
 internal fun canManualRefresh(
     lastRefreshAt: Long?,
     now: Long,
     cooldownMs: Long = DISCOVERY_REFRESH_COOLDOWN_MS,
-): Boolean = lastRefreshAt == null || now - lastRefreshAt >= cooldownMs
+): Boolean = remainingCooldownSeconds(lastRefreshAt, now, cooldownMs) == 0L
 
 internal enum class UpdatedLabelKind { MINUTES, HOURS, NEVER }
 
@@ -168,10 +183,12 @@ class DiscoveryFeedScreenModel(
     private fun refreshingFlow(): Flow<Boolean> =
         context.workManager.isRunningFlow(DiscoveryUpdateJob.TAG_MANUAL)
 
-    fun refreshNow() {
+    fun refreshNow(): Long {
         val now = System.currentTimeMillis()
-        if (!canManualRefresh(state.value.lastUpdatedAt, now)) return
+        val remaining = remainingCooldownSeconds(state.value.lastUpdatedAt, now)
+        if (remaining > 0L) return remaining
         DiscoveryUpdateJob.refreshNow(context, state.value.mediaType)
+        return 0L
     }
 
     fun hide(item: DiscoverySuggestion) {

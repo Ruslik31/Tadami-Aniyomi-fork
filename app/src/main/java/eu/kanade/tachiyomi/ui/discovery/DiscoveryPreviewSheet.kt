@@ -46,6 +46,7 @@ import coil3.compose.AsyncImage
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.components.AuroraCoverPlaceholderVariant
 import eu.kanade.presentation.components.buildAuroraCoverImageRequest
+import eu.kanade.presentation.components.rememberCoverReloadTick
 import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
 import eu.kanade.presentation.entries.components.aurora.rememberAuroraPosterColorFilter
 import eu.kanade.presentation.theme.AuroraTheme
@@ -56,6 +57,7 @@ import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.LocalAppHaptics
 
 internal enum class BadgeColorKind { TASTE, FRESH, SOURCE }
 
@@ -99,6 +101,11 @@ internal fun DiscoveryPreviewSheet(
 ) {
     val colors = AuroraTheme.colors
     val context = androidx.compose.ui.platform.LocalContext.current
+    val appHaptics = LocalAppHaptics.current
+    val coverReloadTick = rememberCoverReloadTick()
+    val coverRequest = remember(context, item.coverUrl, coverReloadTick) {
+        buildAuroraCoverImageRequest(context, item.coverUrl)
+    }
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val homeItem = remember(item) { item.toHomeHubDiscoveryItem() }
@@ -146,7 +153,7 @@ internal fun DiscoveryPreviewSheet(
                         .border(1.dp, colors.divider, RoundedCornerShape(18.dp)),
                 ) {
                     AsyncImage(
-                        model = buildAuroraCoverImageRequest(context, item.coverUrl),
+                        model = coverRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         colorFilter = rememberAuroraPosterColorFilter(),
@@ -261,7 +268,10 @@ internal fun DiscoveryPreviewSheet(
                         .height(44.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(colors.accent)
-                        .clickable { onAdd() },
+                        .clickable {
+                            appHaptics.tap()
+                            onAdd()
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
@@ -284,7 +294,10 @@ internal fun DiscoveryPreviewSheet(
                         .clip(RoundedCornerShape(14.dp))
                         .background(colors.cardBackground)
                         .border(1.dp, colors.divider, RoundedCornerShape(14.dp))
-                        .clickable { onFind() },
+                        .clickable {
+                            appHaptics.tap()
+                            onFind()
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
@@ -300,7 +313,12 @@ internal fun DiscoveryPreviewSheet(
                         )
                     }
                 }
-                IconButton(onClick = onHide) {
+                IconButton(
+                    onClick = {
+                        appHaptics.tap()
+                        onHide()
+                    },
+                ) {
                     Icon(
                         Icons.Outlined.VisibilityOff,
                         stringResource(AYMR.strings.for_you_hide),

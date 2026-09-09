@@ -152,4 +152,33 @@ class DiscoveryRunnerTest {
         runner.run(listOf(DiscoveryMediaType.NOVEL))
         repo.replaced shouldBe emptyList()
     }
+
+    @Test
+    fun `disabled rows are cleared in repository and builders omitted`() = runTest {
+        val repo = FakeRepository()
+        val prefs = DiscoveryPreferences(
+            InMemoryPreferenceStore(
+                sequenceOf(
+                    InMemoryPreferenceStore.InMemoryPreference("discovery_row_like", false, true),
+                    InMemoryPreferenceStore.InMemoryPreference("discovery_row_taste", false, true),
+                    InMemoryPreferenceStore.InMemoryPreference("discovery_row_trend", false, true),
+                    InMemoryPreferenceStore.InMemoryPreference("discovery_row_source", false, true),
+                ),
+            ),
+        )
+        val runner = DiscoveryRunner(
+            repository = repo,
+            preferences = prefs,
+            seedSources = FakeSeedSources(),
+            coordinatorFactory = { DiscoveryCoordinator(emptyList()) },
+            sourcePreferencesProvider = ::testSourcePrefs,
+        )
+        runner.run(listOf(DiscoveryMediaType.NOVEL))
+        repo.replaced.map { it.second } shouldBe listOf(
+            DiscoveryRowType.LIKE,
+            DiscoveryRowType.TASTE,
+            DiscoveryRowType.TREND,
+            DiscoveryRowType.SOURCE,
+        )
+    }
 }

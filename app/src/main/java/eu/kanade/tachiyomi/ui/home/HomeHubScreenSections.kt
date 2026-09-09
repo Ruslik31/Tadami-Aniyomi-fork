@@ -185,6 +185,7 @@ internal fun AnimeHomeHub(
         onHistoryClick = { tabNavigator.current = HistoriesTab },
         onLibraryClick = { tabNavigator.current = AnimeLibraryTab },
         onForYouMoreClick = { navigator.push(DiscoveryFeedScreen(DiscoveryMediaType.ANIME.key)) },
+        onDiscoveryRefreshClick = { screenModel.rotateOrRefreshDiscovery() },
         onDiscoveryItemClick = { item ->
             scope.launch {
                 val suggestionItem = item.toSuggestionItem()
@@ -291,6 +292,7 @@ internal fun MangaHomeHub(
             tabNavigator.current = AnimeLibraryTab
         },
         onForYouMoreClick = { navigator.push(DiscoveryFeedScreen(DiscoveryMediaType.MANGA.key)) },
+        onDiscoveryRefreshClick = { screenModel.rotateOrRefreshDiscovery() },
         onDiscoveryItemClick = { item ->
             scope.launch {
                 val suggestionItem = item.toSuggestionItem()
@@ -400,6 +402,7 @@ internal fun NovelHomeHub(
             tabNavigator.current = AnimeLibraryTab
         },
         onForYouMoreClick = { navigator.push(DiscoveryFeedScreen(DiscoveryMediaType.NOVEL.key)) },
+        onDiscoveryRefreshClick = { screenModel.rotateOrRefreshDiscovery() },
         onDiscoveryItemClick = { item ->
             scope.launch {
                 val suggestionItem = item.toSuggestionItem()
@@ -437,6 +440,7 @@ private fun HomeHubScreen(
     onHistoryClick: () -> Unit,
     onLibraryClick: () -> Unit,
     onForYouMoreClick: () -> Unit,
+    onDiscoveryRefreshClick: (() -> Unit)? = null,
     onDiscoveryItemClick: (HomeHubDiscoveryItem) -> Unit,
 ) {
     val trimmedQuery = searchQuery?.trim().orEmpty()
@@ -556,7 +560,14 @@ private fun HomeHubScreen(
                     }
                 }
             } else {
-                if (hero != null || reserveHeroSlot) {
+                if (
+                    shouldRenderHomeHubHeroSlot(
+                        heroPresentation = heroPresentation,
+                        hasHero = hero != null,
+                        reserveHeroSlot = reserveHeroSlot,
+                        hasDiscovery = discovery.isNotEmpty(),
+                    )
+                ) {
                     item(key = "hero", contentType = "home_hub_hero") {
                         when {
                             heroPresentation == HomeHeroMode.Collage -> DiscoveryHeroCollage(
@@ -579,6 +590,8 @@ private fun HomeHubScreen(
                                     onMoreClick = onForYouMoreClick,
                                     onItemClick = { previewItem = it },
                                     onLongClick = onDiscoveryLongClick,
+                                    isRefreshing = state.isDiscoveryRefreshing,
+                                    onRefreshClick = onDiscoveryRefreshClick,
                                 )
                             }
                             hero != null -> HeroSection(
@@ -822,6 +835,16 @@ internal fun resolveHomeHubFilteredContent(
         discovery = discovery.filter { it.title.contains(query, ignoreCase = true) },
         isFiltering = true,
     )
+}
+
+internal fun shouldRenderHomeHubHeroSlot(
+    heroPresentation: HomeHeroMode,
+    hasHero: Boolean,
+    reserveHeroSlot: Boolean,
+    hasDiscovery: Boolean,
+): Boolean {
+    if (heroPresentation == HomeHeroMode.Collage && hasDiscovery) return true
+    return hasHero || reserveHeroSlot
 }
 
 internal fun shouldReserveHomeHubHeroSlot(

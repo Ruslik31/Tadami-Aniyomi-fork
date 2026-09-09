@@ -1,20 +1,33 @@
 package eu.kanade.presentation.more.settings.screen
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.domain.discovery.model.DiscoveryMediaType
+import tachiyomi.domain.discovery.repository.DiscoveryRepository
+import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsStateWithLifecycle
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import tachiyomi.core.common.i18n.stringResource as contextStringResource
 
 /**
  * Настройки ленты «Для тебя» (discovery). Правило адаптивных тумблеров:
@@ -29,12 +42,49 @@ object SettingsDiscoveryScreen : SearchableSettings {
     @Composable
     override fun getPreferences(): List<Preference> {
         val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        val repository = remember { Injekt.get<DiscoveryRepository>() }
+        var showResetHiddenDialog by remember { mutableStateOf(false) }
 
         val discoveryPreferences = remember { Injekt.get<DiscoveryPreferences>() }
 
         val enabled by discoveryPreferences.discoveryEnabled().collectAsStateWithLifecycle()
         val rowLike by discoveryPreferences.rowLikeEnabled().collectAsStateWithLifecycle()
+        val rowTaste by discoveryPreferences.rowTasteEnabled().collectAsStateWithLifecycle()
         val rowTrend by discoveryPreferences.rowTrendEnabled().collectAsStateWithLifecycle()
+        val rowSource by discoveryPreferences.rowSourceEnabled().collectAsStateWithLifecycle()
+        val seedCompleted by discoveryPreferences.seedCompleted().collectAsStateWithLifecycle()
+        val seedActive14 by discoveryPreferences.seedActive14().collectAsStateWithLifecycle()
+
+        if (showResetHiddenDialog) {
+            AlertDialog(
+                onDismissRequest = { showResetHiddenDialog = false },
+                title = { Text(stringResource(AYMR.strings.pref_discovery_clear_hidden_dialog_title)) },
+                text = { Text(stringResource(AYMR.strings.pref_discovery_clear_hidden_dialog_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showResetHiddenDialog = false
+                            scope.launchIO {
+                                DiscoveryMediaType.entries.forEach { repository.clearHidden(it) }
+                                withUIContext {
+                                    context.toast(
+                                        context.contextStringResource(AYMR.strings.pref_discovery_clear_hidden_success),
+                                    )
+                                }
+                            }
+                        },
+                    ) {
+                        Text(stringResource(MR.strings.action_ok))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showResetHiddenDialog = false }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
+                },
+            )
+        }
 
         return listOf(
             Preference.PreferenceGroup(
@@ -91,10 +141,36 @@ object SettingsDiscoveryScreen : SearchableSettings {
                         title = stringResource(AYMR.strings.pref_discovery_seed_completed),
                         enabled = enabled && rowLike,
                     ),
+                    Preference.PreferenceItem.ListPreference(
+                        preference = discoveryPreferences.seedCompletedDays(),
+                        entries = persistentMapOf(
+                            7 to stringResource(AYMR.strings.pref_discovery_days_7),
+                            14 to stringResource(AYMR.strings.pref_discovery_days_14),
+                            30 to stringResource(AYMR.strings.pref_discovery_days_30),
+                            60 to stringResource(AYMR.strings.pref_discovery_days_60),
+                            90 to stringResource(AYMR.strings.pref_discovery_days_90),
+                            180 to stringResource(AYMR.strings.pref_discovery_days_180),
+                        ),
+                        title = stringResource(AYMR.strings.pref_discovery_seed_completed_days),
+                        subtitleProvider = { value, entries -> entries[value] },
+                        enabled = enabled && rowLike && seedCompleted,
+                    ),
                     Preference.PreferenceItem.SwitchPreference(
                         preference = discoveryPreferences.seedActive14(),
                         title = stringResource(AYMR.strings.pref_discovery_seed_active14),
                         enabled = enabled && rowLike,
+                    ),
+                    Preference.PreferenceItem.ListPreference(
+                        preference = discoveryPreferences.seedActiveDays(),
+                        entries = persistentMapOf(
+                            7 to stringResource(AYMR.strings.pref_discovery_days_7),
+                            14 to stringResource(AYMR.strings.pref_discovery_days_14),
+                            30 to stringResource(AYMR.strings.pref_discovery_days_30),
+                            60 to stringResource(AYMR.strings.pref_discovery_days_60),
+                        ),
+                        title = stringResource(AYMR.strings.pref_discovery_seed_active_days),
+                        subtitleProvider = { value, entries -> entries[value] },
+                        enabled = enabled && rowLike && seedActive14,
                     ),
                     Preference.PreferenceItem.SwitchPreference(
                         preference = discoveryPreferences.seedAdded(),
@@ -131,6 +207,23 @@ object SettingsDiscoveryScreen : SearchableSettings {
                         title = stringResource(AYMR.strings.pref_discovery_trend_sort),
                         subtitleProvider = { value, entries -> entries[value] },
                         enabled = enabled && rowTrend,
+                    ),
+                ),
+            ),
+            Preference.PreferenceGroup(
+                title = stringResource(AYMR.strings.pref_discovery_group_signals),
+                preferenceItems = persistentListOf(
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = discoveryPreferences.rowTasteEnabled(),
+                        title = stringResource(AYMR.strings.pref_discovery_row_taste),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_row_taste_summary),
+                        enabled = enabled,
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = discoveryPreferences.rowSourceEnabled(),
+                        title = stringResource(AYMR.strings.pref_discovery_row_source),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_row_source_summary),
+                        enabled = enabled,
                     ),
                 ),
             ),
@@ -198,6 +291,12 @@ object SettingsDiscoveryScreen : SearchableSettings {
                         preference = discoveryPreferences.showReasons(),
                         title = stringResource(AYMR.strings.pref_discovery_show_reasons),
                         subtitle = stringResource(AYMR.strings.pref_discovery_show_reasons_summary),
+                        enabled = enabled,
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(AYMR.strings.pref_discovery_clear_hidden_title),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_clear_hidden_summary),
+                        onClick = { showResetHiddenDialog = true },
                         enabled = enabled,
                     ),
                 ),
