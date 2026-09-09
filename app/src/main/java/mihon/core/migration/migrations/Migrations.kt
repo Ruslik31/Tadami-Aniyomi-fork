@@ -62,4 +62,5 @@ val migrations: List<Migration>
         ForceMissedMigrations187(),
         RemoveNovelBookReadingModeMigration(),
         ResetPlayerDecoderPrefsMigration(),
+        SetupDiscoveryUpdateMigration(),
     )

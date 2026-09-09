@@ -131,19 +131,46 @@ class NovelUpdatesSimilarSource(
     /**
      * Search the NovelUpdates index. Returns a list of [NuSeriesStub]s.
      *
-     * The implementation uses the public series-search endpoint and parses
-     * the JSON result. We don't need the full page, just enough to obtain
-     * a series id and a display title.
+     * Primary: the wp-json REST endpoint. On failure (endpoint был удалён/404 —
+     * видно в логах устройства) fallback: HTML-поиск `/?s=<q>&post_type=seriesplan`,
+     * парсинг `div.search_title > a` (slug-URL серии).
      */
-    private suspend fun searchSeries(query: String): List<NuSeriesStub> {
+    private suspend fun searchSeries(query: String): List<NuSeriesStub> = try {
         val url = "https://www.novelupdates.com/wp-json/wp/v2/series?search=" +
             java.net.URLEncoder.encode(query, "UTF-8") +
             "&per_page=5"
-        val response = client.newCall(GET(url))
+        val response = client.newCall(GET(url, headers = browserHeaders()))
             .awaitSuccess()
             .parseAs<List<NuSeriesDto>>(json)
-        return response.map { NuSeriesStub(id = it.id, title = it.title?.rendered ?: "") }
+        response.map { NuSeriesStub(id = it.id.toString(), title = it.title?.rendered ?: "") }
+    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        logcat { "[NovelUpdates] wp-json search failed for '$query' (${e.message}), trying HTML search" }
+        htmlSearch(query)
     }
+
+    private suspend fun htmlSearch(query: String): List<NuSeriesStub> {
+        val url = "https://www.novelupdates.com/?s=" +
+            java.net.URLEncoder.encode(query, "UTF-8") + "&post_type=seriesplan"
+        val body = client.newCall(GET(url, headers = browserHeaders())).awaitSuccess().body.string()
+        val regex = Regex(
+            """<div class="search_title">\s*<a[^>]+href="https?://www\.novelupdates\.com/series/([^/"]+)/?"[^>]*>([^<]+)</a>""",
+        )
+        return regex.findAll(body)
+            .map { match -> NuSeriesStub(id = match.groupValues[1], title = match.groupValues[2].trim()) }
+            .filter { it.id.isNotEmpty() && it.title.isNotEmpty() }
+            .toList()
+    }
+
+    private fun browserHeaders(): Headers = Headers.Builder()
+        .add(
+            "User-Agent",
+            "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+        )
+        .add("Accept", "text/html,application/json;q=0.9,*/*;q=0.8")
+        .add("Accept-Language", "en-US,en;q=0.8")
+        .build()
 
     /**
      * Fetch the recommendations for a given series id and parse out the
@@ -153,8 +180,8 @@ class NovelUpdatesSimilarSource(
      * markup occasionally, and silently returning fewer/no items is
      * better than failing the whole pipeline.
      */
-    private suspend fun fetchRecommendations(seriesId: Int): List<NuRecommendation> {
-        val url = "https://www.novelupdates.com/series/$seriesId/"
+    private suspend fun fetchRecommendations(seriesSlug: String): List<NuRecommendation> {
+        val url = "https://www.novelupdates.com/series/$seriesSlug/"
         val headers = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (compatible)")
             .build()
@@ -162,13 +189,16 @@ class NovelUpdatesSimilarSource(
         val body = client.newCall(request).awaitSuccess().body.string()
         // NovelUpdates renders related series as <a ...>title</a> entries
         // inside the "Series Recommendations" section. We extract anything
-        // that looks like /series/<id>/ links after the heading.
-        val recRegex = Regex("""<a[^>]+href="https?://www\.novelupdates\.com/series/(\d+)/?"[^>]*>([^<]+)</a>""")
-        return recRegex.findAll(body)
+        // that looks like /series/<slug>/ links after the heading.
+        val start = body.indexOf("Recommendations").takeIf { it >= 0 } ?: 0
+        val recRegex = Regex(
+            """<a[^>]+href="https?://www\.novelupdates\.com/series/([^/"]+)/?"[^>]*>([^<]+)</a>""",
+        )
+        return recRegex.findAll(body, start)
             .map { match ->
-                NuRecommendation(id = match.groupValues[1].toIntOrNull() ?: 0, title = match.groupValues[2].trim())
+                NuRecommendation(id = match.groupValues[1], title = match.groupValues[2].trim())
             }
-            .filter { it.id > 0 && it.title.isNotEmpty() }
+            .filter { it.id.isNotEmpty() && it.title.isNotEmpty() && it.id != seriesSlug }
             .distinctBy { it.id }
             .toList()
     }
@@ -182,7 +212,7 @@ class NovelUpdatesSimilarSource(
     @Serializable
     private data class Rendered(val rendered: String = "")
 
-    private data class NuSeriesStub(val id: Int, val title: String)
+    private data class NuSeriesStub(val id: String, val title: String)
 
-    private data class NuRecommendation(val id: Int, val title: String)
+    private data class NuRecommendation(val id: String, val title: String)
 }

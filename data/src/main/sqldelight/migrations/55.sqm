@@ -1,0 +1,25 @@
+-- Discovery «Для тебя» (slice 1): кэш ленты рекомендаций и скрытые тайтлы.
+-- Новые таблицы, данных не теряют; IF NOT EXISTS на случай повторного наката.
+CREATE TABLE IF NOT EXISTS discovery_suggestions (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    media_type TEXT NOT NULL,
+    row_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    clean_title TEXT NOT NULL,
+    cover_url TEXT,
+    reason TEXT,
+    seed_title TEXT,
+    provider TEXT NOT NULL,
+    score REAL NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS discovery_media_row ON discovery_suggestions(media_type, row_type);
+
+CREATE TABLE IF NOT EXISTS discovery_hidden (
+    media_type TEXT NOT NULL,
+    clean_title TEXT NOT NULL,
+    hidden_at INTEGER NOT NULL,
+    PRIMARY KEY (media_type, clean_title)
+);

@@ -187,6 +187,7 @@ internal fun HeroSection(
     hero: HomeHubHero,
     section: HomeHubSection,
     ctaMode: HomeHeroCtaMode,
+    compact: Boolean = false,
     onPlayClick: () -> Unit,
     onEntryClick: () -> Unit,
 ) {
@@ -216,7 +217,7 @@ internal fun HeroSection(
     Box(
         modifier = Modifier
             .auroraCenteredMaxWidth(contentMaxWidthDp)
-            .height(440.dp)
+            .height(if (compact) 252.dp else 440.dp)
             .padding(horizontal = 16.dp, vertical = 14.dp)
             .clip(heroCardShape)
             .then(
@@ -277,9 +278,9 @@ internal fun HeroSection(
                     text = hero.title,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     baseStyle = TextStyle(
-                        fontSize = 28.sp,
+                        fontSize = if (compact) 20.sp else 28.sp,
                         fontFamily = FontFamily(Font(R.font.montserrat_bold)),
-                        lineHeight = 34.sp,
+                        lineHeight = if (compact) 25.sp else 34.sp,
                         lineBreak = LineBreak.Heading,
                         shadow = visuals.textShadow,
                     ),
@@ -294,9 +295,9 @@ internal fun HeroSection(
                     hero.title,
                     modifier = Modifier.padding(horizontal = 16.dp),
                     color = Color.White,
-                    fontSize = 28.sp,
+                    fontSize = if (compact) 20.sp else 28.sp,
                     fontFamily = FontFamily(Font(R.font.montserrat_bold)),
-                    lineHeight = 34.sp,
+                    lineHeight = if (compact) 25.sp else 34.sp,
                     style = TextStyle(lineBreak = LineBreak.Heading, shadow = visuals.textShadow),
                     textAlign = TextAlign.Center,
                     maxLines = 2,
@@ -333,7 +334,7 @@ internal fun HeroSection(
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(if (compact) 14.dp else 24.dp))
 
             val buttonInteractionSource = remember { MutableInteractionSource() }
             val ctaPresentationMode = remember(ctaMode) {
@@ -349,7 +350,7 @@ internal fun HeroSection(
                     appHaptics.tap()
                     onPlayClick()
                 },
-                modifier = Modifier.height(52.dp),
+                modifier = Modifier.height(if (compact) 44.dp else 52.dp),
                 isHome = true,
                 shape = CircleShape,
                 contentPadding = if (ctaMode == HomeHeroCtaMode.Classic) {
@@ -405,7 +406,7 @@ internal fun HeroSection(
                     Text(
                         stringResource(actionSpec.labelRes),
                         color = contentColor,
-                        fontSize = 17.sp,
+                        fontSize = if (compact) 14.sp else 17.sp,
                         fontWeight = FontWeight.Bold,
                         style = TextStyle(shadow = actionButtonLabelShadow),
                     )

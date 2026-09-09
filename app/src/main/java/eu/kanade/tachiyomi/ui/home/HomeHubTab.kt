@@ -672,6 +672,8 @@ internal data class HomeHubUiState(
     val hero: HomeHubHero? = null,
     val history: List<HomeHubHistory> = emptyList(),
     val recommendations: List<HomeHubRecommendation> = emptyList(),
+    val discovery: List<HomeHubDiscoveryItem> = emptyList(),
+    val discoveryEnabled: Boolean = false,
     val userName: String,
     val userAvatar: String,
     val greeting: dev.icerock.moko.resources.StringResource,
@@ -707,11 +709,24 @@ internal data class HomeHubRecommendation(
     val progressDenominator: Long = 1,
 )
 
+internal data class HomeHubDiscoveryItem(
+    val title: String,
+    val cleanTitle: String,
+    val coverUrl: String?,
+    val seedTitle: String?,
+    val reasonPayload: String?,
+    val provider: String,
+    val rowType: tachiyomi.domain.discovery.model.DiscoveryRowType,
+    val mediaType: tachiyomi.domain.discovery.model.DiscoveryMediaType,
+)
+
 object HomeHubTab : Tab {
 
     private val uiPreferences: UiPreferences by injectLazy()
     private val activityDataRepository: tachiyomi.domain.achievement.repository.ActivityDataRepository by injectLazy()
     private val userProfilePreferences: UserProfilePreferences by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
 
     override val options: TabOptions
         @Composable
@@ -818,6 +833,8 @@ object HomeHubTab : Tab {
         val homeHeroCtaMode = HomeHeroCtaMode.fromKey(homeHeroCtaModeKey)
         val homeHubRecentCardModeKey by userProfilePreferences.homeHubRecentCardMode().collectAsStateWithLifecycle()
         val homeHubRecentCardMode = HomeHubRecentCardMode.fromKey(homeHubRecentCardModeKey)
+        val homeHeroModeKey by discoveryPreferences.homeHeroMode().collectAsStateWithLifecycle()
+        val homeHeroMode = eu.kanade.domain.ui.model.HomeHeroMode.fromKey(homeHeroModeKey)
 
         val homeHeaderGreetingAlignRight by userProfilePreferences
             .homeHeaderGreetingAlignRight()
@@ -908,6 +925,24 @@ object HomeHubTab : Tab {
             }
         }
 
+        // Страховка расписания ленты «Для тебя»: идемпотентно (ExistingPeriodicWorkPolicy.UPDATE),
+        // покрывает первый запуск, dev-сборки (миграция 208f) и восстановление после очистки данных.
+        LaunchedEffect(Unit) {
+            eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.setupTask(context)
+        }
+        // Per-media bootstrap: если лента активной вкладки никогда не генерировалась —
+        // one-shot сразу (фикс дыры: после успеха аниме манга/новеллы ждали бы до 24ч).
+        LaunchedEffect(selectedSection) {
+            val mediaType = when (selectedSection) {
+                HomeHubSection.Anime -> tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME
+                HomeHubSection.Manga -> tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA
+                HomeHubSection.Novel -> tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL
+            }
+            if (discoveryRepository.lastUpdatedAt(mediaType) == null) {
+                eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.refreshNow(context)
+            }
+        }
+
         val photoPickerLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent(),
         ) { uri ->
@@ -949,7 +984,7 @@ object HomeHubTab : Tab {
         // which was causing repeated content-start logs and transient skeleton states.
         // Keys chosen so legitimate changes (search, selection, modes) still produce updated list.
         val tabs = remember(
-            sections, selectedSection, homeHeroCtaMode, homeHubRecentCardMode,
+            sections, selectedSection, homeHeroCtaMode, homeHubRecentCardMode, homeHeroMode,
             animeScreenModel, mangaScreenModel, novelScreenModel,
             animeSearchQuery, mangaSearchQuery, novelSearchQuery, scrollResetToken,
         ) {
@@ -964,6 +999,7 @@ object HomeHubTab : Tab {
                                 searchQuery = animeSearchQuery,
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
+                                heroMode = homeHeroMode,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -980,6 +1016,7 @@ object HomeHubTab : Tab {
                                 searchQuery = mangaSearchQuery,
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
+                                heroMode = homeHeroMode,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -996,6 +1033,7 @@ object HomeHubTab : Tab {
                                 searchQuery = novelSearchQuery,
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
+                                heroMode = homeHeroMode,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,

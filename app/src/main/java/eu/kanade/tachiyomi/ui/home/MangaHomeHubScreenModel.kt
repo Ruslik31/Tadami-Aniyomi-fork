@@ -94,6 +94,8 @@ internal class MangaHomeHubScreenModel(
     private val getEnabledMangaSources: GetEnabledMangaSources by injectLazy()
     private val sourcePreferences: SourcePreferences by injectLazy()
     private val sourceManager: MangaSourceManager by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
 
     override val avatarFileName: String = "user_avatar_manga.jpg"
 
@@ -145,6 +147,23 @@ internal class MangaHomeHubScreenModel(
                     )
                 }
             }
+        }
+
+        // Тизер ленты «Для тебя» — чтение только из БД (ноль сети на рендер Home).
+        screenModelScope.launchIO {
+            combine(
+                discoveryRepository.subscribe(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+                discoveryPreferences.discoveryEnabled().changes(),
+                discoveryPreferences.teaserCount().changes(),
+                discoveryRepository.subscribeHidden(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+            ) { items, enabled, count, hidden ->
+                items.filterNot { it.cleanTitle in hidden } to (enabled to count)
+            }
+                .collectLatest { (visible, prefs) ->
+                    val (enabled, count) = prefs
+                    val teaser = if (enabled) composeTeaserItems(visible, count) else emptyList()
+                    mutableState.update { it.copy(discovery = teaser, discoveryEnabled = enabled) }
+                }
         }
     }
 

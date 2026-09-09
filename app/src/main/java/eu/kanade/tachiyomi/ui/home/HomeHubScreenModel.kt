@@ -97,6 +97,8 @@ internal class HomeHubScreenModel(
     private val userProfileManager: tachiyomi.data.achievement.UserProfileManager by injectLazy()
     private val streakChecker: tachiyomi.data.achievement.handler.checkers.StreakAchievementChecker by injectLazy()
     private val activityDataRepository: tachiyomi.domain.achievement.repository.ActivityDataRepository by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
 
     override val avatarFileName: String = "user_avatar.jpg"
 
@@ -205,6 +207,23 @@ internal class HomeHubScreenModel(
                     )
                 }
             }
+        }
+
+        // Тизер ленты «Для тебя» — чтение только из БД (ноль сети на рендер Home).
+        screenModelScope.launchIO {
+            combine(
+                discoveryRepository.subscribe(tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME),
+                discoveryPreferences.discoveryEnabled().changes(),
+                discoveryPreferences.teaserCount().changes(),
+                discoveryRepository.subscribeHidden(tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME),
+            ) { items, enabled, count, hidden ->
+                items.filterNot { it.cleanTitle in hidden } to (enabled to count)
+            }
+                .collectLatest { (visible, prefs) ->
+                    val (enabled, count) = prefs
+                    val teaser = if (enabled) composeTeaserItems(visible, count) else emptyList()
+                    mutableState.update { it.copy(discovery = teaser, discoveryEnabled = enabled) }
+                }
         }
     }
 

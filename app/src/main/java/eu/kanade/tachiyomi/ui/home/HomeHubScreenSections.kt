@@ -49,6 +49,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import eu.kanade.domain.ui.model.HomeHeroCtaMode
+import eu.kanade.domain.ui.model.HomeHeroMode
 import eu.kanade.domain.ui.model.HomeHubRecentCardMode
 import eu.kanade.presentation.more.settings.screen.browse.AnimeExtensionStoreScreen
 import eu.kanade.presentation.more.settings.screen.browse.MangaExtensionStoreScreen
@@ -65,13 +66,17 @@ import eu.kanade.tachiyomi.ui.browse.manga.source.browse.BrowseMangaSourceScreen
 import eu.kanade.tachiyomi.ui.browse.manga.source.globalsearch.GlobalMangaSearchScreen
 import eu.kanade.tachiyomi.ui.browse.novel.source.browse.BrowseNovelSourceScreen
 import eu.kanade.tachiyomi.ui.browse.novel.source.globalsearch.GlobalNovelSearchScreen
+import eu.kanade.tachiyomi.ui.discovery.DiscoveryFeedScreen
 import eu.kanade.tachiyomi.ui.entries.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.entries.novel.NovelScreen
+import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
+import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.history.HistoriesTab
 import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryTab
 import eu.kanade.tachiyomi.ui.reader.novel.NovelReaderScreen
 import kotlinx.coroutines.launch
+import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.LocalAppHaptics
@@ -83,6 +88,7 @@ internal fun AnimeHomeHub(
     searchQuery: String?,
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
+    heroMode: HomeHeroMode,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -93,6 +99,7 @@ internal fun AnimeHomeHub(
     val navigator = LocalNavigator.currentOrThrow
     val context = LocalContext.current
     val tabNavigator = LocalTabNavigator.current
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(screenModel, activeSection) {
         HomeHubScreenModel.setInstance(screenModel)
@@ -131,6 +138,7 @@ internal fun AnimeHomeHub(
         availableSources = availableSources,
         heroCtaMode = heroCtaMode,
         recentCardMode = recentCardMode,
+        heroMode = heroMode,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(AnimeScreen(it)) },
         onPlayHero = { screenModel.playHeroEpisode(context) },
@@ -161,6 +169,13 @@ internal fun AnimeHomeHub(
         },
         onHistoryClick = { tabNavigator.current = HistoriesTab },
         onLibraryClick = { tabNavigator.current = AnimeLibraryTab },
+        onForYouMoreClick = { navigator.push(DiscoveryFeedScreen(DiscoveryMediaType.ANIME.key)) },
+        onDiscoveryItemClick = { item ->
+            scope.launch {
+                val suggestionItem = item.toSuggestionItem()
+                navigator.push(suggestionItem.toDirectEntryScreenOrNull() ?: suggestionItem.toGlobalSearchScreen())
+            }
+        },
     )
 }
 
@@ -170,6 +185,7 @@ internal fun MangaHomeHub(
     searchQuery: String?,
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
+    heroMode: HomeHeroMode,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -219,6 +235,7 @@ internal fun MangaHomeHub(
         availableSources = availableSources,
         heroCtaMode = heroCtaMode,
         recentCardMode = recentCardMode,
+        heroMode = heroMode,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(MangaScreen(it)) },
         onPlayHero = { screenModel.readHeroChapter(context) },
@@ -252,6 +269,13 @@ internal fun MangaHomeHub(
             scope.launch { AnimeLibraryTab.showMangaSection() }
             tabNavigator.current = AnimeLibraryTab
         },
+        onForYouMoreClick = { navigator.push(DiscoveryFeedScreen(DiscoveryMediaType.MANGA.key)) },
+        onDiscoveryItemClick = { item ->
+            scope.launch {
+                val suggestionItem = item.toSuggestionItem()
+                navigator.push(suggestionItem.toDirectEntryScreenOrNull() ?: suggestionItem.toGlobalSearchScreen())
+            }
+        },
     )
 }
 
@@ -261,6 +285,7 @@ internal fun NovelHomeHub(
     searchQuery: String?,
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
+    heroMode: HomeHeroMode,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -309,6 +334,7 @@ internal fun NovelHomeHub(
         availableSources = availableSources,
         heroCtaMode = heroCtaMode,
         recentCardMode = recentCardMode,
+        heroMode = heroMode,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(NovelScreen(it)) },
         onPlayHero = {
@@ -346,6 +372,13 @@ internal fun NovelHomeHub(
             scope.launch { AnimeLibraryTab.showNovelSection() }
             tabNavigator.current = AnimeLibraryTab
         },
+        onForYouMoreClick = { navigator.push(DiscoveryFeedScreen(DiscoveryMediaType.NOVEL.key)) },
+        onDiscoveryItemClick = { item ->
+            scope.launch {
+                val suggestionItem = item.toSuggestionItem()
+                navigator.push(suggestionItem.toDirectEntryScreenOrNull() ?: suggestionItem.toGlobalSearchScreen())
+            }
+        },
     )
 }
 
@@ -362,6 +395,7 @@ private fun HomeHubScreen(
     availableSources: List<HomeSourceItem>,
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
+    heroMode: HomeHeroMode,
     contentPadding: PaddingValues,
     onEntryClick: (Long) -> Unit,
     onPlayHero: () -> Unit,
@@ -372,18 +406,22 @@ private fun HomeHubScreen(
     onExtensionClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onLibraryClick: () -> Unit,
+    onForYouMoreClick: () -> Unit,
+    onDiscoveryItemClick: (HomeHubDiscoveryItem) -> Unit,
 ) {
     val trimmedQuery = searchQuery?.trim().orEmpty()
     val filteredContent = remember(
         state.hero,
         state.history,
         state.recommendations,
+        state.discovery,
         trimmedQuery,
     ) {
         resolveHomeHubFilteredContent(
             hero = state.hero,
             history = state.history,
             recommendations = state.recommendations,
+            discovery = state.discovery,
             query = trimmedQuery,
         )
     }
@@ -422,11 +460,13 @@ private fun HomeHubScreen(
     val hero = filteredContent.hero
     val history = filteredContent.history
     val recommendations = filteredContent.recommendations
+    val discovery = filteredContent.discovery
     val showWelcome = (state.showWelcome || state.showFilteredEmpty) && !isFiltering
     val enableScroll = shouldEnableHomeHubScroll(
         showWelcome = showWelcome,
         historyCount = history.size,
         recommendationCount = recommendations.size,
+        discoveryCount = discovery.size,
     )
     val reserveHeroSlot = shouldReserveHomeHubHeroSlot(
         hasHero = state.hero != null,
@@ -434,6 +474,17 @@ private fun HomeHubScreen(
         showWelcome = showWelcome,
         isFiltering = isFiltering,
     )
+    val heroPresentation = resolveHeroPresentation(
+        prefMode = heroMode,
+        discoveryEnabled = state.discoveryEnabled,
+        discoveryCount = state.discovery.size,
+    )
+    // Коллаж сам является тизером; гибрид показывает первые 3 в стрипе — рельс получает остаток.
+    val forYouItems = when (heroPresentation) {
+        HomeHeroMode.Collage -> emptyList()
+        HomeHeroMode.Hybrid -> discovery.drop(3)
+        HomeHeroMode.Continue -> discovery
+    }
 
     LazyColumn(
         state = listState,
@@ -447,18 +498,49 @@ private fun HomeHubScreen(
             item(key = "welcome", contentType = "home_hub_welcome") {
                 WelcomeSection(onBrowseClick = onBrowseClick, onExtensionClick = onExtensionClick)
             }
+            // Онбординг не должен лишать discovery: тизер под приветственным блоком.
+            if (discovery.isNotEmpty()) {
+                item(key = "for_you_welcome", contentType = "home_hub_for_you") {
+                    ForYouSection(
+                        items = discovery,
+                        onMoreClick = onForYouMoreClick,
+                        onItemClick = onDiscoveryItemClick,
+                    )
+                }
+            }
         } else {
             if (hero != null || reserveHeroSlot) {
                 item(key = "hero", contentType = "home_hub_hero") {
-                    hero?.let { heroData ->
-                        HeroSection(
-                            hero = heroData,
+                    when {
+                        heroPresentation == HomeHeroMode.Collage -> DiscoveryHeroCollage(
+                            items = discovery,
+                            onMoreClick = onForYouMoreClick,
+                            onItemClick = onDiscoveryItemClick,
+                        )
+                        heroPresentation == HomeHeroMode.Hybrid && hero != null -> Column {
+                            HeroSection(
+                                hero = hero,
+                                section = section,
+                                ctaMode = heroCtaMode,
+                                compact = true,
+                                onPlayClick = onPlayHero,
+                                onEntryClick = { onEntryClick(hero.entryId) },
+                            )
+                            HybridDiscoveryStrip(
+                                items = discovery.take(3),
+                                onMoreClick = onForYouMoreClick,
+                                onItemClick = onDiscoveryItemClick,
+                            )
+                        }
+                        hero != null -> HeroSection(
+                            hero = hero,
                             section = section,
                             ctaMode = heroCtaMode,
                             onPlayClick = onPlayHero,
-                            onEntryClick = { onEntryClick(heroData.entryId) },
+                            onEntryClick = { onEntryClick(hero.entryId) },
                         )
-                    } ?: HeroSectionPlaceholder()
+                        else -> HeroSectionPlaceholder()
+                    }
                 }
             }
 
@@ -482,6 +564,20 @@ private fun HomeHubScreen(
                         section = section,
                         onEntryClick = onEntryClick,
                         onViewAllClick = onHistoryClick,
+                    )
+                }
+            }
+
+            if (
+                shouldShowForYouSection(state.discoveryEnabled) &&
+                heroPresentation != HomeHeroMode.Collage &&
+                (forYouItems.isNotEmpty() || discovery.isEmpty())
+            ) {
+                item(key = "for_you", contentType = "home_hub_for_you") {
+                    ForYouSection(
+                        items = forYouItems,
+                        onMoreClick = onForYouMoreClick,
+                        onItemClick = onDiscoveryItemClick,
                     )
                 }
             }
@@ -588,6 +684,7 @@ internal data class HomeHubFilteredContent(
     val hero: HomeHubHero?,
     val history: List<HomeHubHistory>,
     val recommendations: List<HomeHubRecommendation>,
+    val discovery: List<HomeHubDiscoveryItem> = emptyList(),
     val isFiltering: Boolean,
 )
 
@@ -596,12 +693,14 @@ internal fun resolveHomeHubFilteredContent(
     history: List<HomeHubHistory>,
     recommendations: List<HomeHubRecommendation>,
     query: String,
+    discovery: List<HomeHubDiscoveryItem> = emptyList(),
 ): HomeHubFilteredContent {
     if (query.isEmpty()) {
         return HomeHubFilteredContent(
             hero = hero,
             history = history,
             recommendations = recommendations,
+            discovery = discovery,
             isFiltering = false,
         )
     }
@@ -610,6 +709,7 @@ internal fun resolveHomeHubFilteredContent(
         hero = hero?.takeIf { it.title.contains(query, ignoreCase = true) },
         history = history.filter { it.title.contains(query, ignoreCase = true) },
         recommendations = recommendations.filter { it.title.contains(query, ignoreCase = true) },
+        discovery = discovery.filter { it.title.contains(query, ignoreCase = true) },
         isFiltering = true,
     )
 }
@@ -631,7 +731,9 @@ internal fun shouldEnableHomeHubScroll(
     showWelcome: Boolean,
     historyCount: Int,
     recommendationCount: Int,
+    discoveryCount: Int = 0,
 ): Boolean {
-    if (showWelcome) return false
-    return historyCount > 0 || recommendationCount > 0
+    // Под Welcome-блоком скролл нужен, если есть discovery-контент (тизер под онбордингом).
+    if (showWelcome) return discoveryCount > 0
+    return historyCount > 0 || recommendationCount > 0 || discoveryCount > 0
 }

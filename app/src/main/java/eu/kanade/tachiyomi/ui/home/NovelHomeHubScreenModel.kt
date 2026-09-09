@@ -108,6 +108,8 @@ internal class NovelHomeHubScreenModel(
     private val sourcePreferences: SourcePreferences by injectLazy()
     private val sourceManager: NovelSourceManager by injectLazy()
     private val localNovelSourceFileSystem: LocalNovelSourceFileSystem by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
 
     override val avatarFileName: String = "user_avatar_novel.jpg"
 
@@ -227,6 +229,23 @@ internal class NovelHomeHubScreenModel(
                     )
                 }
             }
+        }
+
+        // Тизер ленты «Для тебя» — чтение только из БД (ноль сети на рендер Home).
+        screenModelScope.launchIO {
+            combine(
+                discoveryRepository.subscribe(tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL),
+                discoveryPreferences.discoveryEnabled().changes(),
+                discoveryPreferences.teaserCount().changes(),
+                discoveryRepository.subscribeHidden(tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL),
+            ) { items, enabled, count, hidden ->
+                items.filterNot { it.cleanTitle in hidden } to (enabled to count)
+            }
+                .collectLatest { (visible, prefs) ->
+                    val (enabled, count) = prefs
+                    val teaser = if (enabled) composeTeaserItems(visible, count) else emptyList()
+                    mutableState.update { it.copy(discovery = teaser, discoveryEnabled = enabled) }
+                }
         }
     }
 

@@ -134,9 +134,20 @@ class AniListRecommendationSource(
                             )
                         }
                         val body = payload.toString().toRequestBody(jsonMime)
-                        val data = client.newCall(POST("https://graphql.anilist.co/", body = body))
-                            .awaitSuccess()
-                            .parseAs<JsonObject>(json)
+                        AniListRequestGuard.ensureClosed()
+                        AniListRequestGuard.acquire()
+                        val data = try {
+                            client.newCall(
+                                POST("https://graphql.anilist.co/", headers = AniListRequestGuard.headers, body = body),
+                            )
+                                .awaitSuccess()
+                                .parseAs<JsonObject>(json)
+                        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            if (e.message?.contains("403") == true) AniListRequestGuard.reportForbidden()
+                            throw e
+                        }
 
                         data["data"]?.jsonObject
                             ?.get("Page")?.jsonObject
@@ -365,9 +376,18 @@ class AniListRecommendationSource(
                 )
             }
             val body = payload.toString().toRequestBody(jsonMime)
-            val data = client.newCall(POST("https://graphql.anilist.co/", body = body))
-                .awaitSuccess()
-                .parseAs<JsonObject>(json)
+            AniListRequestGuard.ensureClosed()
+            AniListRequestGuard.acquire()
+            val data = try {
+                client.newCall(POST("https://graphql.anilist.co/", headers = AniListRequestGuard.headers, body = body))
+                    .awaitSuccess()
+                    .parseAs<JsonObject>(json)
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (e.message?.contains("403") == true) AniListRequestGuard.reportForbidden()
+                throw e
+            }
             data["data"]?.jsonObject
                 ?.get("Page")?.jsonObject
                 ?.get("media")?.jsonArray
