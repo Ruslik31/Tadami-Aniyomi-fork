@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,9 @@ import eu.kanade.tachiyomi.data.discovery.interleaveMix
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionReason
 import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
+import eu.kanade.tachiyomi.ui.discovery.BadgeColorKind
+import eu.kanade.tachiyomi.ui.discovery.DiscoveryBadge
+import eu.kanade.tachiyomi.ui.discovery.badgeColor
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
@@ -156,6 +160,18 @@ internal fun HomeHubDiscoveryItem.toSuggestionItem(): SuggestionItem = Suggestio
 
 // ============================ UI ============================
 
+/** Микро-бейдж сигнала для home-карточки (маппинг HomeHubDiscoveryItem → бейдж). */
+internal fun discoveryBadgeOf(item: HomeHubDiscoveryItem): DiscoveryBadge? = when (item.rowType) {
+    DiscoveryRowType.TASTE -> DiscoveryBadge(AYMR.strings.for_you_badge_taste, BadgeColorKind.TASTE)
+    DiscoveryRowType.TREND ->
+        DiscoveryBadge(
+            if (item.reasonPayload == "next") AYMR.strings.for_you_badge_season else AYMR.strings.for_you_badge_trend,
+            BadgeColorKind.FRESH,
+        )
+    DiscoveryRowType.SOURCE -> DiscoveryBadge(AYMR.strings.for_you_badge_source, BadgeColorKind.SOURCE)
+    DiscoveryRowType.LIKE -> null
+}
+
 /** Карточка discovery: постер 2:3 (радиус 16dp) + тайтл + обоснование. Обложка — удалённый URL. */
 @Composable
 internal fun DiscoveryPosterCard(
@@ -164,12 +180,22 @@ internal fun DiscoveryPosterCard(
     subtitle: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    badge: DiscoveryBadge? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
     val posterShape = RoundedCornerShape(16.dp)
 
-    Column(modifier = modifier.clickable(onClick = onClick)) {
+    Column(
+        modifier = modifier.then(
+            if (onLongClick != null) {
+                Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            } else {
+                Modifier.clickable(onClick = onClick)
+            },
+        ),
+    ) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -203,6 +229,23 @@ internal fun DiscoveryPosterCard(
                 error = fallbackPainter,
                 fallback = fallbackPainter,
             )
+            badge?.let { b ->
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(badgeColor(b.colorKind))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        stringResource(b.textRes),
+                        color = colors.textOnAccent,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -246,6 +289,7 @@ internal fun ForYouSection(
     items: List<HomeHubDiscoveryItem>,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
+    onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
@@ -315,6 +359,8 @@ internal fun ForYouSection(
                     title = item.title,
                     coverUrl = item.coverUrl,
                     subtitle = discoveryReasonOrNull(item),
+                    badge = discoveryBadgeOf(item),
+                    onLongClick = onLongClick?.let { { it(item) } },
                     onClick = {
                         appHaptics.tap()
                         onItemClick(item)

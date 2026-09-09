@@ -75,6 +75,8 @@ import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
 import eu.kanade.presentation.entries.components.aurora.rememberAuroraPosterColorFilter
 import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.data.discovery.AniListTrendingSource
+import eu.kanade.tachiyomi.data.discovery.DiscoveryMeta
 import eu.kanade.tachiyomi.ui.browse.anime.source.browse.BrowseAnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.anime.source.globalsearch.GlobalAnimeSearchScreen
 import eu.kanade.tachiyomi.ui.browse.manga.source.browse.BrowseMangaSourceScreen
@@ -130,6 +132,49 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
         var tab by remember { mutableStateOf(FeedSignalTab.MIX) }
         var provider by remember { mutableStateOf<String?>(null) }
         val hazeState = remember { HazeState() }
+        var sheetItem by remember { mutableStateOf<DiscoverySuggestion?>(null) }
+        var sheetMeta by remember { mutableStateOf<DiscoveryMeta?>(null) }
+        var sheetMetaLoading by remember { mutableStateOf(false) }
+        val trendingSource = remember { AniListTrendingSource() }
+
+        val navigateFor: (DiscoverySuggestion) -> Unit = { item ->
+            scope.launch {
+                if (item.rowType == DiscoveryRowType.SOURCE) {
+                    // Ряд источника: открываем каталог источника напрямую, без глобального поиска.
+                    val sourceId = when (state.mediaType) {
+                        DiscoveryMediaType.ANIME -> Injekt.get<GetEnabledAnimeSources>()
+                            .subscribe().first().firstOrNull { it.name == item.provider }?.id
+                        DiscoveryMediaType.MANGA -> Injekt.get<GetEnabledMangaSources>()
+                            .subscribe().first().firstOrNull { it.name == item.provider }?.id
+                        DiscoveryMediaType.NOVEL -> Injekt.get<GetEnabledNovelSources>()
+                            .subscribe().first().firstOrNull { it.name == item.provider }?.id
+                    }
+                    if (sourceId != null) {
+                        navigator.push(
+                            when (state.mediaType) {
+                                DiscoveryMediaType.ANIME -> BrowseAnimeSourceScreen(sourceId, null)
+                                DiscoveryMediaType.MANGA -> BrowseMangaSourceScreen(sourceId, null)
+                                DiscoveryMediaType.NOVEL -> BrowseNovelSourceScreen(sourceId, null)
+                            },
+                        )
+                        return@launch
+                    }
+                }
+                val suggestionItem = item.toSuggestionItem()
+                navigator.push(
+                    suggestionItem.toDirectEntryScreenOrNull()
+                        ?: suggestionItem.toGlobalSearchScreen(),
+                )
+            }
+        }
+
+        LaunchedEffect(sheetItem) {
+            val item = sheetItem ?: return@LaunchedEffect
+            sheetMeta = null
+            sheetMetaLoading = true
+            sheetMeta = runCatching { trendingSource.fetchMeta(item.title, state.mediaType) }.getOrNull()
+            sheetMetaLoading = false
+        }
 
         Box(Modifier.fillMaxSize().background(AuroraTheme.colors.background)) {
             Column(Modifier.fillMaxSize()) {
@@ -150,36 +195,7 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                     hazeState = hazeState,
                     tab = tab,
                     provider = provider,
-                    onItemClick = { item ->
-                        scope.launch {
-                            if (item.rowType == DiscoveryRowType.SOURCE) {
-                                // Ряд источника: открываем каталог источника напрямую, без глобального поиска.
-                                val sourceId = when (state.mediaType) {
-                                    DiscoveryMediaType.ANIME -> Injekt.get<GetEnabledAnimeSources>()
-                                        .subscribe().first().firstOrNull { it.name == item.provider }?.id
-                                    DiscoveryMediaType.MANGA -> Injekt.get<GetEnabledMangaSources>()
-                                        .subscribe().first().firstOrNull { it.name == item.provider }?.id
-                                    DiscoveryMediaType.NOVEL -> Injekt.get<GetEnabledNovelSources>()
-                                        .subscribe().first().firstOrNull { it.name == item.provider }?.id
-                                }
-                                if (sourceId != null) {
-                                    navigator.push(
-                                        when (state.mediaType) {
-                                            DiscoveryMediaType.ANIME -> BrowseAnimeSourceScreen(sourceId, null)
-                                            DiscoveryMediaType.MANGA -> BrowseMangaSourceScreen(sourceId, null)
-                                            DiscoveryMediaType.NOVEL -> BrowseNovelSourceScreen(sourceId, null)
-                                        },
-                                    )
-                                    return@launch
-                                }
-                            }
-                            val suggestionItem = item.toSuggestionItem()
-                            navigator.push(
-                                suggestionItem.toDirectEntryScreenOrNull()
-                                    ?: suggestionItem.toGlobalSearchScreen(),
-                            )
-                        }
-                    },
+                    onItemClick = { sheetItem = it },
                     onItemLongClick = { screenModel.hide(it) },
                     onItemAdd = { screenModel.addToLibrary(it) },
                     onRetry = { screenModel.refreshNow() },
@@ -192,6 +208,26 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                 onDismissAdded = { screenModel.dismissAddedSnackbar() },
                 onDismissNotFound = { screenModel.dismissNotFound() },
             )
+            sheetItem?.let { item ->
+                DiscoveryPreviewSheet(
+                    item = item,
+                    meta = sheetMeta,
+                    isMetaLoading = sheetMetaLoading,
+                    onDismiss = { sheetItem = null },
+                    onAdd = {
+                        screenModel.addToLibrary(item)
+                        sheetItem = null
+                    },
+                    onFind = {
+                        sheetItem = null
+                        navigateFor(item)
+                    },
+                    onHide = {
+                        screenModel.hide(item)
+                        sheetItem = null
+                    },
+                )
+            }
         }
     }
 }
@@ -446,6 +482,7 @@ private fun FeedBody(
                     item = item,
                     reason = reason,
                     isAdding = item.title in state.addingTitles,
+                    badge = discoveryBadge(item),
                     onClick = {
                         appHaptics.tap()
                         onItemClick(item)
@@ -469,6 +506,7 @@ private fun FeedCard(
     item: DiscoverySuggestion,
     reason: String?,
     isAdding: Boolean,
+    badge: DiscoveryBadge? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onAdd: () -> Unit,
@@ -516,6 +554,23 @@ private fun FeedCard(
                 error = fallbackPainter,
                 fallback = fallbackPainter,
             )
+            badge?.let { b ->
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(badgeColor(b.colorKind))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        stringResource(b.textRes),
+                        color = colors.textOnAccent,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
             Box(
                 Modifier
                     .align(Alignment.BottomEnd)

@@ -1832,6 +1832,12 @@
     <string name="pref_discovery_seed_count">Тайтлов-основ</string>
     <string name="pref_discovery_seed_count_summary">Тайтлов-основ для подборки: %1$d</string>
     <string name="for_you_add_not_found">Не найдено в установленных источниках: «%1$s»</string>
+    <string name="for_you_sheet_find">Найти в источниках</string>
+    <string name="for_you_badge_taste">🎯 твой вкус</string>
+    <string name="for_you_badge_season">🔥 топ сезона</string>
+    <string name="for_you_badge_trend">🔥 тренд</string>
+    <string name="for_you_badge_source">✨ из источника</string>
+    <string name="for_you_meta_loading">Загружаю описание…</string>
     <string name="pref_discovery_seed_completed">Недавно завершённые</string>
     <string name="pref_discovery_seed_active14">Активные за 14 дней</string>
     <string name="pref_discovery_seed_added">Недавно добавленные в библиотеку</string>

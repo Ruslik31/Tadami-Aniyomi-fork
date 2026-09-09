@@ -1,13 +1,16 @@
 package eu.kanade.tachiyomi.ui.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -89,6 +92,9 @@ internal fun AnimeHomeHub(
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
     heroMode: HomeHeroMode,
+    hiddenSnackbar: String? = null,
+    onUndoHidden: () -> Unit = {},
+    onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -139,6 +145,9 @@ internal fun AnimeHomeHub(
         heroCtaMode = heroCtaMode,
         recentCardMode = recentCardMode,
         heroMode = heroMode,
+        hiddenSnackbar = hiddenSnackbar,
+        onUndoHidden = onUndoHidden,
+        onDiscoveryLongClick = onDiscoveryLongClick,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(AnimeScreen(it)) },
         onPlayHero = { screenModel.playHeroEpisode(context) },
@@ -186,6 +195,9 @@ internal fun MangaHomeHub(
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
     heroMode: HomeHeroMode,
+    hiddenSnackbar: String? = null,
+    onUndoHidden: () -> Unit = {},
+    onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -236,6 +248,9 @@ internal fun MangaHomeHub(
         heroCtaMode = heroCtaMode,
         recentCardMode = recentCardMode,
         heroMode = heroMode,
+        hiddenSnackbar = hiddenSnackbar,
+        onUndoHidden = onUndoHidden,
+        onDiscoveryLongClick = onDiscoveryLongClick,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(MangaScreen(it)) },
         onPlayHero = { screenModel.readHeroChapter(context) },
@@ -286,6 +301,9 @@ internal fun NovelHomeHub(
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
     heroMode: HomeHeroMode,
+    hiddenSnackbar: String? = null,
+    onUndoHidden: () -> Unit = {},
+    onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -335,6 +353,9 @@ internal fun NovelHomeHub(
         heroCtaMode = heroCtaMode,
         recentCardMode = recentCardMode,
         heroMode = heroMode,
+        hiddenSnackbar = hiddenSnackbar,
+        onUndoHidden = onUndoHidden,
+        onDiscoveryLongClick = onDiscoveryLongClick,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(NovelScreen(it)) },
         onPlayHero = {
@@ -396,6 +417,9 @@ private fun HomeHubScreen(
     heroCtaMode: HomeHeroCtaMode,
     recentCardMode: HomeHubRecentCardMode,
     heroMode: HomeHeroMode,
+    hiddenSnackbar: String? = null,
+    onUndoHidden: () -> Unit = {},
+    onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
     contentPadding: PaddingValues,
     onEntryClick: (Long) -> Unit,
     onPlayHero: () -> Unit,
@@ -486,116 +510,148 @@ private fun HomeHubScreen(
         HomeHeroMode.Continue -> discovery
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .then(if (enableScroll) Modifier.nestedScroll(nestedScrollConnection) else Modifier),
-        contentPadding = contentPadding,
-        userScrollEnabled = enableScroll,
-    ) {
-        if (showWelcome) {
-            item(key = "welcome", contentType = "home_hub_welcome") {
-                WelcomeSection(onBrowseClick = onBrowseClick, onExtensionClick = onExtensionClick)
-            }
-            // Онбординг не должен лишать discovery: тизер под приветственным блоком.
-            if (discovery.isNotEmpty()) {
-                item(key = "for_you_welcome", contentType = "home_hub_for_you") {
-                    ForYouSection(
-                        items = discovery,
-                        onMoreClick = onForYouMoreClick,
-                        onItemClick = onDiscoveryItemClick,
-                    )
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (enableScroll) Modifier.nestedScroll(nestedScrollConnection) else Modifier),
+            contentPadding = contentPadding,
+            userScrollEnabled = enableScroll,
+        ) {
+            if (showWelcome) {
+                item(key = "welcome", contentType = "home_hub_welcome") {
+                    WelcomeSection(onBrowseClick = onBrowseClick, onExtensionClick = onExtensionClick)
                 }
-            }
-        } else {
-            if (hero != null || reserveHeroSlot) {
-                item(key = "hero", contentType = "home_hub_hero") {
-                    when {
-                        heroPresentation == HomeHeroMode.Collage -> DiscoveryHeroCollage(
+                // Онбординг не должен лишать discovery: тизер под приветственным блоком.
+                if (discovery.isNotEmpty()) {
+                    item(key = "for_you_welcome", contentType = "home_hub_for_you") {
+                        ForYouSection(
                             items = discovery,
                             onMoreClick = onForYouMoreClick,
                             onItemClick = onDiscoveryItemClick,
                         )
-                        heroPresentation == HomeHeroMode.Hybrid && hero != null -> Column {
-                            HeroSection(
-                                hero = hero,
-                                section = section,
-                                ctaMode = heroCtaMode,
-                                compact = true,
-                                onPlayClick = onPlayHero,
-                                onEntryClick = { onEntryClick(hero.entryId) },
-                            )
-                            HybridDiscoveryStrip(
-                                items = discovery.take(3),
+                    }
+                }
+            } else {
+                if (hero != null || reserveHeroSlot) {
+                    item(key = "hero", contentType = "home_hub_hero") {
+                        when {
+                            heroPresentation == HomeHeroMode.Collage -> DiscoveryHeroCollage(
+                                items = discovery,
                                 onMoreClick = onForYouMoreClick,
                                 onItemClick = onDiscoveryItemClick,
                             )
+                            heroPresentation == HomeHeroMode.Hybrid && hero != null -> Column {
+                                HeroSection(
+                                    hero = hero,
+                                    section = section,
+                                    ctaMode = heroCtaMode,
+                                    compact = true,
+                                    onPlayClick = onPlayHero,
+                                    onEntryClick = { onEntryClick(hero.entryId) },
+                                )
+                                HybridDiscoveryStrip(
+                                    items = discovery.take(3),
+                                    onMoreClick = onForYouMoreClick,
+                                    onItemClick = onDiscoveryItemClick,
+                                )
+                            }
+                            hero != null -> HeroSection(
+                                hero = hero,
+                                section = section,
+                                ctaMode = heroCtaMode,
+                                onPlayClick = onPlayHero,
+                                onEntryClick = { onEntryClick(hero.entryId) },
+                            )
+                            else -> HeroSectionPlaceholder()
                         }
-                        hero != null -> HeroSection(
-                            hero = hero,
+                    }
+                }
+
+                item(key = "home_search_bar", contentType = "home_hub_search_bar") {
+                    HomeSearchBarWithSourceChip(
+                        section = section,
+                        sourceId = sourceId,
+                        sourceName = sourceName,
+                        availableSources = availableSources,
+                        onSearchClick = onSearchClick,
+                        onOpenCatalog = onOpenCatalog,
+                        onSelectSource = onSelectSource,
+                    )
+                }
+
+                if (history.isNotEmpty()) {
+                    item(key = "history", contentType = "home_hub_history") {
+                        HistoryRow(
+                            history = history,
+                            recentCardMode = recentCardMode,
                             section = section,
-                            ctaMode = heroCtaMode,
-                            onPlayClick = onPlayHero,
-                            onEntryClick = { onEntryClick(hero.entryId) },
+                            onEntryClick = onEntryClick,
+                            onViewAllClick = onHistoryClick,
                         )
-                        else -> HeroSectionPlaceholder()
+                    }
+                }
+
+                if (
+                    shouldShowForYouSection(state.discoveryEnabled) &&
+                    heroPresentation != HomeHeroMode.Collage &&
+                    (forYouItems.isNotEmpty() || discovery.isEmpty())
+                ) {
+                    item(key = "for_you", contentType = "home_hub_for_you") {
+                        ForYouSection(
+                            items = forYouItems,
+                            onMoreClick = onForYouMoreClick,
+                            onItemClick = onDiscoveryItemClick,
+                            onLongClick = onDiscoveryLongClick,
+                        )
+                    }
+                }
+
+                if (recommendations.isNotEmpty()) {
+                    item(key = "recommendations", contentType = "home_hub_recommendations") {
+                        RecommendationsGrid(
+                            recommendations = recommendations,
+                            section = section,
+                            recentCardMode = recentCardMode,
+                            onEntryClick = onEntryClick,
+                            onMoreClick = onLibraryClick,
+                        )
                     }
                 }
             }
 
-            item(key = "home_search_bar", contentType = "home_hub_search_bar") {
-                HomeSearchBarWithSourceChip(
-                    section = section,
-                    sourceId = sourceId,
-                    sourceName = sourceName,
-                    availableSources = availableSources,
-                    onSearchClick = onSearchClick,
-                    onOpenCatalog = onOpenCatalog,
-                    onSelectSource = onSelectSource,
-                )
-            }
-
-            if (history.isNotEmpty()) {
-                item(key = "history", contentType = "home_hub_history") {
-                    HistoryRow(
-                        history = history,
-                        recentCardMode = recentCardMode,
-                        section = section,
-                        onEntryClick = onEntryClick,
-                        onViewAllClick = onHistoryClick,
-                    )
-                }
-            }
-
-            if (
-                shouldShowForYouSection(state.discoveryEnabled) &&
-                heroPresentation != HomeHeroMode.Collage &&
-                (forYouItems.isNotEmpty() || discovery.isEmpty())
+            item(key = "bottom_spacer", contentType = "home_hub_spacer") { Spacer(Modifier.height(24.dp)) }
+        }
+        if (hiddenSnackbar != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(16.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(AuroraTheme.colors.surface)
+                    .border(1.dp, AuroraTheme.colors.divider, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
-                item(key = "for_you", contentType = "home_hub_for_you") {
-                    ForYouSection(
-                        items = forYouItems,
-                        onMoreClick = onForYouMoreClick,
-                        onItemClick = onDiscoveryItemClick,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        hiddenSnackbar,
+                        color = AuroraTheme.colors.textPrimary,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
-                }
-            }
-
-            if (recommendations.isNotEmpty()) {
-                item(key = "recommendations", contentType = "home_hub_recommendations") {
-                    RecommendationsGrid(
-                        recommendations = recommendations,
-                        section = section,
-                        recentCardMode = recentCardMode,
-                        onEntryClick = onEntryClick,
-                        onMoreClick = onLibraryClick,
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        stringResource(AYMR.strings.for_you_undo),
+                        color = AuroraTheme.colors.accent,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { onUndoHidden() },
                     )
                 }
             }
         }
-
-        item(key = "bottom_spacer", contentType = "home_hub_spacer") { Spacer(Modifier.height(24.dp)) }
     }
 }
 

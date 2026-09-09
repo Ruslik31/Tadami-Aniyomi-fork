@@ -2182,6 +2182,12 @@
     <string name="pref_discovery_seed_count">Seed titles</string>
     <string name="pref_discovery_seed_count_summary">Seed titles used: %1$d</string>
     <string name="for_you_add_not_found">Not found in installed sources: «%1$s»</string>
+    <string name="for_you_sheet_find">Find in sources</string>
+    <string name="for_you_badge_taste"> your taste</string>
+    <string name="for_you_badge_season">🔥 season top</string>
+    <string name="for_you_badge_trend">🔥 trending</string>
+    <string name="for_you_badge_source">✨ from source</string>
+    <string name="for_you_meta_loading">Fetching description…</string>
     <string name="pref_discovery_seed_completed">Recently completed</string>
     <string name="pref_discovery_seed_active14">Active in last 14 days</string>
     <string name="pref_discovery_seed_added">Recently added to library</string>

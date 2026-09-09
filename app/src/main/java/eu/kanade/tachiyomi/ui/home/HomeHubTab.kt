@@ -106,6 +106,7 @@ import eu.kanade.tachiyomi.ui.home.components.AnimatedNicknameOverlay
 import eu.kanade.tachiyomi.ui.home.components.NicknameBadgeDecorator
 import eu.kanade.tachiyomi.ui.home.components.isTreasury
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tachiyomi.data.achievement.UnlockableManager
@@ -942,6 +943,39 @@ object HomeHubTab : Tab {
                 eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.refreshNow(context)
             }
         }
+        var hiddenSnackItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }
+        val discoveryHideScope = rememberCoroutineScope()
+        LaunchedEffect(hiddenSnackItem) {
+            if (hiddenSnackItem != null) {
+                delay(4000)
+                hiddenSnackItem = null
+            }
+        }
+        val discoveryMediaTypeForSection = when (selectedSection) {
+            HomeHubSection.Anime -> tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME
+            HomeHubSection.Manga -> tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA
+            HomeHubSection.Novel -> tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL
+        }
+        val onDiscoveryHide: (HomeHubDiscoveryItem) -> Unit = { item ->
+            discoveryHideScope.launch {
+                discoveryRepository.hide(discoveryMediaTypeForSection, item.cleanTitle)
+                hiddenSnackItem = item
+            }
+        }
+        val onUndoHidden: () -> Unit = {
+            val item = hiddenSnackItem
+            hiddenSnackItem = null
+            if (item != null) {
+                discoveryHideScope.launch {
+                    discoveryRepository.unhide(discoveryMediaTypeForSection, item.cleanTitle)
+                }
+            }
+        }
+        val hiddenSnackText = if (hiddenSnackItem != null) {
+            stringResource(AYMR.strings.for_you_hidden_snackbar)
+        } else {
+            null
+        }
 
         val photoPickerLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent(),
@@ -1000,6 +1034,9 @@ object HomeHubTab : Tab {
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
                                 heroMode = homeHeroMode,
+                                hiddenSnackbar = hiddenSnackText,
+                                onUndoHidden = onUndoHidden,
+                                onDiscoveryLongClick = onDiscoveryHide,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -1017,6 +1054,9 @@ object HomeHubTab : Tab {
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
                                 heroMode = homeHeroMode,
+                                hiddenSnackbar = hiddenSnackText,
+                                onUndoHidden = onUndoHidden,
+                                onDiscoveryLongClick = onDiscoveryHide,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -1034,6 +1074,9 @@ object HomeHubTab : Tab {
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
                                 heroMode = homeHeroMode,
+                                hiddenSnackbar = hiddenSnackText,
+                                onUndoHidden = onUndoHidden,
+                                onDiscoveryLongClick = onDiscoveryHide,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,

@@ -35,6 +35,12 @@ data class DiscoveryTrendingItem(
     val genres: List<String> = emptyList(),
 )
 
+data class DiscoveryMeta(
+    val description: String?,
+    val genres: List<String>,
+    val altTitle: String?,
+)
+
 enum class TrendSeason { CURRENT, NEXT, BOTH }
 enum class TrendSort(val anilist: String) { POPULARITY("POPULARITY_DESC"), SCORE("SCORE_DESC") }
 
@@ -69,6 +75,8 @@ class AniListTrendingSource(
     private val clientProvider: () -> okhttp3.OkHttpClient = { Injekt.get<NetworkHelper>().client },
     private val jsonProvider: () -> Json = { Injekt.get() }, // lazy: конструктор не требует Injekt-реестр (юнит-тесты)
 ) {
+
+    private val metaCache = mutableMapOf<String, DiscoveryMeta>()
 
     suspend fun fetch(
         mediaType: DiscoveryMediaType,
@@ -221,6 +229,63 @@ class AniListTrendingSource(
             )
         }
         return post(payload).let { parseTrendingPage(it, null) }
+    }
+
+    /** Лёгкие метаданные для превью-листа: описание/жанры/альт-тайтл по тайтлу (кэш в памяти). */
+    suspend fun fetchMeta(title: String, mediaType: DiscoveryMediaType): DiscoveryMeta? {
+        metaCache[title]?.let { return it }
+        return try {
+            val type = when (mediaType) {
+                DiscoveryMediaType.ANIME -> "ANIME"
+                DiscoveryMediaType.MANGA -> "MANGA"
+                DiscoveryMediaType.NOVEL -> "MANGA"
+            }
+            val formatArg = if (mediaType == DiscoveryMediaType.NOVEL) ", format: NOVEL" else ""
+            val query = """
+                query (${'$'}search: String!, ${'$'}type: MediaType!) {
+                  Page(page: 1, perPage: 1) {
+                    media(search: ${'$'}search, type: ${'$'}type$formatArg) {
+                      description(asHtml: false)
+                      genres
+                      title { english native }
+                    }
+                  }
+                }
+            """.trimIndent()
+            val payload = buildJsonObject {
+                put("query", query)
+                put(
+                    "variables",
+                    buildJsonObject {
+                        put("search", title)
+                        put("type", type)
+                    },
+                )
+            }
+            val page = post(payload)
+            val media = (
+                ((page["data"] as? JsonObject)?.get("Page") as? JsonObject)
+                    ?.get("media") as? JsonArray
+                )?.firstOrNull() as? JsonObject
+                ?: return null
+            val meta = DiscoveryMeta(
+                description = media["description"]?.jsonPrimitive?.contentOrNull
+                    ?.replace(Regex("<[^>]*>"), "")
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() },
+                genres = (media["genres"] as? JsonArray)?.mapNotNull { it.jsonPrimitive?.contentOrNull }.orEmpty(),
+                altTitle = (media["title"] as? JsonObject)?.let { t ->
+                    t["english"]?.jsonPrimitive?.contentOrNull ?: t["native"]?.jsonPrimitive?.contentOrNull
+                },
+            )
+            metaCache[title] = meta
+            meta
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logcat { "[DiscoveryTrending] meta FAILED for '$title': ${e.message}" }
+            null
+        }
     }
 
     private suspend fun post(payload: JsonObject): JsonObject {
