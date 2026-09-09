@@ -1922,13 +1922,21 @@ class ReelsFeedScreenModelTest {
         model.state.value.isWebLoginDialogOpen shouldBe true
         model.state.value.isLoginDialogOpen shouldBe false
 
+        // The first import arms the stage-2 upgrade (refreshable PKCE session) instead of
+        // closing; the second one closes and snapshots the account.
         model.tryImportWebSession(mapOf("sid" to "1"), mapOf("kinde" to """{"access_token":"t"}"""))
         testDispatcher.scheduler.advanceUntilIdle()
+        model.state.value.isWebLoginDialogOpen shouldBe true
+        model.state.value.webLoginPendingClose shouldBe true
+        model.state.value.webLoginStage2Attempt shouldBe 1
 
+        model.tryImportWebSession(mapOf("sid" to "1"), mapOf("kinde" to """{"access_token":"t"}"""))
+        testDispatcher.scheduler.advanceUntilIdle()
         model.state.value.isWebLoginDialogOpen shouldBe false
         model.state.value.loggedInAccount shouldBe "web@example.invalid"
         model.state.value.webLoginHint shouldBe false
-        source.importedSessions.shouldHaveSize(1)
+        model.state.value.webLoginPendingClose shouldBe false
+        source.importedSessions.shouldHaveSize(2)
     }
 
     // ---- Contract v20: content preferences ----

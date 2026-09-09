@@ -9,6 +9,7 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.animesource.AnimeBlockedTagsSource
 import eu.kanade.tachiyomi.animesource.AnimeCategorizedSearchSource
+import eu.kanade.tachiyomi.animesource.AnimeCategoryFeedOrderSource
 import eu.kanade.tachiyomi.animesource.AnimeCategorySubscriptionSource
 import eu.kanade.tachiyomi.animesource.AnimeContentPreferencesSource
 import eu.kanade.tachiyomi.animesource.AnimeCreatorFeedSource
@@ -269,6 +270,7 @@ class ReelsFeedScreenModel(
             val webLoginCapable = rawSource is AnimeFeedWebLoginSource
             val browseCapable = rawSource is AnimeFeedBrowseSource
             val contentPrefsCapable = rawSource is AnimeContentPreferencesSource
+            val categoryOrderCapable = rawSource is AnimeCategoryFeedOrderSource
             val blockedTagsCapable = rawSource is AnimeBlockedTagsSource
             val categorySubCapable = rawSource is AnimeCategorySubscriptionSource
             // Non-global modes need their matching capability (e.g. the plugin was downgraded
@@ -315,7 +317,12 @@ class ReelsFeedScreenModel(
             restorePositionPending = mode == FeedMode.GLOBAL
             // The creator page and the FOLLOWING aggregation have no search/filter surface
             // and must never touch the saved global query or filters.
-            val initialFilters = if (mode == FeedMode.GLOBAL) rawSource.getFilterList() else AnimeFilterList()
+            val initialFilters = when (mode) {
+                FeedMode.GLOBAL -> rawSource.getFilterList()
+                FeedMode.NICHE -> (rawSource as? AnimeCategoryFeedOrderSource)?.categoryFilters()
+                    ?: AnimeFilterList()
+                else -> AnimeFilterList()
+            }
             val savedQuery = if (mode == FeedMode.GLOBAL) sourcePreferences.lastReelsQuery(newSourceId).get() else ""
 
             // Restore saved filter values
@@ -365,10 +372,13 @@ class ReelsFeedScreenModel(
                     isWebLoginDialogOpen = false,
                     webLoginHint = false,
                     webLoginStage2Attempt = 0,
+                    webLoginPendingClose = false,
                     // Custom feeds (v19): per source, reset on switch.
                     isCustomFeedCapable = customFeedCapable,
                     // Category browse (v20): per source, reset on switch.
                     isBrowseCapable = browseCapable,
+                    // Category feed ordering (v21): enables the filter sheet in NICHE mode.
+                    isCategoryOrderCapable = categoryOrderCapable,
                     // Category subscriptions (v20): per source, reset on switch.
                     isCategorySubscribable = categorySubCapable,
                     isCategoryFollowed = false,
@@ -456,11 +466,22 @@ class ReelsFeedScreenModel(
                         .getCreatorFeed(creator.orEmpty(), page, cursor)
                     mode == FeedMode.CUSTOM -> (src as AnimeCustomFeedSource)
                         .getCustomFeed(customFeedId.orEmpty(), page, cursor)
-                    mode == FeedMode.NICHE -> (src as? AnimeFeedBrowseSource)
-                        ?.getCategoryFeed(nicheId.orEmpty(), page, cursor)
-                        // Capability vanished between the switchSource guard and this load:
-                        // serve an empty terminal page instead of crashing the pager.
-                        ?: FeedPage(videos = emptyList(), hasNextPage = false)
+                    mode == FeedMode.NICHE -> {
+                        val browse = src as? AnimeFeedBrowseSource
+                        // v21: order-capable sources get the NICHE-mode filter sheet's order.
+                        when (browse) {
+                            is AnimeCategoryFeedOrderSource -> browse.getCategoryFeed(
+                                nicheId.orEmpty(),
+                                page,
+                                cursor,
+                                state.value.filters,
+                            )
+                            else -> browse?.getCategoryFeed(nicheId.orEmpty(), page, cursor)
+                        }
+                            // Capability vanished between the switchSource guard and this load:
+                            // serve an empty terminal page instead of crashing the pager.
+                            ?: FeedPage(videos = emptyList(), hasNextPage = false)
+                    }
                     query.isNotBlank() -> src.getSearchFeed(page, cursor, query, filters)
                     else -> src.getFeed(page, cursor, filters)
                 }
@@ -951,7 +972,7 @@ class ReelsFeedScreenModel(
         val webSource = source as? AnimeFeedWebLoginSource ?: return
         screenModelScope.launch(NonCancellable + ioDispatcher) {
             val imported = runCatching { webSource.importWebSession(cookies, localStorage) }.getOrDefault(false)
-            if (imported) applyWebLoginSuccess() else mutableState.update { it.copy(webLoginHint = true) }
+            if (imported) onWebSessionImported() else mutableState.update { it.copy(webLoginHint = true) }
         }
     }
 
@@ -978,12 +999,32 @@ class ReelsFeedScreenModel(
         screenModelScope.launch(NonCancellable + ioDispatcher) {
             val imported = runCatching { webSource.importWebSession(cookies, localStorage) }.getOrDefault(false)
             if (imported) {
-                applyWebLoginSuccess()
+                onWebSessionImported()
             } else {
                 mutableState.update { current ->
                     current.copy(webLoginHint = true, webLoginStage2Attempt = current.webLoginStage2Attempt + 1)
                 }
             }
+        }
+    }
+
+    /**
+     * SPA import succeeded: the first time, upgrade to a refreshable session instead of
+     * closing — bump the stage-2 counter so the dialog loads the source's own PKCE authorize
+     * URL (with the auth2 cookie it auto-completes and the intercepted code yields a
+     * refresh_token). The second import (or a source without stage 2) closes the dialog.
+     */
+    private fun onWebSessionImported() {
+        if (!state.value.webLoginPendingClose) {
+            mutableState.update { current ->
+                current.copy(
+                    webLoginPendingClose = true,
+                    webLoginHint = false,
+                    webLoginStage2Attempt = current.webLoginStage2Attempt + 1,
+                )
+            }
+        } else {
+            applyWebLoginSuccess()
         }
     }
 
@@ -994,6 +1035,7 @@ class ReelsFeedScreenModel(
             current.copy(
                 isWebLoginDialogOpen = false,
                 webLoginHint = false,
+                webLoginPendingClose = false,
                 cfBootstrapAttempt = 0,
                 loggedInAccount = loginSource?.takeIf { it.isLoggedIn() }?.loggedInAccount(),
             )
@@ -1448,6 +1490,9 @@ class ReelsFeedScreenModel(
         // Category browse (v20): the current source implements AnimeFeedBrowseSource;
         // gates the account-hub Niches row.
         val isBrowseCapable: Boolean = false,
+        // Category feed ordering (v21): the source implements AnimeCategoryFeedOrderSource;
+        // enables the filter sheet in NICHE mode.
+        val isCategoryOrderCapable: Boolean = false,
         // Category subscriptions (v20): the current source implements
         // AnimeCategorySubscriptionSource; gates the follow toggle on NICHE feeds.
         val isCategorySubscribable: Boolean = false,
@@ -1527,6 +1572,8 @@ class ReelsFeedScreenModel(
         // Stage-2 counter (contract v20): bumped by the Done button when the SPA import found
         // no session; the dialog then loads the source's own PKCE authorize URL.
         val webLoginStage2Attempt: Int = 0,
+        // Stage-2 orchestration: first SPA import success arms the upgrade, the second closes.
+        val webLoginPendingClose: Boolean = false,
         val error: String? = null,
         // Transient append failure while the feed is non-empty; surfaced as a snackbar.
         val pageError: String? = null,

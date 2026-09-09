@@ -461,11 +461,13 @@ data class ReelsFeedScreen(
                     preloadEnabled = state.preloadEnabled,
                     preloadWifiOnly = state.preloadWifiOnly,
                     isOffline = state.isOffline,
-                    // Search, filters and source picking belong to the global feed only.
+                    // Search and source picking belong to the global feed; the filter sheet additionally
+                    // opens in NICHE mode for order-capable sources (contract v21).
                     showSearch = state.supportsTags && state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
-                    showFilter = state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
+                    showFilter = state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL ||
+                        (state.mode == ReelsFeedScreenModel.FeedMode.NICHE && state.isCategoryOrderCapable),
                     // Source-supplied chips for the search bar (contract v19 addendum);
-                    // empty => the TopBar's static popular list.
+                    // no chips when the source supplies none.
                     searchHints = state.searchHints,
                     // Categorized search tabs (contract v20) with preview rows.
                     searchSuggestions = state.searchSuggestions,

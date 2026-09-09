@@ -1,6 +1,6 @@
 # Reels Feed Contract
 
-**Current version: 20** (`extensionLib` 12.0–20.0 accepted by the host) ·
+**Current version: 21** (`extensionLib` 12.0–21.0 accepted by the host) ·
 Owner module: [`:source-api`](build.gradle.kts) ·
 API surface: [`AnimeFeedSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeFeedSource.kt),
 [`AnimeCreatorFeedSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeCreatorFeedSource.kt),
@@ -17,7 +17,8 @@ API surface: [`AnimeFeedSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/anime
 [`FeedCategory`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/FeedCategory.kt),
 [`FeedCategoryPage`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/FeedCategoryPage.kt),
 [`SearchSuggestion`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/SearchSuggestion.kt),
-[`SearchSuggestions`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/SearchSuggestions.kt)
+[`SearchSuggestions`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/SearchSuggestions.kt),
+[`AnimeCategoryFeedOrderSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeCategoryFeedOrderSource.kt)
 
 This document is the standalone reference for authors of short-video feed
 (“Reels”) extensions. The Kotlin contracts live in `:source-api`; this file
@@ -135,6 +136,14 @@ empty list / false. The host renders them as a switch sheet from the account hub
 `setBlockedTags`, replace-semantics). Login-gated; the host renders a tag editor sheet from
 the account hub.
 
+## Category feed ordering (v21 capability interface)
+
+`AnimeCategoryFeedOrderSource` lets a browse-capable source expose source-defined category-feed
+orders (niche hot/latest/top): the host renders `categoryFilters()` in the filter sheet while in
+NICHE mode and passes the selected `AnimeFilterList` into the four-arg `getCategoryFeed`.
+Instanceof-detected; sources without it keep the plain three-arg category feed and no filter
+sheet in NICHE mode.
+
 ## Pagination: the sticky protocol (the important part)
 
 Two modes. The mode is locked by the **host** for the whole feed *generation*
@@ -243,6 +252,7 @@ class MyFeed : AnimeFeedSource {
 
 | Version | Change |
 |---|---|
+| 21 | Optional capability `AnimeCategoryFeedOrderSource` (`categoryFilters()` + four-arg `getCategoryFeed`): source-defined category-feed orders rendered by the host in NICHE mode. Instanceof-detected, no default members added to existing interfaces. Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 21.0 as the discipline stamp. |
 | 20 | Optional capabilities `AnimeFeedWebLoginSource` (hosted web login via WebView session import), `AnimeFeedBrowseSource` (category directory + per-category feeds) and `AnimeCategorizedSearchSource` (sectioned search hits with previews), plus models `FeedCategory`/`FeedCategoryPage`/`SearchSuggestion`/`SearchSuggestions`. All instanceof-detected, no default members added to existing interfaces. Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 20.0 as the discipline stamp. |
 | 19+ | v19 addendum: optional search-hints capability `AnimeSearchHintsSource.getSearchHints()` (instanceof-detected, no default members added to existing interfaces); the host renders the returned tags as chips in the reels search bar. Additive: `LIB_VERSION` untouched, existing feed plugins keep working. |
 | 19 | Optional feed-source login capability `AnimeFeedLoginSource` (`login`/`isLoggedIn`/`loggedInAccount`/`logout`) and custom-feed capability `AnimeCustomFeedSource` (`getCustomFeeds`/`getCustomFeed`/`getCustomFeedTags`/`getCustomFeedDetail`/`createCustomFeed`/`updateCustomFeed`/`deleteCustomFeed`, plus `CustomFeedRef`/`CustomFeedDetail`). Both instanceof-detected, no default members added to existing interfaces. Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 19.0 as the discipline stamp. |

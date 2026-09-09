@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animesource
 
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.ContentPreferenceOption
 import eu.kanade.tachiyomi.animesource.model.FeedCategory
 import eu.kanade.tachiyomi.animesource.model.FeedCategoryPage
@@ -119,6 +120,27 @@ class AnimeFeedContractV20Test {
         val source: Any = FakeBlockedTags()
         assertTrue(source is AnimeBlockedTagsSource)
         assertFalse(source is AnimeContentPreferencesSource)
+    }
+
+    private class FakeCategoryOrder : AnimeCategoryFeedOrderSource {
+        var lastFilters: AnimeFilterList? = null
+        override fun categoryFilters(): AnimeFilterList = AnimeFilterList()
+        override suspend fun getCategoryFeed(
+            categoryId: String,
+            page: Int,
+            cursor: String?,
+            filters: AnimeFilterList,
+        ): FeedPage {
+            lastFilters = filters
+            return FeedPage(videos = emptyList(), hasNextPage = false)
+        }
+    }
+
+    @Test
+    fun categoryOrderCapabilityIsInstanceofDetected() {
+        val source: Any = FakeCategoryOrder()
+        assertTrue(source is AnimeCategoryFeedOrderSource)
+        assertFalse(source is AnimeFeedBrowseSource)
     }
 
     @Test

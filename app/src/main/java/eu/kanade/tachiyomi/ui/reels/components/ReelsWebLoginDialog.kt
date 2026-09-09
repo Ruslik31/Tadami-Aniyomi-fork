@@ -69,6 +69,15 @@ fun ReelsWebLoginDialog(
     var dumpCookiesHolder by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var dumpGen by remember { mutableStateOf(0) }
 
+    // Stage 2 (contract v20): load the source's own PKCE authorize URL in the same WebView;
+    // with the auth2 cookie from the SPA flow it auto-completes and its state-matched
+    // redirect is intercepted by [isOwnRedirect]/[onOwnRedirect] below for the code exchange.
+    LaunchedEffect(stage2Attempt) {
+        if (stage2Attempt > 0) {
+            webView?.loadUrl(freshStartUrl() ?: startUrl)
+        }
+    }
+
     fun deliverDump(gen: Int, storage: Map<String, String>) {
         if (dumpGen != gen || gen == 0) return
         val consumer = dumpMember ?: return
