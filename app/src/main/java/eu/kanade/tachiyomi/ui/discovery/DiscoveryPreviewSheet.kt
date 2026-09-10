@@ -68,6 +68,7 @@ import eu.kanade.tachiyomi.data.discovery.DiscoveryMeta
 import eu.kanade.tachiyomi.ui.home.LocalHomeHazeState
 import eu.kanade.tachiyomi.ui.home.discoveryReasonText
 import eu.kanade.tachiyomi.ui.home.toHomeHubDiscoveryItem
+import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
 import tachiyomi.i18n.aniyomi.AYMR
@@ -109,6 +110,7 @@ internal fun DiscoveryPreviewSheet(
     item: DiscoverySuggestion,
     meta: DiscoveryMeta?,
     isMetaLoading: Boolean,
+    coverMediaType: DiscoveryMediaType,
     onDismiss: () -> Unit,
     onAdd: () -> Unit,
     onFind: () -> Unit,
@@ -120,8 +122,8 @@ internal fun DiscoveryPreviewSheet(
     val context = LocalContext.current
     val appHaptics = LocalAppHaptics.current
     val coverReloadTick = rememberCoverReloadTick()
-    val coverRequest = remember(context, item.coverUrl, coverReloadTick) {
-        buildAuroraCoverImageRequest(context, item.coverUrl)
+    val coverRequest = remember(context, item.coverUrl, item.provider, coverReloadTick) {
+        buildAuroraCoverImageRequest(context, discoveryCoverData(coverMediaType, item.provider, item.coverUrl))
     }
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

@@ -94,6 +94,7 @@ import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
 import eu.kanade.tachiyomi.ui.discovery.BadgeColorKind
 import eu.kanade.tachiyomi.ui.discovery.DiscoveryBadge
 import eu.kanade.tachiyomi.ui.discovery.badgeColor
+import eu.kanade.tachiyomi.ui.discovery.discoveryCoverData
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
@@ -216,6 +217,13 @@ internal fun HomeHubDiscoveryItem.toDiscoverySuggestion(): DiscoverySuggestion =
 
 // ============================ UI ============================
 
+/** Маппинг секции Home Hub в медиатип discovery (для резолва источника обложки). */
+internal fun HomeHubSection.toDiscoveryMediaType(): DiscoveryMediaType = when (this) {
+    HomeHubSection.Anime -> DiscoveryMediaType.ANIME
+    HomeHubSection.Manga -> DiscoveryMediaType.MANGA
+    HomeHubSection.Novel -> DiscoveryMediaType.NOVEL
+}
+
 /** Микро-бейдж сигнала для home-карточки (маппинг HomeHubDiscoveryItem → бейдж). */
 internal fun discoveryBadgeOf(item: HomeHubDiscoveryItem): DiscoveryBadge? = when (item.rowType) {
     DiscoveryRowType.TASTE -> DiscoveryBadge(AYMR.strings.for_you_badge_taste, BadgeColorKind.TASTE)
@@ -263,6 +271,8 @@ internal fun DiscoveryPosterCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     deviceClass: AuroraDeviceClass = AuroraDeviceClass.Phone,
+    coverMediaType: DiscoveryMediaType? = null,
+    coverProvider: String? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
@@ -318,8 +328,17 @@ internal fun DiscoveryPosterCard(
             ) {
                 val posterContext = LocalContext.current
                 val posterCoverReloadTick = rememberCoverReloadTick()
-                val posterCoverRequest = remember(posterContext, coverUrl, posterCoverReloadTick) {
-                    buildAuroraCoverImageRequest(posterContext, coverUrl)
+                val posterCoverRequest = remember(
+                    posterContext,
+                    coverUrl,
+                    coverMediaType,
+                    coverProvider,
+                    posterCoverReloadTick,
+                ) {
+                    buildAuroraCoverImageRequest(
+                        posterContext,
+                        discoveryCoverData(coverMediaType, coverProvider, coverUrl),
+                    )
                 }
                 AsyncImage(
                     model = posterCoverRequest,
@@ -478,6 +497,7 @@ private fun discoveryReasonOrNull(item: HomeHubDiscoveryItem): String? {
 @Composable
 internal fun ForYouSection(
     items: List<HomeHubDiscoveryItem>,
+    coverMediaType: DiscoveryMediaType,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
     onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
@@ -551,6 +571,8 @@ internal fun ForYouSection(
                     coverUrl = item.coverUrl,
                     subtitle = discoveryReasonOrNull(item),
                     deviceClass = auroraAdaptiveSpec.deviceClass,
+                    coverMediaType = coverMediaType,
+                    coverProvider = item.provider,
                     onLongClick = onLongClick?.let { { it(item) } },
                     onClick = {
                         appHaptics.tap()
@@ -566,6 +588,7 @@ internal fun ForYouSection(
 @Composable
 internal fun HybridDiscoveryStrip(
     items: List<HomeHubDiscoveryItem>,
+    coverMediaType: DiscoveryMediaType,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
     onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
@@ -742,6 +765,8 @@ internal fun HybridDiscoveryStrip(
                     coverUrl = item.coverUrl,
                     subtitle = discoveryReasonOrNull(item),
                     deviceClass = stripAdaptiveSpec.deviceClass,
+                    coverMediaType = coverMediaType,
+                    coverProvider = item.provider,
                     onClick = {
                         appHaptics.tap()
                         onItemClick(item)
@@ -910,6 +935,7 @@ internal fun HybridDiscoveryStrip(
 @Composable
 internal fun DiscoveryHeroCollage(
     items: List<HomeHubDiscoveryItem>,
+    coverMediaType: DiscoveryMediaType,
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
     onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
@@ -999,6 +1025,8 @@ internal fun DiscoveryHeroCollage(
                     item = targetHero,
                     big = true,
                     modifier = Modifier.fillMaxSize(),
+                    coverMediaType = coverMediaType,
+                    coverProvider = targetHero.provider,
                     onClick = { onItemClick(targetHero) },
                     onLongClick = onLongClick?.let { { it(targetHero) } },
                 )
@@ -1024,6 +1052,8 @@ internal fun DiscoveryHeroCollage(
                                 item = targetItem,
                                 big = false,
                                 modifier = Modifier.fillMaxSize(),
+                                coverMediaType = coverMediaType,
+                                coverProvider = targetItem.provider,
                                 onClick = { onItemClick(targetItem) },
                                 onLongClick = onLongClick?.let { { it(targetItem) } },
                             )
@@ -1052,6 +1082,8 @@ internal fun DiscoveryHeroCollage(
                                 item = targetItem,
                                 big = false,
                                 modifier = Modifier.fillMaxSize(),
+                                coverMediaType = coverMediaType,
+                                coverProvider = targetItem.provider,
                                 onClick = { onItemClick(targetItem) },
                                 onLongClick = onLongClick?.let { { it(targetItem) } },
                             )
@@ -1171,6 +1203,8 @@ private fun CollageTile(
     item: HomeHubDiscoveryItem,
     big: Boolean,
     modifier: Modifier = Modifier,
+    coverMediaType: DiscoveryMediaType? = null,
+    coverProvider: String? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -1178,8 +1212,8 @@ private fun CollageTile(
     val context = LocalContext.current
     val appHaptics = LocalAppHaptics.current
     val coverReloadTick = rememberCoverReloadTick()
-    val coverRequest = remember(context, item.coverUrl, coverReloadTick) {
-        buildAuroraCoverImageRequest(context, item.coverUrl)
+    val coverRequest = remember(context, item.coverUrl, coverMediaType, coverProvider, coverReloadTick) {
+        buildAuroraCoverImageRequest(context, discoveryCoverData(coverMediaType, coverProvider, item.coverUrl))
     }
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Wide)
     val tileShape = RoundedCornerShape(16.dp)

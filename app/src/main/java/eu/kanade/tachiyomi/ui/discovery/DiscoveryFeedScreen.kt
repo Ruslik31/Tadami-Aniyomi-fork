@@ -285,6 +285,7 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                     item = item,
                     meta = sheetMeta,
                     isMetaLoading = sheetMetaLoading,
+                    coverMediaType = state.mediaType,
                     onDismiss = { sheetItem = null },
                     onAdd = {
                         screenModel.addToLibrary(item)
@@ -729,6 +730,7 @@ private fun FeedBody(
                     item = item,
                     reason = reason,
                     isAdding = item.title in state.addingTitles,
+                    coverMediaType = state.mediaType,
                     onClick = {
                         appHaptics.tap()
                         onItemClick(item)
@@ -752,6 +754,7 @@ private fun FeedCard(
     item: DiscoverySuggestion,
     reason: String?,
     isAdding: Boolean,
+    coverMediaType: DiscoveryMediaType,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onAdd: () -> Unit,
@@ -761,8 +764,8 @@ private fun FeedCard(
     val context = LocalContext.current
     val fallbackPainter = rememberThemeAwareCoverErrorPainter(variant = AuroraCoverPlaceholderVariant.Portrait)
     val coverReloadTick = rememberCoverReloadTick()
-    val coverRequest = remember(context, item.coverUrl, coverReloadTick) {
-        buildAuroraCoverImageRequest(context, item.coverUrl)
+    val coverRequest = remember(context, item.coverUrl, item.provider, coverReloadTick) {
+        buildAuroraCoverImageRequest(context, discoveryCoverData(coverMediaType, item.provider, item.coverUrl))
     }
     val containerShape = RoundedCornerShape(18.dp)
     val posterShape = RoundedCornerShape(16.dp)

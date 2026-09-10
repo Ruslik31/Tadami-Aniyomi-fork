@@ -553,6 +553,7 @@ private fun HomeHubScreen(
                     item(key = "for_you_welcome", contentType = "home_hub_for_you") {
                         ForYouSection(
                             items = discovery,
+                            coverMediaType = section.toDiscoveryMediaType(),
                             onMoreClick = onForYouMoreClick,
                             onItemClick = { previewItem = it },
                             onLongClick = onDiscoveryLongClick,
@@ -572,6 +573,7 @@ private fun HomeHubScreen(
                         when {
                             heroPresentation == HomeHeroMode.Collage -> DiscoveryHeroCollage(
                                 items = discovery,
+                                coverMediaType = section.toDiscoveryMediaType(),
                                 onMoreClick = onForYouMoreClick,
                                 onItemClick = { previewItem = it },
                                 onLongClick = onDiscoveryLongClick,
@@ -587,6 +589,7 @@ private fun HomeHubScreen(
                                 )
                                 HybridDiscoveryStrip(
                                     items = discovery,
+                                    coverMediaType = section.toDiscoveryMediaType(),
                                     onMoreClick = onForYouMoreClick,
                                     onItemClick = { previewItem = it },
                                     onLongClick = onDiscoveryLongClick,
@@ -638,6 +641,7 @@ private fun HomeHubScreen(
                     item(key = "for_you", contentType = "home_hub_for_you") {
                         ForYouSection(
                             items = forYouItems,
+                            coverMediaType = section.toDiscoveryMediaType(),
                             onMoreClick = onForYouMoreClick,
                             onItemClick = { previewItem = it },
                             onLongClick = onDiscoveryLongClick,
@@ -694,6 +698,7 @@ private fun HomeHubScreen(
                 item = item.toDiscoverySuggestion(),
                 meta = previewMeta,
                 isMetaLoading = previewMetaLoading,
+                coverMediaType = section.toDiscoveryMediaType(),
                 onDismiss = { previewItem = null },
                 onAdd = {
                     previewItem = null
