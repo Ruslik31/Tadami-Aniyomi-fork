@@ -35,7 +35,9 @@ data class DiscoveryFeedUiState(
     val isLoading: Boolean = true,
     val hiddenSnackbarTitle: String? = null,
     val addedSnackbarTitle: String? = null,
-    val notFoundTitle: String? = null,
+    // «+» промахнулся (внешний провайдер или нет точного совпадения): экран
+    // открывает каталог источника/глобальный поиск вместо тупика.
+    val searchFallbackItem: DiscoverySuggestion? = null,
     val addingTitles: Set<String> = emptySet(),
 )
 
@@ -121,7 +123,8 @@ internal fun DiscoverySuggestion.toSuggestionItem(): SuggestionItem = Suggestion
 /**
  * Полный экран «Для тебя» v3: читает только кэш ленты из БД (ноль сети на рендер);
  *_mix_ = интерлив квот сигналов; табы/чипсы фильтруют поток; «+» добавляет в
- * библиотеку через точный поиск в источниках; лонг-пресс скрывает с Undo.
+ * библиотеку точным поиском в источнике рекомендации (для внешних провайдеров
+ * и при промахе открывает поиск); лонг-пресс скрывает с Undo.
  */
 class DiscoveryFeedScreenModel(
     initialMedia: DiscoveryMediaType,
@@ -214,20 +217,21 @@ class DiscoveryFeedScreenModel(
         mutableState.update { it.copy(addingTitles = it.addingTitles + item.title) }
         screenModelScope.launchIO {
             val ok = try {
-                adder.addFirstMatch(state.value.mediaType, item.title)
+                adder.addFromProvider(state.value.mediaType, item.title, item.provider)
             } finally {
                 mutableState.update { it.copy(addingTitles = it.addingTitles - item.title) }
             }
             mutableState.update {
-                it.copy(
-                    addedSnackbarTitle = if (ok) item.title else null,
-                    notFoundTitle = if (ok) null else item.title,
-                )
+                if (ok) {
+                    it.copy(addedSnackbarTitle = item.title, searchFallbackItem = null)
+                } else {
+                    it.copy(searchFallbackItem = item)
+                }
             }
         }
     }
 
-    fun dismissNotFound() = mutableState.update { it.copy(notFoundTitle = null) }
+    fun dismissSearchFallback() = mutableState.update { it.copy(searchFallbackItem = null) }
 
     fun dismissAddedSnackbar() = mutableState.update { it.copy(addedSnackbarTitle = null) }
 }

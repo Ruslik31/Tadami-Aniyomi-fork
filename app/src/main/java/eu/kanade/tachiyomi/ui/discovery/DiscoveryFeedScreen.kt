@@ -278,8 +278,14 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                 onUndo = { screenModel.undoHide() },
                 onDismissHidden = { screenModel.dismissHiddenSnackbar() },
                 onDismissAdded = { screenModel.dismissAddedSnackbar() },
-                onDismissNotFound = { screenModel.dismissNotFound() },
             )
+            // «+» промахнулся (внешний провайдер или нет точного совпадения в источнике
+            // рекомендации): уходим в каталог источника/глобальный поиск вместо тупика.
+            LaunchedEffect(state.searchFallbackItem) {
+                val item = state.searchFallbackItem ?: return@LaunchedEffect
+                screenModel.dismissSearchFallback()
+                navigateFor(item)
+            }
             sheetItem?.let { item ->
                 DiscoveryPreviewSheet(
                     item = item,
@@ -874,13 +880,11 @@ private fun FeedSnackbar(
     onUndo: () -> Unit,
     onDismissHidden: () -> Unit,
     onDismissAdded: () -> Unit,
-    onDismissNotFound: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
     val hiddenTitle = state.hiddenSnackbarTitle
     val addedTitle = state.addedSnackbarTitle
-    val notFoundTitle = state.notFoundTitle
     LaunchedEffect(hiddenTitle) {
         if (hiddenTitle != null) {
             delay(4000)
@@ -893,16 +897,9 @@ private fun FeedSnackbar(
             onDismissAdded()
         }
     }
-    LaunchedEffect(notFoundTitle) {
-        if (notFoundTitle != null) {
-            delay(4000)
-            onDismissNotFound()
-        }
-    }
     val message = when {
         hiddenTitle != null -> stringResource(AYMR.strings.for_you_hidden_snackbar)
         addedTitle != null -> stringResource(AYMR.strings.for_you_added_snackbar, addedTitle)
-        notFoundTitle != null -> stringResource(AYMR.strings.for_you_add_not_found, notFoundTitle)
         else -> null
     } ?: return
     Box(Modifier.fillMaxSize()) {

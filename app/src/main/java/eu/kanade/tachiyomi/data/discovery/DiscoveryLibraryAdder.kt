@@ -11,13 +11,7 @@ import eu.kanade.tachiyomi.novelsource.NovelCatalogueSource
 import eu.kanade.tachiyomi.source.CatalogueSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import tachiyomi.core.common.util.system.logcat
@@ -33,176 +27,75 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * «+» на карточке подборки: ищет точное совпадение тайтла в установленных
- * источниках (search API, ≤ [MAX_SOURCES] источников, таймаут на источник),
- * создаёт локальную запись и сразу добавляет в библиотеку (autoFavorite).
- * При отсутствии точного совпадения возвращает false — UI открывает глобальный поиск.
+ * «+» на карточке подборки: добавление имеет смысл только для рекомендаций,
+ * пришедших из установленного источника (provider = имя источника, а тайтл
+ * взят из его же каталога), поэтому поиск идёт точечно в этом источнике и
+ * точное совпадение практически гарантировано. Для внешних провайдеров
+ * (anilist_trend, jikan_trend, mangaupdates, ...) provider не резолвится в
+ * источник, а точный поиск по чужим источникам почти никогда не совпадал —
+ * в этих случаях сразу возвращает false, и UI открывает глобальный поиск
+ * вместо слепого перебора.
  */
 class DiscoveryLibraryAdder {
 
     companion object {
-        const val MAX_SOURCES = 5
         const val SOURCE_TIMEOUT_MS = 8_000L
     }
 
-    suspend fun addFirstMatch(mediaType: DiscoveryMediaType, title: String): Boolean =
+    suspend fun addFromProvider(mediaType: DiscoveryMediaType, title: String, provider: String?): Boolean =
         withContext(Dispatchers.IO) {
+            if (provider.isNullOrBlank()) return@withContext false
             val clean = normalizeDiscoveryTitle(title)
             try {
                 when (mediaType) {
-                    DiscoveryMediaType.MANGA -> addManga(clean, title)
-                    DiscoveryMediaType.ANIME -> addAnime(clean, title)
-                    DiscoveryMediaType.NOVEL -> addNovel(clean, title)
+                    DiscoveryMediaType.MANGA -> addManga(provider, clean, title)
+                    DiscoveryMediaType.ANIME -> addAnime(provider, clean, title)
+                    DiscoveryMediaType.NOVEL -> addNovel(provider, clean, title)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logcat { "[DiscoveryAdd] FAILED '$title': ${e.message}" }
+                logcat { "[DiscoveryAdd] FAILED '$title' via '$provider': ${e.message}" }
                 false
             }
         }
 
-    private suspend fun addManga(clean: String, query: String): Boolean = coroutineScope {
-        val ids = Injekt.get<GetEnabledMangaSources>().subscribe().first().map { it.id }.take(MAX_SOURCES)
-        if (ids.isEmpty()) return@coroutineScope false
-        val mutex = Mutex()
-        var added = false
-        val channel = Channel<Boolean>(ids.size)
-        ids.forEach { id ->
-            launch {
-                val ok = try {
-                    withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
-                        if (added) return@withTimeoutOrNull false
-                        val source = Injekt.get<MangaSourceManager>().getOrStub(id) as? CatalogueSource
-                            ?: return@withTimeoutOrNull false
-                        val page = source.getSearchManga(1, query, source.getFilterList())
-                        val match = page.mangas.firstOrNull { normalizeDiscoveryTitle(it.title) == clean }
-                            ?: return@withTimeoutOrNull false
-                        mutex.withLock {
-                            if (added) return@withTimeoutOrNull false
-                            val result = Injekt.get<NetworkToLocalManga>()
-                                .await(listOf(match.toDomainManga(id)), autoFavorite = true)
-                            if (result.isNotEmpty()) {
-                                added = true
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                    } ?: false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    false
-                }
-                channel.send(ok)
-            }
-        }
-        var finished = 0
-        while (finished < ids.size) {
-            val result = channel.receive()
-            if (result) {
-                coroutineContext.cancelChildren()
-                return@coroutineScope true
-            }
-            finished++
-        }
-        false
+    private suspend fun addManga(provider: String, clean: String, query: String): Boolean {
+        val sourceId = Injekt.get<GetEnabledMangaSources>().subscribe().first()
+            .firstOrNull { it.name == provider }?.id ?: return false
+        val source = Injekt.get<MangaSourceManager>().getOrStub(sourceId) as? CatalogueSource ?: return false
+        val page = withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+            source.getSearchManga(1, query, source.getFilterList())
+        } ?: return false
+        val match = page.mangas.firstOrNull { normalizeDiscoveryTitle(it.title) == clean } ?: return false
+        val added = Injekt.get<NetworkToLocalManga>()
+            .await(listOf(match.toDomainManga(sourceId)), autoFavorite = true)
+        return added.isNotEmpty()
     }
 
-    private suspend fun addAnime(clean: String, query: String): Boolean = coroutineScope {
-        val ids = Injekt.get<GetEnabledAnimeSources>().subscribe().first().map { it.id }.take(MAX_SOURCES)
-        if (ids.isEmpty()) return@coroutineScope false
-        val mutex = Mutex()
-        var added = false
-        val channel = Channel<Boolean>(ids.size)
-        ids.forEach { id ->
-            launch {
-                val ok = try {
-                    withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
-                        if (added) return@withTimeoutOrNull false
-                        val source = Injekt.get<AnimeSourceManager>().getOrStub(id) as? AnimeCatalogueSource
-                            ?: return@withTimeoutOrNull false
-                        val page = source.getSearchAnime(1, query, source.getFilterList())
-                        val match = page.animes.firstOrNull { normalizeDiscoveryTitle(it.title) == clean }
-                            ?: return@withTimeoutOrNull false
-                        mutex.withLock {
-                            if (added) return@withTimeoutOrNull false
-                            val result = Injekt.get<NetworkToLocalAnime>()
-                                .await(listOf(match.toDomainAnime(id)), autoFavorite = true)
-                            if (result.isNotEmpty()) {
-                                added = true
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                    } ?: false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    false
-                }
-                channel.send(ok)
-            }
-        }
-        var finished = 0
-        while (finished < ids.size) {
-            val result = channel.receive()
-            if (result) {
-                coroutineContext.cancelChildren()
-                return@coroutineScope true
-            }
-            finished++
-        }
-        false
+    private suspend fun addAnime(provider: String, clean: String, query: String): Boolean {
+        val sourceId = Injekt.get<GetEnabledAnimeSources>().subscribe().first()
+            .firstOrNull { it.name == provider }?.id ?: return false
+        val source = Injekt.get<AnimeSourceManager>().getOrStub(sourceId) as? AnimeCatalogueSource ?: return false
+        val page = withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+            source.getSearchAnime(1, query, source.getFilterList())
+        } ?: return false
+        val match = page.animes.firstOrNull { normalizeDiscoveryTitle(it.title) == clean } ?: return false
+        val added = Injekt.get<NetworkToLocalAnime>()
+            .await(listOf(match.toDomainAnime(sourceId)), autoFavorite = true)
+        return added.isNotEmpty()
     }
 
-    private suspend fun addNovel(clean: String, query: String): Boolean = coroutineScope {
-        val ids = Injekt.get<GetEnabledNovelSources>().subscribe().first().map { it.id }.take(MAX_SOURCES)
-        if (ids.isEmpty()) return@coroutineScope false
-        val mutex = Mutex()
-        var added = false
-        val channel = Channel<Boolean>(ids.size)
-        ids.forEach { id ->
-            launch {
-                val ok = try {
-                    withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
-                        if (added) return@withTimeoutOrNull false
-                        val source = Injekt.get<NovelSourceManager>().getOrStub(id) as? NovelCatalogueSource
-                            ?: return@withTimeoutOrNull false
-                        val page = source.getSearchNovels(1, query, source.getFilterList())
-                        val match = page.novels.firstOrNull { normalizeDiscoveryTitle(it.title) == clean }
-                            ?: return@withTimeoutOrNull false
-                        mutex.withLock {
-                            if (added) return@withTimeoutOrNull false
-                            val result = Injekt.get<NetworkToLocalNovel>()
-                                .await(listOf(match.toDomainNovel(id)), autoFavorite = true)
-                            if (result.isNotEmpty()) {
-                                added = true
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                    } ?: false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    false
-                }
-                channel.send(ok)
-            }
-        }
-        var finished = 0
-        while (finished < ids.size) {
-            val result = channel.receive()
-            if (result) {
-                coroutineContext.cancelChildren()
-                return@coroutineScope true
-            }
-            finished++
-        }
-        false
+    private suspend fun addNovel(provider: String, clean: String, query: String): Boolean {
+        val sourceId = Injekt.get<GetEnabledNovelSources>().subscribe().first()
+            .firstOrNull { it.name == provider }?.id ?: return false
+        val source = Injekt.get<NovelSourceManager>().getOrStub(sourceId) as? NovelCatalogueSource ?: return false
+        val page = withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
+            source.getSearchNovels(1, query, source.getFilterList())
+        } ?: return false
+        val match = page.novels.firstOrNull { normalizeDiscoveryTitle(it.title) == clean } ?: return false
+        val added = Injekt.get<NetworkToLocalNovel>()
+            .await(listOf(match.toDomainNovel(sourceId)), autoFavorite = true)
+        return added.isNotEmpty()
     }
 }

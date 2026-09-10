@@ -704,7 +704,7 @@ private fun HomeHubScreen(
                     previewItem = null
                     scope.launch {
                         val adder = DiscoveryLibraryAdder()
-                        val added = adder.addFirstMatch(item.mediaType, item.title)
+                        val added = adder.addFromProvider(item.mediaType, item.title, item.provider)
                         if (added) {
                             context.toast(
                                 context.contextStringResource(AYMR.strings.for_you_added_snackbar, item.title),

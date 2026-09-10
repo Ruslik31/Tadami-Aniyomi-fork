@@ -1258,16 +1258,19 @@ private fun CollageTile(
             error = fallbackPainter,
             fallback = fallbackPainter,
         )
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color.Transparent,
-                        if (colors.isEInk) Color.White.copy(alpha = 0.95f) else Color(0xCC04060A),
+        // Скрим только на большой плитке и только в нижней трети под заголовком:
+        // постеры остаются яркими, как в обычных карточках, а малые плитки без
+        // текста не затемняются вовсе.
+        if (big) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0.55f to Color.Transparent,
+                        1.0f to if (colors.isEInk) Color.White.copy(alpha = 0.95f) else Color(0xCC04060A),
                     ),
                 ),
-            ),
-        )
+            )
+        }
         if (big) {
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
                 Text(
