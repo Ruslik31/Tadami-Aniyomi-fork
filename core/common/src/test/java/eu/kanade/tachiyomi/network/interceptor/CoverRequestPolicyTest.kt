@@ -24,6 +24,16 @@ class CoverRequestPolicyTest {
     }
 
     @Test
+    fun `clearAll releases blacklisted hosts for a retry`() {
+        CoverRequestPolicy.recordFailure("example.org")
+        CoverRequestPolicy.recordFailure("example.org")
+        assertTrue(CoverRequestPolicy.isBlacklisted("example.org"))
+
+        CoverRequestPolicy.clearAll()
+        assertFalse(CoverRequestPolicy.isBlacklisted("example.org"))
+    }
+
+    @Test
     fun `cover request policy preserves fallback headers and attempt markers`() {
         val request = CoverRequestPolicy.markCoverRequest(
             Request.Builder().url("https://example.org/poster.jpg"),

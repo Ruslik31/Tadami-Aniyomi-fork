@@ -63,6 +63,16 @@ object CoverRequestPolicy {
         hostStates.remove(host)
     }
 
+    /**
+     * Drops every recorded failure (e.g. when connectivity is restored): hosts
+     * blacklisted by a broken network (bad VPN exit, captive portal) get one
+     * honest retry instead of staying pinned to the placeholder until the
+     * process restarts.
+     */
+    fun clearAll() {
+        hostStates.clear()
+    }
+
     fun isBlacklisted(host: String): Boolean {
         val state = hostStates[host] ?: return false
         synchronized(state) {
@@ -71,6 +81,6 @@ object CoverRequestPolicy {
     }
 
     fun resetForTests() {
-        hostStates.clear()
+        clearAll()
     }
 }

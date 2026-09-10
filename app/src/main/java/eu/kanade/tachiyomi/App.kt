@@ -79,6 +79,7 @@ import eu.kanade.tachiyomi.extension.novel.kotlin.sweepOrphanedNovelPluginDownlo
 import eu.kanade.tachiyomi.extension.novel.runtime.NovelRuntimeCacheTrimCallbacks
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.NetworkPreferences
+import eu.kanade.tachiyomi.network.interceptor.CoverRequestPolicy
 import eu.kanade.tachiyomi.ui.base.delegate.SecureActivityDelegate
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.GLUtil
@@ -234,6 +235,11 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                         .distinctUntilChanged()
                         .collect { online ->
                             if (online && !wasOnline) {
+                                // Clear the cover-host blacklist BEFORE the reload tick:
+                                // hosts poisoned by the broken network (bad VPN exit,
+                                // captive portal) must be retryable when the tick
+                                // re-requests the placeholders.
+                                CoverRequestPolicy.clearAll()
                                 CoverReloadSignal.bump()
                             }
                             wasOnline = online
