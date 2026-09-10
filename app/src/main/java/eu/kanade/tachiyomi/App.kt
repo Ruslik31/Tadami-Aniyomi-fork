@@ -185,36 +185,26 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         // ContentProvider before onCreate ran.
 
         if (isMainProcess) {
+            // K1/Q8-фикс: награды пасхальных яиц выдаются через идемпотентный
+            // AuroraUnlockRewarder (wasUnlocked-гейт по DB): реплей финала больше не
+            // реплеит XP/счётчики. Зависимости резолвятся в момент события (внутри
+            // achievementScope), как и в прежних хуках.
+            fun newEggRewarder() = eu.kanade.domain.easteregg.aurora.AuroraUnlockRewarder(
+                achievementRepository = Injekt.get(),
+                pointsManager = Injekt.get(),
+                unlockableManager = Injekt.get(),
+                userProfileManager = Injekt.get(),
+                activityDataRepository = Injekt.get(),
+            )
+
             // Setup Aurora easter egg unlock hook
             eu.kanade.domain.easteregg.aurora.AuroraEchoBus.onUnlocked = { payload ->
                 achievementScope.launch {
-                    val repo = Injekt
-                        .get<tachiyomi.domain.achievement.repository.AchievementRepository>()
-                    val pointsManager = Injekt
-                        .get<tachiyomi.data.achievement.handler.PointsManager>()
-                    val userProfileManager = Injekt
-                        .get<tachiyomi.data.achievement.UserProfileManager>()
-                    val activityDataRepository = Injekt
-                        .get<tachiyomi.domain.achievement.repository.ActivityDataRepository>()
-
-                    repo.insertOrUpdateProgress(
-                        tachiyomi.domain.achievement.model.AchievementProgress.createStandard(
-                            achievementId = "aurora_heart",
-                            progress = 1,
-                            maxProgress = 1,
-                            isUnlocked = true,
-                            unlockedAt = System.currentTimeMillis(),
+                    newEggRewarder().grant(
+                        eu.kanade.domain.easteregg.aurora.AuroraUnlockRewarder.aurora(
+                            payload.bonusPoints ?: 0,
                         ),
                     )
-                    pointsManager.addPoints(payload.bonusPoints ?: 0)
-                    pointsManager.incrementUnlocked()
-                    activityDataRepository.recordAchievementUnlock()
-
-                    userProfileManager.unlockTheme("AURORA_PRIME")
-
-                    val unlockableManager = Injekt.get<tachiyomi.data.achievement.UnlockableManager>()
-                    unlockableManager.setUnlockableUnlocked("theme_AURORA_PRIME")
-                    unlockableManager.setUnlockableUnlocked("special_navbar_aurora_celestial")
                 }
             }
 
@@ -222,32 +212,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             eu.kanade.domain.easteregg.lattice.LatticeProtocolManager.get(this).onAppStart()
             eu.kanade.domain.easteregg.lattice.LatticeSignalBus.onUnlocked = { payload ->
                 achievementScope.launch {
-                    val repo = Injekt
-                        .get<tachiyomi.domain.achievement.repository.AchievementRepository>()
-                    val pointsManager = Injekt
-                        .get<tachiyomi.data.achievement.handler.PointsManager>()
-                    val userProfileManager = Injekt
-                        .get<tachiyomi.data.achievement.UserProfileManager>()
-                    val activityDataRepository = Injekt
-                        .get<tachiyomi.domain.achievement.repository.ActivityDataRepository>()
-
-                    repo.insertOrUpdateProgress(
-                        tachiyomi.domain.achievement.model.AchievementProgress.createStandard(
-                            achievementId = payload.achievementId ?: "lattice_resonance",
-                            progress = 1,
-                            maxProgress = 1,
-                            isUnlocked = true,
-                            unlockedAt = System.currentTimeMillis(),
+                    newEggRewarder().grant(
+                        eu.kanade.domain.easteregg.aurora.AuroraUnlockRewarder.lattice(
+                            achievementId = payload.achievementId,
+                            points = payload.bonusPoints,
+                            themeId = payload.themeId,
+                            unlockableIds = payload.unlockables,
                         ),
                     )
-                    pointsManager.addPoints(payload.bonusPoints ?: 0)
-                    pointsManager.incrementUnlocked()
-                    activityDataRepository.recordAchievementUnlock()
-
-                    payload.themeId?.let { userProfileManager.unlockTheme(it) }
-
-                    val unlockableManager = Injekt.get<tachiyomi.data.achievement.UnlockableManager>()
-                    payload.unlockables.forEach { unlockableManager.setUnlockableUnlocked(it) }
                 }
             }
         }

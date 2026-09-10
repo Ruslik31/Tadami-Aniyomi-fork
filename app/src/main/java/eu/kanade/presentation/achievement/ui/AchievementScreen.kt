@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.domain.easteregg.aurora.AuroraHeartManager
 import eu.kanade.domain.easteregg.aurora.AuroraLocalization
+import eu.kanade.domain.easteregg.aurora.AuroraPayload
 import eu.kanade.presentation.achievement.components.AchievementActivityGraph
 import eu.kanade.presentation.achievement.components.AchievementCard
 import eu.kanade.presentation.achievement.components.AchievementCategoryTabs
@@ -350,10 +352,19 @@ private fun BentoLevelCard(
                             )
                             val manager =
                                 remember { Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>() }
-                            val holderTitle = manager.unlockedPayload()?.holderTitle
+                            val managerState by manager.state.collectAsState()
+                            // Task 13 (§4b+B3): квест пройден, но локальный payload утрачен/побит —
+                            // статический фолбэк титула (паттерн Task 9); иначе чип не показывается.
+                            val holderPayload = remember(managerState.unlocked) {
+                                manager.unlockedPayload()
+                                    ?: if (managerState.unlocked) AuroraPayload.fallback() else null
+                            }
+                            val holderTitle = holderPayload?.let {
+                                AuroraLocalization.localized(it.holderTitle, it.holderTitleEn)
+                            }
                             if (holderTitle != null) {
                                 Text(
-                                    text = "• ${AuroraLocalization.translate(holderTitle)}",
+                                    text = "• $holderTitle",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = colors.accent,

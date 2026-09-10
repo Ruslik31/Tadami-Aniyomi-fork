@@ -162,6 +162,20 @@ class ActivityDataRepositoryImpl(
         logcat { "Recorded achievement unlock for $today" }
     }
 
+    /**
+     * Откат recordAchievementUnlock (Task 10, debug-reset): уменьшает счётчик
+     * СЕГОДНЯШНЕГО дня с гардом MAX(0, x-1) в SQL. Аппроксимация: если награда
+     * выдавалась в другой день, его строка не корректируется; level=4 не откатывается.
+     */
+    override suspend fun decrementAchievementUnlock() {
+        val today = LocalDate.now().format(dateFormatter)
+        database.activityLogQueries.decrementAchievements(
+            date = today,
+            last_updated = System.currentTimeMillis(),
+        )
+        logcat { "Reverted achievement unlock for $today" }
+    }
+
     override suspend fun getLastTwelveMonthsStats(): List<Pair<YearMonth, MonthStats>> {
         val today = YearMonth.now()
         val stats = mutableListOf<Pair<YearMonth, MonthStats>>()

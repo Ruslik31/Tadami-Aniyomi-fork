@@ -78,6 +78,12 @@ SET achievements_unlocked = achievements_unlocked + 1,
     last_updated = :last_updated
 WHERE date = :date;
 
+decrementAchievements:
+UPDATE activity_log
+SET achievements_unlocked = MAX(0, achievements_unlocked - 1),
+    last_updated = :last_updated
+WHERE date = :date;
+
 addDuration:
 INSERT INTO activity_log(date, duration_ms, last_updated)
 VALUES (:date, :duration_ms, :last_updated)

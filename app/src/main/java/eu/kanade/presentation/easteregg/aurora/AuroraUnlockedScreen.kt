@@ -152,7 +152,8 @@ fun AuroraUnlockedScreen(
             )
 
             Text(
-                text = AuroraLocalization.translate(payload.achievementTitle).orEmpty(),
+                text = AuroraLocalization.localized(payload.achievementTitle, payload.achievementTitleEn)
+                    .orEmpty(),
                 color = primary,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.Bold,
@@ -168,7 +169,7 @@ fun AuroraUnlockedScreen(
 
             payload.holderTitle?.let { title ->
                 Text(
-                    text = "\u2726 ${AuroraLocalization.translate(title)} \u2726",
+                    text = "\u2726 ${AuroraLocalization.localized(title, payload.holderTitleEn).orEmpty()} \u2726",
                     color = accent,
                     fontSize = 15.sp,
                     letterSpacing = (6f - 4f * holderIn).sp,
@@ -180,7 +181,7 @@ fun AuroraUnlockedScreen(
 
             payload.achievementDescription?.let { description ->
                 Text(
-                    text = AuroraLocalization.translate(description).orEmpty(),
+                    text = AuroraLocalization.localized(description, payload.descriptionEn).orEmpty(),
                     color = Color(0xCCDCEBFF),
                     fontSize = 14.sp,
                     lineHeight = 21.sp,
@@ -202,7 +203,7 @@ fun AuroraUnlockedScreen(
                         .alpha(letterIn),
                 ) {
                     Text(
-                        text = AuroraLocalization.translate(letter).orEmpty(),
+                        text = AuroraLocalization.localized(letter, payload.letterEn).orEmpty(),
                         color = Color(0xFFDCEBFF),
                         fontSize = 14.sp,
                         lineHeight = 22.sp,
@@ -229,7 +230,7 @@ fun AuroraUnlockedScreen(
 
             payload.themeName?.let { themeName ->
                 Text(
-                    text = AuroraLocalization.translate("Открыта тема: $themeName").orEmpty(),
+                    text = AuroraLocalization.translateThemeUnlock(themeName).orEmpty(),
                     color = Color(0x99DCEBFF),
                     fontSize = 13.sp,
                     modifier = Modifier

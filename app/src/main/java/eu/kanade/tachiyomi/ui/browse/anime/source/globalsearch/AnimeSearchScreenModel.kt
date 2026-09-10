@@ -156,10 +156,12 @@ abstract class AnimeSearchScreenModel(
 
         if (query.isNullOrBlank()) return
 
-        val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
-        if (!manager.state.value.unlocked) {
-            screenModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                manager.offer(query)
+        runCatching {
+            val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
+            if (!manager.state.value.unlocked) {
+                screenModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    manager.offer(query)
+                }
             }
         }
 

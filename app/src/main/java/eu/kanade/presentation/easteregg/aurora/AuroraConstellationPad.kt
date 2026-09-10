@@ -70,7 +70,7 @@ fun AuroraConstellationPad(
     val view = LocalView.current
     val reducedMotion = rememberAuroraReducedMotion()
     val tier = rememberAuroraTier()
-    val en = AuroraLocalization.isEnglish
+    val en = AuroraLocalization.isEnglish()
 
     val path = remember { mutableStateListOf<Int>() }
     var broken by remember { mutableStateOf(false) }
@@ -272,7 +272,7 @@ private fun ConstellationTapField(
     path: SnapshotStateList<Int>,
 ) {
     val view = LocalView.current
-    val en = AuroraLocalization.isEnglish
+    val en = AuroraLocalization.isEnglish()
     BoxWithConstraints(modifier = Modifier.size(300.dp)) {
         val w = maxWidth
         val h = maxHeight

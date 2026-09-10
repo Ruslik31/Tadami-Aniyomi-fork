@@ -106,13 +106,11 @@ fun AuroraRiddleScreen(
         )
     }
 
-    // Построчный фейд-ин текста:
-    val translatedRiddle = remember(riddle) {
-        AuroraLocalization.translate(riddle).orEmpty()
-    }
-    val lines = remember(translatedRiddle) {
+    // Построчный фейд-ин текста. Task 13: [riddle] уже резолвлен по локали
+    // вызывающим (AuroraRiddleText.display()) — табличный перевод не нужен.
+    val lines = remember(riddle) {
         val regex = Regex("(?<=[.!?…])\\s+")
-        translatedRiddle.split(regex).filter { it.isNotBlank() }
+        riddle.split(regex).filter { it.isNotBlank() }
     }
 
     val lineAlphas = remember(lines, replayKey) {
@@ -173,7 +171,7 @@ fun AuroraRiddleScreen(
                 .background(Color.Black),
         )
 
-        // Синкай-слои: сумеречный «час кого-то» у горизонта дышит вмест��
+        // Синкай-слои: сумеречный «час кого-то» у горизонта дышит вместе
         // с сиянием, парящие пылинки света и редкая одинокая комета.
         if (!reducedMotion) {
             KatawareDokiVeil(alpha = (0.16f + 0.10f * breath) * awake.value)
@@ -219,7 +217,7 @@ fun AuroraRiddleScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = if (AuroraLocalization.isEnglish) "AURORA ECHO" else "ЭХО АВРОРЫ",
+                    text = if (AuroraLocalization.isEnglish()) "AURORA ECHO" else "ЭХО АВРОРЫ",
                     color = Color(0xFF8FD6FF),
                     fontSize = 10.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
@@ -248,7 +246,7 @@ fun AuroraRiddleScreen(
                                 if (i < stageIndex) {
                                     AuroraPublicPalette.Green
                                 } else if (i == stageIndex) {
-                                    AuroraPublicPalette.Green
+                                    AuroraPublicPalette.Violet
                                 } else {
                                     Color(0xFF24405C)
                                 },
@@ -289,7 +287,7 @@ fun AuroraRiddleScreen(
                                 showConstellation = true
                             },
                         )
-                        .semantics { contentDescription = translatedRiddle }
+                        .semantics { contentDescription = riddle }
                         .padding(24.dp),
                 ) {
                     Column(

@@ -2278,10 +2278,11 @@ class NovelScreenModel(
                 updateNewChapterIds(clearedIds = listOf(chapterId))
             }
             if (shouldEmitReadEvent) {
-                if (eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin()) {
-                    val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
-                    manager.registerNightAction()
-                    manager.revealHint()
+                runCatching {
+                    if (eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin()) {
+                        val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
+                        manager.registerNightAction()
+                    }
                 }
                 eventBus?.tryEmit(
                     AchievementEvent.NovelChapterRead(

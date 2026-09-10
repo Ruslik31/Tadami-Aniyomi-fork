@@ -15,6 +15,7 @@ interface ActivityDataRepository {
     suspend fun recordAppSession(durationMs: Long)
     suspend fun recordAppOpen()
     suspend fun recordAchievementUnlock()
+    suspend fun decrementAchievementUnlock()
     suspend fun getLastTwelveMonthsStats(): List<Pair<java.time.YearMonth, MonthStats>>
 
     // Backup/Restore support

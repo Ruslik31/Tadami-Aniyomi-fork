@@ -51,6 +51,8 @@ import kotlinx.coroutines.delay
  * Показывать из карточки достижения после первого прогресса.
  * Секретов будущих ступеней здесь нет — только уже открытое.
  *
+ * @param canReplay гейт кнопки повтора (Task 13 §4b): true только при РЕАЛЬНОМ
+ *   payload — при fallback-payload (restore) кнопка была бы полумёртвой (no-op).
  * @param onReplay повтор финальной манифестации: покажи AuroraUnlockedScreen
  *   ещё раз (например, через AuroraEchoBus.emitUnlocked(payload)).
  */
@@ -59,6 +61,7 @@ fun AuroraCodexScreen(
     firstRiddle: String,
     entries: List<AuroraCodexEntry>,
     payload: AuroraPayload?,
+    canReplay: Boolean,
     onReplay: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -148,28 +151,21 @@ fun AuroraCodexScreen(
                 CodexReveal(index = entries.size + 1, reducedMotion = reducedMotion) {
                     CodexCard(
                         title = AuroraLocalization.translate("Письмо").orEmpty(),
-                        body = AuroraLocalization.translate(letter).orEmpty(),
+                        body = AuroraLocalization.localized(letter, payload.letterEn).orEmpty(),
                         accent = accent,
                         metal = AuroraMaterialSpec.from(payload),
                     )
                 }
             }
 
-            if (payload != null) {
+            // Task 9 (B3) + Task 13 (§4b): кнопка повтора — только при РЕАЛЬНОМ payload
+            // (canReplay); при fallback-payload она была видна, но onReplay — no-op.
+            if (canReplay) {
                 TextButton(
                     onClick = onReplay,
                     modifier = Modifier.padding(top = 20.dp),
                 ) {
                     Text(text = AuroraLocalization.translate("Пережить манифестацию снова").orEmpty(), color = accent)
-                }
-            } else {
-                // Если квест ещё не закончен — даём возможность продолжить из Кодекса
-                // (когда пользователь попал сюда после первой ступени)
-                TextButton(
-                    onClick = onClose, // родитель (AchievementCard) решит открыть riddle dialog
-                    modifier = Modifier.padding(top = 20.dp),
-                ) {
-                    Text(text = AuroraLocalization.translate("Продолжить путь").orEmpty(), color = primary)
                 }
             }
         }

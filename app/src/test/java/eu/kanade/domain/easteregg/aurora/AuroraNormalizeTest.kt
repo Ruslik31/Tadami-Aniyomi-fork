@@ -25,4 +25,26 @@ class AuroraNormalizeTest {
         assertEquals("sigil:1-2-3", AuroraVault.normalize("SIGIL:1-2-3"))
         assertEquals("категория:пример", AuroraVault.normalize("Категория:ПРИМЕР"))
     }
+
+    // Task 13 (K2c): полный unicode-набор пробелов — зеркалирует JS `\s` в tools/aurora_forge.mjs.
+
+    @Test
+    fun unicodeSpacesCollapseAndTrim() {
+        // NBSP в середине → одиночный ASCII-пробел
+        assertEquals("полярная ночь", AuroraVault.normalize("Полярная\u00A0НОЧЬ"))
+        // EM SPACE по краям → убирается trim'ом
+        assertEquals("полярная ночь", AuroraVault.normalize("\u2003Полярная ночь\u2003"))
+        // Смесь unicode-пробелов в середине → один пробел
+        assertEquals("полярная ночь", AuroraVault.normalize("Полярная\u2000\u202Fночь"))
+    }
+
+    @Test
+    fun bomAndZwnbspAreStrippedOrCollapsed() {
+        // BOM-префикс → удаляется
+        assertEquals("полярная ночь", AuroraVault.normalize("\uFEFFПолярная ночь"))
+        // ZWNBSP в середине → одиночный пробел
+        assertEquals("полярная ночь", AuroraVault.normalize("Полярная\uFEFFночь"))
+        // BOM-суффикс → удаляется
+        assertEquals("полярная ночь", AuroraVault.normalize("Полярная ночь\uFEFF"))
+    }
 }
