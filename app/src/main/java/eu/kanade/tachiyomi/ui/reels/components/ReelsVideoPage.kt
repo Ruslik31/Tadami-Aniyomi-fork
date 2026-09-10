@@ -9,7 +9,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -69,7 +71,8 @@ fun ReelsVideoPage(
     isAutoAdvance: Boolean,
     isCropMode: Boolean,
     isLastPage: Boolean = false,
-    // Feed-level immersive chrome flag: the side action bar hides together with the top bar.
+    // Feed-level immersive chrome flag: the side action bar and the bottom meta hide
+    // together with the top bar.
     chromeVisible: Boolean = true,
     // Landscape fullscreen: the page content is rendered rotated 90° inside the locked
     // portrait activity (software rotation — no orientation request, no player rebuild).
@@ -111,9 +114,17 @@ fun ReelsVideoPage(
     var retrySignal by remember { mutableIntStateOf(0) }
     val heartScale = remember { Animatable(0f) }
     val hapticFeedback = LocalHapticFeedback.current
-    // Real orientation of the media, reported by the player; only landscape reels get
-    // the fullscreen affordance.
-    var isLandscapeVideo by remember(item) { mutableStateOf(false) }
+    // Real orientation of the media, reported by the player; null until known. Only
+    // landscape reels get the fullscreen affordance.
+    var isLandscapeVideo by remember(item) { mutableStateOf<Boolean?>(null) }
+
+    // Landscape fullscreen survives auto-advance only while the reels stay wide: a
+    // portrait reel settling in the rotated frame drops back to the normal feed.
+    LaunchedEffect(isActive, isLandscapeFullscreen, isLandscapeVideo) {
+        if (isActive && isLandscapeFullscreen && isLandscapeVideo == false) {
+            onLandscapeFullscreenChange(false)
+        }
+    }
 
     // Accumulated playback seconds, reported once when the clip is left (drives the feed
     // source's personalization). Re-counts from zero on every (re)activation.
@@ -327,7 +338,7 @@ fun ReelsVideoPage(
         // Landscape fullscreen affordance: only landscape reels can expand, and the
         // buttons ride the same chrome visibility as the rest of the overlay UI.
         AnimatedVisibility(
-            visible = chromeVisible && isLandscapeVideo && !isLandscapeFullscreen,
+            visible = chromeVisible && isLandscapeVideo == true && !isLandscapeFullscreen,
             enter = fadeIn() + slideInHorizontally { it },
             exit = fadeOut() + slideOutHorizontally { it },
             modifier = Modifier.align(Alignment.CenterEnd),
@@ -353,15 +364,21 @@ fun ReelsVideoPage(
             ) { onLandscapeFullscreenChange(false) }
         }
 
-        // 6. Bottom Meta info (Author, Title, Clickable Tags)
-        ReelsBottomMeta(
-            item = item,
-            onTagClick = onTagClick,
-            onAuthorClick = onAuthorClick,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 16.dp, end = 76.dp, bottom = 24.dp),
-        )
+        // 6. Bottom Meta info (Author, Title, Clickable Tags) — hides with the immersive
+        // chrome, sliding down out of the frame like the top bar slides up.
+        AnimatedVisibility(
+            visible = chromeVisible,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomStart),
+        ) {
+            ReelsBottomMeta(
+                item = item,
+                onTagClick = onTagClick,
+                onAuthorClick = onAuthorClick,
+                modifier = Modifier.padding(start = 16.dp, end = 76.dp, bottom = 24.dp),
+            )
+        }
 
         // 7. Interactive Scrubber / Seek Bar (Aurora style)
         ReelsProgressBar(

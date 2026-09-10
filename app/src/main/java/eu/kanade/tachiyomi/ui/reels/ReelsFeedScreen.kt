@@ -284,8 +284,10 @@ data class ReelsFeedScreen(
                     VerticalPager(
                         state = pagerState,
                         beyondViewportPageCount = 1,
-                        // Swiping away underneath the rotated fullscreen overlay would
-                        // orphan it; the feed only scrolls in normal portrait mode.
+                        // The pager lives outside the software rotation, so manual swipes in
+                        // landscape fullscreen would land sideways; auto-advance still moves
+                        // the feed programmatically (portrait reels exit fullscreen, see
+                        // ReelsVideoPage).
                         userScrollEnabled = !landscapeFullscreen,
                         modifier = Modifier.fillMaxSize(),
                     ) { page ->
@@ -304,7 +306,7 @@ data class ReelsFeedScreen(
                                 isMuted = state.isMuted,
                                 isLiked = (item.id in state.likedIds),
                                 isHdQuality = effectiveHd,
-                                isAutoAdvance = state.isAutoAdvance && !landscapeFullscreen,
+                                isAutoAdvance = state.isAutoAdvance,
                                 isCropMode = state.isCropMode,
                                 chromeVisible = chromeVisible && !landscapeFullscreen,
                                 isLandscapeFullscreen = landscapeFullscreen,
