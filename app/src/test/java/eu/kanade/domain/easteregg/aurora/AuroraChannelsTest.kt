@@ -41,7 +41,7 @@ class AuroraChannelsTest {
     @Test
     fun namedChannelKeepsExistingContract() {
         // (e) Именование категории — контракт не меняется.
-        AuroraChannels.named("категория", "guovssahas") shouldBe "категория:guovssahas"
+        AuroraChannels.named("категория", "fixture-echo") shouldBe "категория:fixture-echo"
     }
 
     @Test

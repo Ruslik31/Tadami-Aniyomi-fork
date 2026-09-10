@@ -41,7 +41,24 @@ private data class StoredRiddle(val r: String, val re: String? = null)
  * Имена SharedPreferences нарочно неприметные — не выдают пасхалку
  * при беглом осмотре данных приложения.
  */
-class AuroraQuest(context: Context) {
+class AuroraQuest internal constructor(
+    context: Context,
+    private val stages: List<AuroraStage>,
+    private val firstRiddle: String,
+    private val firstRiddleEn: String,
+) {
+
+    /**
+     * Публичный конструктор (продакшн-путь) — всегда реальный ваулт [AuroraVaultData].
+     * Internal-seam (Task 15): тесты строят квест на фикстурных ступенях, не зная
+     * настоящих ответов; публичный API и поведение не меняются.
+     */
+    constructor(context: Context) : this(
+        context,
+        AuroraVaultData.STAGES,
+        AuroraVaultData.FIRST_RIDDLE,
+        AuroraVaultData.FIRST_RIDDLE_EN,
+    )
 
     private val prefs = context.applicationContext
         .getSharedPreferences(AuroraPrefKeys.STORE, Context.MODE_PRIVATE)
@@ -54,7 +71,7 @@ class AuroraQuest(context: Context) {
 
     /** Публичные аксессоры для AuroraHeartManager (UI ходит через менеджер). */
     val currentStageIndex: Int get() = stageIndex
-    val totalStagesCount: Int get() = AuroraVaultData.STAGES.size
+    val totalStagesCount: Int get() = stages.size
 
     /** Вызывается триггером-событием. Повторные вызовы безвредны. */
     fun revealHint() {
@@ -69,7 +86,7 @@ class AuroraQuest(context: Context) {
      */
     fun currentRiddle(): AuroraRiddleText? = when {
         !isHintRevealed || isUnlocked -> null
-        stageIndex == 0 -> AuroraRiddleText(AuroraVaultData.FIRST_RIDDLE, AuroraVaultData.FIRST_RIDDLE_EN)
+        stageIndex == 0 -> AuroraRiddleText(firstRiddle, firstRiddleEn)
         else -> prefs.getString(AuroraPrefKeys.RIDDLE, null)
             ?.let { stored -> runCatching { json.decodeFromString<StoredRiddle>(stored) }.getOrNull() }
             ?.let { AuroraRiddleText(it.r, it.re) }
@@ -91,7 +108,7 @@ class AuroraQuest(context: Context) {
         if (!isHintRevealed) return null
         if (query.length !in 3..64) return null
         val idx = stageIndex
-        val stage = AuroraVaultData.STAGES.getOrNull(idx) ?: return null
+        val stage = stages.getOrNull(idx) ?: return null
         val plain = AuroraVault.tryOpen(query, stage)?.decodeToString() ?: return null
         val payload = runCatching { json.decodeFromString<AuroraPayload>(plain) }.getOrNull() ?: return null
 
@@ -112,7 +129,7 @@ class AuroraQuest(context: Context) {
             appendEcho(payload.echoTitle, payload.riddle)
             val echo = AuroraEcho.Progress(
                 stageIndex = idx + 1,
-                totalStages = AuroraVaultData.STAGES.size,
+                totalStages = stages.size,
                 echoTitle = payload.echoTitle,
             )
             AuroraEchoBus.emit(echo)
