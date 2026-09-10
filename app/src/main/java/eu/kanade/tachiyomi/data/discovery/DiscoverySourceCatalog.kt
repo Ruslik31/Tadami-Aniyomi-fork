@@ -164,7 +164,7 @@ class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
         val group = filters.filterIsInstance<Filter.Group<*>>()
             .firstOrNull { it.name.contains("genre", true) || it.name.contains("жанр", true) }
             ?: return FilterList()
-        val boxes = (group.state as? List<*>)?.filterIsInstance<Filter.CheckBox>() ?: return FilterList()
+        val boxes = group.state.filterIsInstance<Filter.CheckBox>()
         val applied = boxes.count { box ->
             (box.name.lowercase() in wanted).also { if (it) box.state = true }
         }
@@ -176,7 +176,7 @@ class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
         val group = filters.filterIsInstance<AnimeFilter.Group<*>>()
             .firstOrNull { it.name.contains("genre", true) || it.name.contains("жанр", true) }
             ?: return AnimeFilterList()
-        val boxes = (group.state as? List<*>)?.filterIsInstance<AnimeFilter.CheckBox>() ?: return AnimeFilterList()
+        val boxes = group.state.filterIsInstance<AnimeFilter.CheckBox>()
         val applied = boxes.count { box ->
             (box.name.lowercase() in wanted).also { if (it) box.state = true }
         }
@@ -188,7 +188,7 @@ class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
         val group = filters.filterIsInstance<NovelFilter.Group<*>>()
             .firstOrNull { it.name.contains("genre", true) || it.name.contains("жанр", true) }
             ?: return NovelFilterList()
-        val boxes = (group.state as? List<*>)?.filterIsInstance<NovelFilter.CheckBox>() ?: return NovelFilterList()
+        val boxes = group.state.filterIsInstance<NovelFilter.CheckBox>()
         val applied = boxes.count { box ->
             (box.name.lowercase() in wanted).also { if (it) box.state = true }
         }

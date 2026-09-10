@@ -60,7 +60,7 @@ class SetReadStatus(
             // when a chapter is reopened; after mark-unread the reader used to resurrect the old
             // mid-chapter position. removeLongPageProgressForChapter had zero production callers.
             chaptersToUpdate.forEach { chapter ->
-                chapter.id?.let { readerPreferences.removeLongPageProgressForChapter(it) }
+                readerPreferences.removeLongPageProgressForChapter(chapter.id)
             }
         }
 

@@ -114,7 +114,6 @@ fun ReelsWebLoginDialog(
                 val popup = WebView(view.context)
                 popup.settings.javaScriptEnabled = true
                 popup.settings.domStorageEnabled = true
-                popup.settings.databaseEnabled = true
                 popup.settings.setSupportMultipleWindows(false)
                 popup.webChromeClient = hostScope
                 (resultMsg.obj as? WebView.WebViewTransport)?.webView = popup
@@ -193,7 +192,6 @@ fun ReelsWebLoginDialog(
                             WebView(context).apply {
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
-                                settings.databaseEnabled = true
                                 settings.javaScriptCanOpenWindowsAutomatically = true
                                 settings.setSupportMultipleWindows(true)
                                 // The site gates its SPA on bot/WebView user agents (a default
