@@ -90,7 +90,7 @@ data object BrowseTab : Tab {
         // BGS-12: re-tapping Browse while the matching global search is already on top used to
         // push another copy (identical screens stacked, each running a full fan-out search on
         // reveal).
-        if (navigator.lastItem?.let { it::class == screen::class } == true) return
+        if (navigator.lastItem::class == screen::class) return
         navigator.push(screen)
     }
 

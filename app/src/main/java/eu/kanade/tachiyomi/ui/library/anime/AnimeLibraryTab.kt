@@ -1766,7 +1766,6 @@ data object AnimeLibraryTab : Tab {
                     val novelModel = novelScreenModel
                     if (novelModel != null && novelModel.state.value.selectionMode) novelModel.clearSelection()
                 }
-                null -> Unit
             }
         }
 
@@ -1806,7 +1805,7 @@ data object AnimeLibraryTab : Tab {
             when (currentSection) {
                 Section.Anime -> state.dialog
                 Section.Manga -> mangaState.dialog
-                Section.Novel -> novelState?.dialog
+                Section.Novel -> novelState.dialog
                 null -> null
             }
         }

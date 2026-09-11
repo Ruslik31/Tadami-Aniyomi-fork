@@ -40,9 +40,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.LabelOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.LabelOff
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -1475,7 +1475,7 @@ internal fun DiscoveryHideOptionsSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    Icons.Outlined.LabelOff,
+                    Icons.AutoMirrored.Outlined.LabelOff,
                     contentDescription = null,
                     tint = if (tagEnabled) colors.accent else colors.textSecondary,
                     modifier = Modifier.size(20.dp),
@@ -1484,7 +1484,7 @@ internal fun DiscoveryHideOptionsSheet(
                 Column {
                     Text(
                         if (tagEnabled) {
-                            stringResource(AYMR.strings.for_you_tag_blacklist_action, tag!!)
+                            stringResource(AYMR.strings.for_you_tag_blacklist_action, tag)
                         } else {
                             stringResource(AYMR.strings.for_you_tag_blacklist_action_generic)
                         },
