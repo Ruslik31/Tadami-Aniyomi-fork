@@ -21,6 +21,8 @@ data class DiscoveryBuildContext(
     val hiddenCleanTitles: Set<String>,
     val tasteProfile: List<Pair<String, Double>> = emptyList(),
     val sourceId: Long = -1L,
+    /** C1: источники библиотеки, упорядоченные по весу (топ-3) — для ряда SOURCE. */
+    val sourceIds: List<Long> = emptyList(),
     val recentCleanTitles: Set<String> = emptySet(),
     val pageOffset: Int = 1,
 )

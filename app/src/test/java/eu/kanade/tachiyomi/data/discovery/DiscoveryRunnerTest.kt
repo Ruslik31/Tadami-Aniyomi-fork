@@ -154,6 +154,36 @@ class DiscoveryRunnerTest {
     }
 
     @Test
+    fun `runner ranks library source ids into context`() = runTest {
+        val captured = mutableListOf<DiscoveryBuildContext>()
+        val seedSources = object : DiscoverySeedSources {
+            override suspend fun candidates(mediaType: DiscoveryMediaType) = listOf(
+                DiscoverySeedInput(entryId = 1, title = "A", sourceId = 11L),
+                DiscoverySeedInput(entryId = 2, title = "B", sourceId = 11L),
+                DiscoverySeedInput(entryId = 3, title = "C", sourceId = 22L),
+            )
+
+            override suspend fun historyCleanTitles(mediaType: DiscoveryMediaType) = emptySet<String>()
+        }
+        val capturingBuilder = object : DiscoveryRowBuilder {
+            override val rowType = DiscoveryRowType.LIKE
+            override suspend fun build(context: DiscoveryBuildContext): List<DiscoveryRowItem> {
+                captured += context
+                return emptyList()
+            }
+        }
+        val runner = DiscoveryRunner(
+            repository = FakeRepository(),
+            preferences = DiscoveryPreferences(InMemoryPreferenceStore()),
+            seedSources = seedSources,
+            coordinatorFactory = { DiscoveryCoordinator(listOf(capturingBuilder)) },
+            sourcePreferencesProvider = ::testSourcePrefs,
+        )
+        runner.run(listOf(DiscoveryMediaType.NOVEL))
+        captured.single().sourceIds shouldBe listOf(11L, 22L)
+    }
+
+    @Test
     fun `failed rows are reported through sink and cleared on success`() = runTest {
         val captured = mutableListOf<Pair<DiscoveryMediaType, Set<DiscoveryRowType>>>()
         val failingRunner = DiscoveryRunner(

@@ -82,12 +82,14 @@ class DiscoveryTrendRowBuilder(
             // чтобы не дублировать статический all-time топ ряда TASTE
             DiscoveryMediaType.MANGA, DiscoveryMediaType.NOVEL -> TrendSort.TRENDING
         }
+        // C1: приоритет — топ-взвешенный источник библиотеки, иначе lastUsed/fallback.
+        val preferredSourceId = context.sourceIds.firstOrNull() ?: context.sourceId
 
         // Для новелл приоритет отдаём установленному источнику пользователя (InkStory, Ranobe и др.),
         // где новеллы реально можно читать прямо в приложении.
-        if (context.mediaType == DiscoveryMediaType.NOVEL && context.sourceId > 0) {
+        if (context.mediaType == DiscoveryMediaType.NOVEL && preferredSourceId > 0) {
             val fromSource = runCatching {
-                catalog.latest(context.mediaType, context.sourceId, page = context.pageOffset)
+                catalog.latest(context.mediaType, preferredSourceId, page = context.pageOffset)
             }.getOrNull().orEmpty().map { item ->
                 item.copy(
                     reason = "source",
@@ -125,10 +127,9 @@ class DiscoveryTrendRowBuilder(
 
         // Фолбэк при недоступности трендов:
         // Запрашиваем «Свежее» (latest updates) из активного/установленного источника пользователя!
-        val sourceId = context.sourceId
-        if (sourceId > 0) {
+        if (preferredSourceId > 0) {
             val fromSource = runCatching {
-                catalog.latest(context.mediaType, sourceId, page = context.pageOffset)
+                catalog.latest(context.mediaType, preferredSourceId, page = context.pageOffset)
             }.getOrNull().orEmpty().map { item ->
                 item.copy(
                     reason = "source",
@@ -196,15 +197,59 @@ class DiscoveryTasteRowBuilder(
     }
 }
 
-/** Ряд «Источник»: popular-витрина выбранного источника, топ-20. */
+/**
+ * Ряд «Источник» (C1): popular-витрина топ-N источников по весу библиотеки
+ * (число тайтлов пользователя), round-robin интерлив; на ручном рефреше
+ * порядок источников ротируется. Единственный источник остаётся в силе —
+ * квота растягивается на весь ряд (прежние 20 карточек).
+ */
 class DiscoverySourceRowBuilder(
     private val catalog: DiscoverySourceCatalog,
+    private val maxSources: Int = 3,
+    private val rowCap: Int = 20,
 ) : DiscoveryRowBuilder {
 
     override val rowType = DiscoveryRowType.SOURCE
 
     override suspend fun build(context: DiscoveryBuildContext): List<DiscoveryRowItem> {
-        if (context.sourceId <= 0) return emptyList()
-        return catalog.popular(context.mediaType, context.sourceId).take(20)
+        val ids = context.sourceIds.filter { it > 0 }.take(maxSources)
+            .ifEmpty { listOf(context.sourceId).filter { it > 0 } }
+        if (ids.isEmpty()) return emptyList()
+        val rotation = (context.pageOffset - 1).coerceAtLeast(0) % ids.size
+        val ordered = ids.drop(rotation) + ids.take(rotation)
+        val perSource = (rowCap + ordered.size - 1) / ordered.size
+        var failures = 0
+        val parts = ordered.map { id ->
+            runCatching { catalog.popular(context.mediaType, id).take(perSource) }
+                .onFailure { failures++ }
+                .getOrDefault(emptyList())
+        }
+        // Все источники упали — ряд помечается failed (кэш не затирается,
+        // баннер «часть подборок не обновилась» честный), как в LIKE/TASTE.
+        if (failures == ordered.size) {
+            throw IOException("all source catalog fetches failed")
+        }
+        return interleaveSourceParts(parts, rowCap)
     }
+}
+
+/** Round-robin по частям (источникам): топ каждого источника виден сразу. */
+internal fun interleaveSourceParts(
+    parts: List<List<DiscoveryRowItem>>,
+    cap: Int = 20,
+): List<DiscoveryRowItem> {
+    val queues = parts.filter { it.isNotEmpty() }.map { ArrayDeque(it) }
+    val out = mutableListOf<DiscoveryRowItem>()
+    var progressed = true
+    while (out.size < cap && progressed) {
+        progressed = false
+        for (queue in queues) {
+            if (out.size >= cap) break
+            if (queue.isNotEmpty()) {
+                out += queue.removeFirst()
+                progressed = true
+            }
+        }
+    }
+    return out
 }

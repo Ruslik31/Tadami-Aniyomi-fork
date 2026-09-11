@@ -31,6 +31,7 @@ class AppDiscoverySeedSources : DiscoverySeedSources {
             DiscoverySeedInput(
                 entryId = item.novel.id,
                 title = item.novel.title,
+                sourceId = item.novel.source,
                 description = item.novel.description,
                 author = item.novel.author,
                 genres = item.novel.genre.orEmpty(),
@@ -47,6 +48,7 @@ class AppDiscoverySeedSources : DiscoverySeedSources {
             DiscoverySeedInput(
                 entryId = item.manga.id,
                 title = item.manga.title,
+                sourceId = item.manga.source,
                 description = item.manga.description,
                 author = item.manga.author,
                 genres = item.manga.genre.orEmpty(),
@@ -63,6 +65,7 @@ class AppDiscoverySeedSources : DiscoverySeedSources {
             DiscoverySeedInput(
                 entryId = item.anime.id,
                 title = item.anime.title,
+                sourceId = item.anime.source,
                 description = item.anime.description,
                 author = item.anime.author,
                 genres = item.anime.genre.orEmpty(),

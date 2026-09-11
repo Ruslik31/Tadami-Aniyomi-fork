@@ -92,4 +92,24 @@ class DiscoverySeedSelectorTest {
         val out5 = selector.select(seeds, SeedSettings(maxSeeds = 3), offset = 5)
         out5.map { it.entryId } shouldBe listOf(6L, 1L, 2L)
     }
+
+    @Test
+    fun `rankSourceIds orders by library weight with deterministic id tiebreak`() {
+        val candidates = listOf(
+            seed(1).copy(sourceId = 5L),
+            seed(2).copy(sourceId = 5L),
+            seed(3).copy(sourceId = 5L),
+            seed(4).copy(sourceId = 3L),
+            seed(5).copy(sourceId = 3L),
+            seed(6).copy(sourceId = 9L),
+            seed(7).copy(sourceId = 9L),
+            seed(8).copy(sourceId = 7L),
+            seed(9).copy(sourceId = 7L),
+            seed(10).copy(sourceId = -1L), // локальный/неизвестный — не ранжируется
+        )
+        // 5×3; ничья 3/7/9 по 2 → tie-break по возрастанию id
+        rankSourceIds(candidates, limit = 3) shouldBe listOf(5L, 3L, 7L)
+        rankSourceIds(candidates, limit = 10).size shouldBe 4
+        rankSourceIds(emptyList()) shouldBe emptyList()
+    }
 }

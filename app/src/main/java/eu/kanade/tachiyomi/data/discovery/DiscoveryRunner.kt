@@ -127,6 +127,8 @@ class DiscoveryRunner(
             hiddenCleanTitles = repository.getHiddenTitles(mediaType),
             tasteProfile = buildTasteProfile(candidates),
             sourceId = sourceId,
+            // C1: ряд SOURCE строится из топ-3 источников по весу библиотеки.
+            sourceIds = rankSourceIds(candidates),
             recentCleanTitles = recentCleanTitles,
             pageOffset = pageOffset,
         )

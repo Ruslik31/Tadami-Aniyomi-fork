@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.discovery
 data class DiscoverySeedInput(
     val entryId: Long,
     val title: String,
+    val sourceId: Long = -1L,
     val altTitles: List<String> = emptyList(),
     val description: String? = null,
     val author: String? = null,
@@ -12,6 +13,20 @@ data class DiscoverySeedInput(
     val completedAt: Long? = null,
     val lastInteraction: Long? = null,
 )
+
+/**
+ * C1: топ-[limit] источников библиотеки по числу тайтлов пользователя.
+ * Ничья по весу — детерминированный tie-break по возрастанию id.
+ */
+internal fun rankSourceIds(candidates: List<DiscoverySeedInput>, limit: Int = 3): List<Long> =
+    candidates.asSequence()
+        .filter { it.sourceId > 0 }
+        .groupingBy { it.sourceId }
+        .eachCount()
+        .entries
+        .sortedWith(compareByDescending<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })
+        .take(limit)
+        .map { it.key }
 
 data class SeedSettings(
     val maxSeeds: Int = 3,
