@@ -60,6 +60,10 @@ fun ReelsWebLoginDialog(
     onDismiss: () -> Unit,
 ) {
     var webView by remember { mutableStateOf<WebView?>(null) }
+    // Cookie origins to dump: seeded from the start URL and grown with every page the
+    // WebView actually visits (login flows redirect through auth hosts whose host-only
+    // cookies are otherwise unreachable).
+    val cookieOrigins = remember(startUrl) { seedOrigins(startUrl) }
 
     // Async-dump plumbing: a dump stores the target consumer + the cookie map; the JS answer
     // arrives either synchronously (evaluateJavascript result) or later through the
@@ -87,7 +91,7 @@ fun ReelsWebLoginDialog(
     }
 
     fun requestDump(view: WebView, consumer: (Map<String, String>, Map<String, String>) -> Unit) {
-        val cookies = cookieDump()
+        val cookies = cookieDump(cookieOrigins)
         dumpCookiesHolder = cookies
         dumpMember = consumer
         val gen = dumpGen + 1
@@ -209,6 +213,7 @@ fun ReelsWebLoginDialog(
                                         url: String?,
                                         favicon: android.graphics.Bitmap?,
                                     ) {
+                                        originOf(url)?.let { cookieOrigins += it }
                                         // Instrument the SPA's own fetch/XHR so the dump can lift
                                         // its live api bearer + handshake session id.
                                         if (url != null && Uri.parse(url).host == Uri.parse(startUrl).host) {
@@ -226,7 +231,7 @@ fun ReelsWebLoginDialog(
                                         // handed to the source for the code exchange; the SPA's
                                         // own callback redirects must load normally.
                                         if (Uri.parse(url).getQueryParameter("code") != null && isOwnRedirect(url)) {
-                                            onOwnRedirect(url, cookieDump())
+                                            onOwnRedirect(url, cookieDump(cookieOrigins))
                                             return true
                                         }
                                         return false
@@ -315,6 +320,7 @@ fun CfBootstrapWebView(
 ) {
     var firesLeft by remember(attempt) { mutableStateOf(2) }
     var view by remember { mutableStateOf<WebView?>(null) }
+    val cookieOrigins = remember(startUrl) { seedOrigins(startUrl) }
     LaunchedEffect(attempt) {
         firesLeft = 2
         view?.reload()
@@ -329,6 +335,7 @@ fun CfBootstrapWebView(
                 CookieManager.getInstance().setAcceptCookie(true)
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(page: WebView, url: String?) {
+                        originOf(url)?.let { cookieOrigins += it }
                         page.postDelayed({ dump(page) }, 4000)
                         page.postDelayed({ dump(page) }, 9000)
                     }
@@ -338,7 +345,7 @@ fun CfBootstrapWebView(
                         firesLeft -= 1
                         page.evaluateJavascript(INSTRUMENT_JS) {
                             page.evaluateJavascript(LOCAL_STORAGE_DUMP_JS) { raw ->
-                                onSession(cookieDump(), parseJsonStringMap(raw))
+                                onSession(cookieDump(cookieOrigins), parseJsonStringMap(raw))
                             }
                         }
                     }
@@ -356,15 +363,45 @@ private fun isBackOnServiceSite(url: String, startUrl: String): Boolean {
     return uri.host == serviceHost && !uri.path.orEmpty().startsWith("/auth")
 }
 
-/** Synchronous CookieManager dump of the service domains (session cookies included). */
-private fun cookieDump(): Map<String, String> = buildMap {
+/**
+ * Synchronous CookieManager dump of the given origins (session cookies included). The
+ * former redgifs.com hardcode left every other source (XFree, ...) with an empty dump,
+ * so their importWebSession could never lift the login cookies.
+ */
+private fun cookieDump(urls: Collection<String>): Map<String, String> = buildMap {
     val cookieManager = CookieManager.getInstance()
-    listOf("https://www.redgifs.com", "https://auth2.redgifs.com", "https://api.redgifs.com").forEach { domain ->
+    urls.forEach { domain ->
         cookieManager.getCookie(domain)?.split(";")?.forEach { pair ->
             val idx = pair.indexOf('=')
             if (idx > 0) put(pair.substring(0, idx).trim(), pair.substring(idx + 1).trim())
         }
     }
+}
+
+/** "https://www.example.com/x?y" -> "https://www.example.com"; null for opaque urls. */
+private fun originOf(url: String?): String? {
+    val uri = Uri.parse(url ?: return null)
+    val scheme = uri.scheme ?: return null
+    val host = uri.host ?: return null
+    return "$scheme://$host"
+}
+
+/**
+ * The start origin plus its "api." sibling: the SPA sets api-side session cookies through
+ * fetch calls without ever navigating there, so page-visit tracking alone would miss them
+ * (the pattern the redgifs hardcode used to cover).
+ */
+private fun seedOrigins(startUrl: String): MutableSet<String> {
+    val origins = mutableSetOf<String>()
+    val uri = Uri.parse(startUrl)
+    val scheme = uri.scheme ?: return origins
+    val host = uri.host ?: return origins
+    origins += "$scheme://$host"
+    val labels = host.split('.')
+    if (labels.size >= 2) {
+        origins += "$scheme://api.${labels.takeLast(2).joinToString(".")}"
+    }
+    return origins
 }
 
 /** evaluateJavascript result / prompt payload -> key-value map. */
