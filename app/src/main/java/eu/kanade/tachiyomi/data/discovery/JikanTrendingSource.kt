@@ -129,14 +129,23 @@ open class JikanTrendingSource(
         metaCache[title]?.let { return it }
 
         return try {
-            val url = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(title, "UTF-8")}&limit=1"
+            val url = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(title, "UTF-8")}&limit=5"
             ExternalApiThrottle.acquire(ExternalApiThrottle.Api.JIKAN)
             val response = clientProvider().newCall(GET(url))
                 .awaitSuccess()
                 .parseAs<JsonObject>(jsonProvider())
 
             val items = response["data"]?.jsonArray?.mapNotNull { runCatching { it.jsonObject }.getOrNull() }
-            val first = items?.firstOrNull() ?: return null
+            val first = items?.firstOrNull { item ->
+                metaMatchesTitle(
+                    title,
+                    listOf(
+                        runCatching { item["title"]?.jsonPrimitive?.contentOrNull }.getOrNull(),
+                        runCatching { item["title_english"]?.jsonPrimitive?.contentOrNull }.getOrNull(),
+                        runCatching { item["title_japanese"]?.jsonPrimitive?.contentOrNull }.getOrNull(),
+                    ),
+                )
+            } ?: return null
 
             val desc = first["synopsis"]?.jsonPrimitive?.contentOrNull
             val genres = runCatching {

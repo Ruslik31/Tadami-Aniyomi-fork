@@ -154,12 +154,6 @@ class DiscoveryFeedScreenModel(
         observeMedia(state.value.mediaType)
     }
 
-    fun selectMedia(mediaType: DiscoveryMediaType) {
-        if (state.value.mediaType == mediaType) return
-        mutableState.update { it.copy(mediaType = mediaType, isLoading = true) }
-        observeMedia(mediaType)
-    }
-
     private fun observeMedia(mediaType: DiscoveryMediaType) {
         observeJob?.cancel()
         observeJob = screenModelScope.launchIO {

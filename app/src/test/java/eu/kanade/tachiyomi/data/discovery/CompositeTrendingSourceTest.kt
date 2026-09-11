@@ -204,6 +204,26 @@ class CompositeTrendingSourceTest {
     }
 
     @Test
+    fun `novel fetchMeta skips shikimori even in russian locale`() = runTest {
+        val aniMeta = DiscoveryMeta("LN description", listOf("Fantasy"), null)
+        val shikimori = MockTrendingSource("shikimori", meta = DiscoveryMeta("wrong", emptyList(), null))
+        val anilist = MockTrendingSource("anilist", meta = aniMeta)
+
+        val composite = CompositeTrendingSource(
+            shikimori = shikimori,
+            mangadex = MockTrendingSource("mangadex"),
+            jikan = MockTrendingSource("jikan"),
+            anilist = anilist,
+            isRussianLocaleProvider = { true },
+        )
+
+        val result = composite.fetchMeta("Re:Zero", DiscoveryMediaType.NOVEL)
+        result shouldBe aniMeta
+        shikimori.fetchMetaCalled shouldBe false
+        anilist.fetchMetaCalled shouldBe true
+    }
+
+    @Test
     fun `fetchMeta returns metadata from available provider`() = runTest {
         val expectedMeta = DiscoveryMeta("Awesome story", listOf("Action", "Fantasy"), "Alt Title")
         val mangadex = MockTrendingSource("mangadex", meta = expectedMeta)

@@ -20,6 +20,20 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
+/** Варианты названия MangaDex-айтема (title map + altTitles en/ru) для проверки совпадения в fetchMeta. */
+internal fun mangaDexTitleCandidates(item: JsonObject): List<String?> {
+    val attributes = runCatching { item["attributes"]?.jsonObject }.getOrNull() ?: return emptyList()
+    val titleObj = runCatching { attributes["title"]?.jsonObject }.getOrNull()
+    val altTitles = runCatching { attributes["altTitles"]?.jsonArray?.mapNotNull { it.jsonObject } }.getOrNull()
+    return buildList {
+        titleObj?.values?.forEach { add(runCatching { it.jsonPrimitive.contentOrNull }.getOrNull()) }
+        altTitles?.forEach { alt ->
+            add(runCatching { alt["en"]?.jsonPrimitive?.contentOrNull }.getOrNull())
+            add(runCatching { alt["ru"]?.jsonPrimitive?.contentOrNull }.getOrNull())
+        }
+    }
+}
+
 internal fun parseMangaDexData(
     root: JsonObject,
     isRussianLocale: Boolean = false,
@@ -169,13 +183,14 @@ open class MangaDexTrendingSource(
             val url = "https://api.mangadex.org/manga?title=${URLEncoder.encode(
                 title,
                 "UTF-8",
-            )}&limit=1&includes[]=cover_art"
+            )}&limit=5&includes[]=cover_art"
             val response = clientProvider().newCall(GET(url, headers = headers))
                 .awaitSuccess()
                 .parseAs<JsonObject>(jsonProvider())
 
             val items = response["data"]?.jsonArray?.mapNotNull { runCatching { it.jsonObject }.getOrNull() }
-            val first = items?.firstOrNull() ?: return null
+            val first = items?.firstOrNull { item -> metaMatchesTitle(title, mangaDexTitleCandidates(item)) }
+                ?: return null
             val attributes = first["attributes"]?.jsonObject ?: return null
 
             val descObj = attributes["description"]?.jsonObject

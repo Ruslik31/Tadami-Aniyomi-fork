@@ -25,7 +25,9 @@ object DiscoveryCoverSource {
         val referer: String?,
     )
 
-    private val cache = mutableMapOf<String, Resolved?>()
+    // ConcurrentHashMap: resolve() зовётся с UI/Coil-потоков; null-значения
+    // (источник не найден) храним через Optional — CHM запрещает null.
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<Resolved>>()
 
     private fun okhttpHeadersToMap(headers: okhttp3.Headers): Map<String, String>? {
         val map = mutableMapOf<String, String>()
@@ -38,7 +40,7 @@ object DiscoveryCoverSource {
     internal fun resolve(mediaType: DiscoveryMediaType, provider: String?): Resolved? {
         if (provider == null) return null
         val key = mediaType.key + ":" + provider
-        if (cache.containsKey(key)) return cache[key]
+        cache[key]?.let { return it.orElse(null) }
         val resolved = when (mediaType) {
             DiscoveryMediaType.ANIME ->
                 Injekt.get<AnimeSourceManager>().getOnlineSources()
@@ -59,7 +61,7 @@ object DiscoveryCoverSource {
                         )
                     }
         }
-        cache[key] = resolved
+        cache[key] = java.util.Optional.ofNullable(resolved)
         return resolved
     }
 

@@ -117,17 +117,10 @@ class CompositeTrendingSource(
                     "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
                 )
             }
-            DiscoveryMediaType.NOVEL -> if (isRu) {
-                listOf(
-                    "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
-                    "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
-                )
-            } else {
-                listOf(
-                    "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
-                    "shikimori" to suspend { shikimori.fetchMeta(title, mediaType) },
-                )
-            }
+            // Shikimori для NOVEL всегда null (нет ranobe в meta-поиске) — не тратим вызов.
+            DiscoveryMediaType.NOVEL -> listOf(
+                "anilist" to suspend { anilist.fetchMeta(title, mediaType) },
+            )
         }
         for ((name, action) in providers) {
             try {

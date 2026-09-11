@@ -260,13 +260,14 @@ open class ShikimoriTrendingSource(
 
         return try {
             val endpoint = if (mediaType == DiscoveryMediaType.ANIME) "animes" else "mangas"
-            val searchUrl = "https://shikimori.one/api/$endpoint?search=${URLEncoder.encode(title, "UTF-8")}&limit=1"
+            val searchUrl = "https://shikimori.one/api/$endpoint?search=${URLEncoder.encode(title, "UTF-8")}&limit=5"
             ExternalApiThrottle.acquire(ExternalApiThrottle.Api.SHIKIMORI)
             val searchResults = clientProvider().newCall(GET(searchUrl, headers = headers))
                 .awaitSuccess()
                 .parseAs<List<ShikimoriMediaItem>>(jsonProvider())
 
-            val first = searchResults.firstOrNull() ?: return null
+            val first = searchResults.firstOrNull { metaMatchesTitle(title, listOf(it.name, it.russian)) }
+                ?: return null
             val detailUrl = "https://shikimori.one/api/$endpoint/${first.id}"
             ExternalApiThrottle.acquire(ExternalApiThrottle.Api.SHIKIMORI)
             val detail = clientProvider().newCall(GET(detailUrl, headers = headers))

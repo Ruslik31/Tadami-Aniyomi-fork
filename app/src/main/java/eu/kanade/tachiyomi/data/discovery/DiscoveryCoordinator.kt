@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.data.discovery
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -91,51 +90,8 @@ class DiscoveryCoordinator(
         )
     }
 
-    suspend fun buildFeed(context: DiscoveryBuildContext): DiscoveryFeed = supervisorScope {
-        val jobs = rowBuilders.map { builder ->
-            builder.rowType to async {
-                try {
-                    builder.build(context)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logcat { "[DiscoveryCoordinator] row ${builder.rowType} FAILED: ${e.message}" }
-                    null
-                }
-            }
-        }
-
-        val failed = mutableSetOf<DiscoveryRowType>()
-        val survivors = mutableMapOf<DiscoveryRowType, List<DiscoveryRowItem>>()
-
-        // Обход в порядке приоритета enum: LIKE > TASTE > TREND > SOURCE.
-        for (type in DiscoveryRowType.entries) {
-            val job = jobs.firstOrNull { it.first == type }?.second ?: continue
-            val items = job.await()
-            if (items == null) {
-                failed += type
-            } else {
-                survivors[type] = items
-            }
-        }
-
-        val excluded = context.libraryCleanTitles + context.historyCleanTitles + context.hiddenCleanTitles
-        val seen = mutableSetOf<String>()
-        val rows = mutableMapOf<DiscoveryRowType, List<DiscoveryRowItem>>()
-        for (type in DiscoveryRowType.entries) {
-            val items = survivors[type] ?: continue
-            val selected = selectRowItems(items, excluded, seen, context.recentCleanTitles)
-            selected.forEach { seen += it.cleanTitle }
-            rows[type] = selected
-        }
-
-        DiscoveryFeed(
-            mediaType = context.mediaType,
-            rows = rows,
-            failedRows = failed,
-            generatedAt = System.currentTimeMillis(),
-        )
-    }
+    suspend fun buildFeed(context: DiscoveryBuildContext): DiscoveryFeed =
+        streamFeed(context) { _, _ -> }
 
     private fun selectRowItems(
         items: List<DiscoveryRowItem>,

@@ -272,11 +272,11 @@ open class AniListTrendingSource(
             val formatArg = if (mediaType == DiscoveryMediaType.NOVEL) ", format: NOVEL" else ""
             val query = """
                 query (${'$'}search: String!, ${'$'}type: MediaType!) {
-                  Page(page: 1, perPage: 1) {
+                  Page(page: 1, perPage: 5) {
                     media(search: ${'$'}search, type: ${'$'}type$formatArg) {
                       description(asHtml: false)
                       genres
-                      title { english native }
+                      title { romaji english native }
                     }
                   }
                 }
@@ -292,11 +292,21 @@ open class AniListTrendingSource(
                 )
             }
             val page = post(payload)
-            val media = (
+            val mediaList = (
                 ((page["data"] as? JsonObject)?.get("Page") as? JsonObject)
                     ?.get("media") as? JsonArray
-                )?.firstOrNull() as? JsonObject
-                ?: return null
+                )?.mapNotNull { it as? JsonObject }.orEmpty()
+            val media = mediaList.firstOrNull { candidate ->
+                val t = candidate["title"] as? JsonObject
+                metaMatchesTitle(
+                    title,
+                    listOf(
+                        t?.get("romaji")?.jsonPrimitive?.contentOrNull,
+                        t?.get("english")?.jsonPrimitive?.contentOrNull,
+                        t?.get("native")?.jsonPrimitive?.contentOrNull,
+                    ),
+                )
+            } ?: return null
             val meta = DiscoveryMeta(
                 description = media["description"]?.jsonPrimitive?.contentOrNull
                     ?.replace(Regex("<[^>]*>"), "")
