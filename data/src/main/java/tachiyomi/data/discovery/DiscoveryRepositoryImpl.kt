@@ -4,6 +4,8 @@ import data.Discovery_suggestions
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import tachiyomi.data.handlers.manga.MangaDatabaseHandler
+import tachiyomi.domain.discovery.model.DiscoveryBlacklistEntry
+import tachiyomi.domain.discovery.model.DiscoveryHiddenEntry
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
@@ -106,6 +108,42 @@ class DiscoveryRepositoryImpl(
 
     override suspend fun clearBlacklist(mediaType: DiscoveryMediaType) {
         handler.await { db -> db.discovery_blacklist_tagsQueries.deleteAllByMedia(mediaType.key) }
+    }
+
+    override suspend fun getHiddenEntries(mediaType: DiscoveryMediaType): List<DiscoveryHiddenEntry> =
+        handler.awaitList { db ->
+            db.discovery_hiddenQueries.selectAllByMedia(mediaType.key) { _, clean_title, hidden_at ->
+                DiscoveryHiddenEntry(clean_title, hidden_at)
+            }
+        }
+
+    override suspend fun getBlacklistEntries(mediaType: DiscoveryMediaType): List<DiscoveryBlacklistEntry> =
+        handler.awaitList { db ->
+            db.discovery_blacklist_tagsQueries.selectAllByMedia(mediaType.key) { _, tag, added_at ->
+                DiscoveryBlacklistEntry(tag, added_at)
+            }
+        }
+
+    override suspend fun restoreHiddenEntries(
+        mediaType: DiscoveryMediaType,
+        entries: List<DiscoveryHiddenEntry>,
+    ) {
+        handler.await(inTransaction = true) { db ->
+            entries.forEach {
+                db.discovery_hiddenQueries.insertOrIgnore(mediaType.key, it.cleanTitle, it.hiddenAt)
+            }
+        }
+    }
+
+    override suspend fun restoreBlacklistEntries(
+        mediaType: DiscoveryMediaType,
+        entries: List<DiscoveryBlacklistEntry>,
+    ) {
+        handler.await(inTransaction = true) { db ->
+            entries.forEach {
+                db.discovery_blacklist_tagsQueries.insertOrIgnore(mediaType.key, it.tag, it.addedAt)
+            }
+        }
     }
 
     override suspend fun lastUpdatedAt(mediaType: DiscoveryMediaType): Long? =

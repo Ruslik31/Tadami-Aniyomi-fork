@@ -24,6 +24,7 @@ data class BackupOptions(
     val achievements: Boolean = true,
     val stats: Boolean = true,
     val reelsFavorites: Boolean = true,
+    val discoveryData: Boolean = true,
     val sisterAppCompatible: Boolean = false,
 ) {
 
@@ -51,6 +52,7 @@ data class BackupOptions(
         backupNovel,
         sisterAppCompatible,
         reelsFavorites,
+        discoveryData,
     )
 
     fun canCreate(): Boolean {
@@ -63,7 +65,8 @@ data class BackupOptions(
             sourceSettings ||
             achievements ||
             stats ||
-            reelsFavorites
+            reelsFavorites ||
+            discoveryData
     }
 
     companion object {
@@ -118,6 +121,11 @@ data class BackupOptions(
                 label = MR.strings.reels_favorites_title,
                 getter = BackupOptions::reelsFavorites,
                 setter = { options, enabled -> options.copy(reelsFavorites = enabled) },
+            ),
+            Entry(
+                label = AYMR.strings.backup_discovery_data,
+                getter = BackupOptions::discoveryData,
+                setter = { options, enabled -> options.copy(discoveryData = enabled) },
             ),
             Entry(
                 label = AYMR.strings.non_library_settings,
@@ -205,6 +213,7 @@ data class BackupOptions(
             backupNovel = array.getOrNull(16) ?: true,
             sisterAppCompatible = array.getOrNull(17) ?: false,
             reelsFavorites = array.getOrNull(18) ?: true,
+            discoveryData = array.getOrNull(19) ?: true,
         )
     }
 

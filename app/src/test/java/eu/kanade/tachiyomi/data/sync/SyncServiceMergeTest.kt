@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupAnime
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupChapter
+import eu.kanade.tachiyomi.data.backup.models.BackupDiscoveryHidden
+import eu.kanade.tachiyomi.data.backup.models.BackupDiscoveryTag
 import eu.kanade.tachiyomi.data.backup.models.BackupEpisode
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupNovel
@@ -229,6 +231,29 @@ class SyncServiceMergeTest {
         assertEquals(1, syncData.backup?.backupNovel?.size)
     }
 
+    @Test
+    fun `testMergeDiscoveryLists unions hidden titles and tags from both devices`() {
+        val mergedHidden = syncService.mergeDiscoveryHiddenPublic(
+            listOf(BackupDiscoveryHidden("anime", "local hide", 1L)),
+            listOf(
+                BackupDiscoveryHidden("anime", "local hide", 9L), // дубль — локальная запись выигрывает
+                BackupDiscoveryHidden("novel", "remote hide", 2L),
+            ),
+        )
+        assertEquals(2, mergedHidden.size)
+        assertEquals(1L, mergedHidden.first { it.cleanTitle == "local hide" }.hiddenAt)
+        assertEquals("novel", mergedHidden.first { it.cleanTitle == "remote hide" }.mediaType)
+
+        val mergedTags = syncService.mergeDiscoveryTagsPublic(
+            listOf(BackupDiscoveryTag("manga", "Гарем", 1L)),
+            listOf(
+                BackupDiscoveryTag("manga", "Гарем", 9L),
+                BackupDiscoveryTag("manga", "Трагедия", 2L),
+            ),
+        )
+        assertEquals(2, mergedTags.size)
+    }
+
     private class TestSyncService(
         context: Context,
         json: Json,
@@ -282,5 +307,15 @@ class SyncServiceMergeTest {
             localCategoriesList: List<BackupCategory>?,
             remoteCategoriesList: List<BackupCategory>?,
         ): List<BackupCategory> = mergeCategoriesLists(localCategoriesList, remoteCategoriesList)
+
+        fun mergeDiscoveryHiddenPublic(
+            localList: List<BackupDiscoveryHidden>?,
+            remoteList: List<BackupDiscoveryHidden>?,
+        ): List<BackupDiscoveryHidden> = mergeDiscoveryHiddenLists(localList, remoteList)
+
+        fun mergeDiscoveryTagsPublic(
+            localList: List<BackupDiscoveryTag>?,
+            remoteList: List<BackupDiscoveryTag>?,
+        ): List<BackupDiscoveryTag> = mergeDiscoveryTagLists(localList, remoteList)
     }
 }

@@ -39,5 +39,17 @@ data class DiscoverySuggestion(
     val createdAt: Long,
 )
 
+/** Строка `discovery_hidden` для backup (негативный сигнал пользователя). */
+data class DiscoveryHiddenEntry(
+    val cleanTitle: String,
+    val hiddenAt: Long,
+)
+
+/** Строка `discovery_blacklist_tags` для backup (теговый «не интересно»). */
+data class DiscoveryBlacklistEntry(
+    val tag: String,
+    val addedAt: Long,
+)
+
 fun normalizeDiscoveryTitle(raw: String): String =
     raw.trim().lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()

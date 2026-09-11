@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupAnime
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupChapter
+import eu.kanade.tachiyomi.data.backup.models.BackupDiscoveryHidden
+import eu.kanade.tachiyomi.data.backup.models.BackupDiscoveryTag
 import eu.kanade.tachiyomi.data.backup.models.BackupEpisode
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupNovel
@@ -114,6 +116,16 @@ abstract class SyncService(
             remoteSyncData.backup?.backupSourcePreferences,
         )
 
+        val mergedDiscoveryHiddenList = mergeDiscoveryHiddenLists(
+            localSyncData.backup?.backupDiscoveryHidden,
+            remoteSyncData.backup?.backupDiscoveryHidden,
+        )
+
+        val mergedDiscoveryTagList = mergeDiscoveryTagLists(
+            localSyncData.backup?.backupDiscoveryBlacklistTags,
+            remoteSyncData.backup?.backupDiscoveryBlacklistTags,
+        )
+
         val mergedBackup = Backup(
             backupManga = mergedMangaList,
             backupCategories = mergedMangaCategoriesList,
@@ -126,6 +138,8 @@ abstract class SyncService(
             backupNovel = mergedNovelList,
             backupNovelCategories = mergedNovelCategoriesList,
             backupNovelSources = mergedNovelSourcesList,
+            backupDiscoveryHidden = mergedDiscoveryHiddenList,
+            backupDiscoveryBlacklistTags = mergedDiscoveryTagList,
             isLegacy = false,
         )
 
@@ -134,6 +148,23 @@ abstract class SyncService(
             backup = mergedBackup,
         )
     }
+
+    /**
+     * Discovery «Для тебя»: скрытые тайтлы и теговый блэклист — аддитивные
+     * негативные сигналы; sync объединяет множества с обоих устройств
+     * (дубликаты гасятся по media+key, локальная запись выигрывает).
+     */
+    protected fun mergeDiscoveryHiddenLists(
+        localList: List<BackupDiscoveryHidden>?,
+        remoteList: List<BackupDiscoveryHidden>?,
+    ): List<BackupDiscoveryHidden> = (localList.orEmpty() + remoteList.orEmpty())
+        .distinctBy { it.mediaType to it.cleanTitle }
+
+    protected fun mergeDiscoveryTagLists(
+        localList: List<BackupDiscoveryTag>?,
+        remoteList: List<BackupDiscoveryTag>?,
+    ): List<BackupDiscoveryTag> = (localList.orEmpty() + remoteList.orEmpty())
+        .distinctBy { it.mediaType to it.tag }
 
     /**
      * Merges two lists of BackupManga objects, selecting the most recent version

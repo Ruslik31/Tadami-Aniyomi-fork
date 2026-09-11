@@ -43,6 +43,14 @@ class BackupOptionsTest {
         options.backupManga shouldBe true
         options.backupAnime shouldBe true
         options.backupNovel shouldBe true
+        options.discoveryData shouldBe true
+    }
+
+    @Test
+    fun `discoveryData flag round-trips through boolean array`() {
+        val options = BackupOptions(discoveryData = false)
+        BackupOptions.fromBooleanArray(options.asBooleanArray()).discoveryData shouldBe false
+        BackupOptions.fromBooleanArray(BackupOptions().asBooleanArray()).discoveryData shouldBe true
     }
 
     @Test

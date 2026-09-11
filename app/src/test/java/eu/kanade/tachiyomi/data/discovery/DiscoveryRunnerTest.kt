@@ -39,6 +39,23 @@ class DiscoveryRunnerTest {
         override suspend fun blacklistTag(mediaType: DiscoveryMediaType, tag: String) {}
         override suspend fun unblacklistTag(mediaType: DiscoveryMediaType, tag: String) {}
         override suspend fun clearBlacklist(mediaType: DiscoveryMediaType) {}
+        override suspend fun getHiddenEntries(
+            mediaType: DiscoveryMediaType,
+        ): List<tachiyomi.domain.discovery.model.DiscoveryHiddenEntry> = emptyList()
+
+        override suspend fun getBlacklistEntries(
+            mediaType: DiscoveryMediaType,
+        ): List<tachiyomi.domain.discovery.model.DiscoveryBlacklistEntry> = emptyList()
+
+        override suspend fun restoreHiddenEntries(
+            mediaType: DiscoveryMediaType,
+            entries: List<tachiyomi.domain.discovery.model.DiscoveryHiddenEntry>,
+        ) {}
+
+        override suspend fun restoreBlacklistEntries(
+            mediaType: DiscoveryMediaType,
+            entries: List<tachiyomi.domain.discovery.model.DiscoveryBlacklistEntry>,
+        ) {}
     }
 
     private class FakeSeedSources : DiscoverySeedSources {

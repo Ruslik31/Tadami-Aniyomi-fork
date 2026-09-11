@@ -1,6 +1,8 @@
 package tachiyomi.domain.discovery.repository
 
 import kotlinx.coroutines.flow.Flow
+import tachiyomi.domain.discovery.model.DiscoveryBlacklistEntry
+import tachiyomi.domain.discovery.model.DiscoveryHiddenEntry
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
 import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
@@ -21,4 +23,10 @@ interface DiscoveryRepository {
     suspend fun blacklistTag(mediaType: DiscoveryMediaType, tag: String)
     suspend fun unblacklistTag(mediaType: DiscoveryMediaType, tag: String)
     suspend fun clearBlacklist(mediaType: DiscoveryMediaType)
+
+    /** Backup (A): полные строки с таймстампами + идемпотентный батч-restore. */
+    suspend fun getHiddenEntries(mediaType: DiscoveryMediaType): List<DiscoveryHiddenEntry>
+    suspend fun getBlacklistEntries(mediaType: DiscoveryMediaType): List<DiscoveryBlacklistEntry>
+    suspend fun restoreHiddenEntries(mediaType: DiscoveryMediaType, entries: List<DiscoveryHiddenEntry>)
+    suspend fun restoreBlacklistEntries(mediaType: DiscoveryMediaType, entries: List<DiscoveryBlacklistEntry>)
 }

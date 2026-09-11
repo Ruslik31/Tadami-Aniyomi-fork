@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.data.backup.create.creators.AnimeExtensionRepoBackupC
 import eu.kanade.tachiyomi.data.backup.create.creators.AnimeExtensionStoreBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.AnimeSourcesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.CustomButtonBackupCreator
+import eu.kanade.tachiyomi.data.backup.create.creators.DiscoveryBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.ExtensionsBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.FeedBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
@@ -102,6 +103,7 @@ class BackupCreator(
     private val novelSeriesBackupCreator: NovelSeriesBackupCreator = NovelSeriesBackupCreator(),
     private val feedBackupCreator: FeedBackupCreator = FeedBackupCreator(),
     private val reelsFavoritesBackupCreator: ReelsFavoritesBackupCreator = ReelsFavoritesBackupCreator(),
+    private val discoveryBackupCreator: DiscoveryBackupCreator = DiscoveryBackupCreator(),
     private val extensionsBackupCreator: ExtensionsBackupCreator = ExtensionsBackupCreator(context),
     private val achievementBackupCreator: AchievementBackupCreator = AchievementBackupCreator(),
     private val achievementHandler: AchievementHandler = Injekt.get(),
@@ -197,6 +199,15 @@ class BackupCreator(
                     emptyList()
                 }
             }
+            // Discovery «Для тебя»: скрытые тайтлы + теговый блэклист (Tadami-only, не для sister-экспорта).
+            val backupDiscovery = BackupDiagnosticLog.measure(context, "collect_discovery") {
+                if (options.discoveryData && !options.sisterAppCompatible) {
+                    discoveryBackupCreator()
+                } else {
+                    emptyList<eu.kanade.tachiyomi.data.backup.models.BackupDiscoveryHidden>() to
+                        emptyList<eu.kanade.tachiyomi.data.backup.models.BackupDiscoveryTag>()
+                }
+            }
 
             val finalBackupManga = if (options.sisterAppCompatible) {
                 backupManga + backupNovel.map { it.toBackupManga() }
@@ -268,6 +279,8 @@ class BackupCreator(
                 } else {
                     backupReelsFavorites
                 },
+                backupDiscoveryHidden = if (options.sisterAppCompatible) emptyList() else backupDiscovery.first,
+                backupDiscoveryBlacklistTags = if (options.sisterAppCompatible) emptyList() else backupDiscovery.second,
             )
 
             val byteArray = BackupDiagnosticLog.measure(context, "serialize") {

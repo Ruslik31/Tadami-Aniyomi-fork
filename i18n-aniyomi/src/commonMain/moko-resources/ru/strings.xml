@@ -1833,6 +1833,7 @@
     <string name="pref_discovery_blacklist_tags_summary">Теговый уровень «не интересно»: подборки с этими жанрами исключаются</string>
     <string name="pref_discovery_blacklist_empty">Пока нет скрытых тегов</string>
     <string name="pref_discovery_blacklist_reset">Сбросить все теги</string>
+    <string name="backup_discovery_data">Скрытые тайтлы и теги «Для тебя»</string>
     <string name="pref_home_hero_mode">Вид главного баннера</string>
     <string name="pref_collage_rotation_interval">Интервал смены плиток</string>
     <string name="pref_collage_rotation_interval_0">Отключено</string>
