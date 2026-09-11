@@ -101,7 +101,7 @@ class DiscoveryTrendRowBuilderTest {
         val result = builder.build(testContext)
         result.size shouldBe 1
         result.first().title shouldBe "Source Fresh Novel"
-        result.first().reason shouldBe "current"
+        result.first().reason shouldBe "source"
         result.first().provider shouldBe "InkStory"
     }
 
@@ -131,6 +131,6 @@ class DiscoveryTrendRowBuilderTest {
         val result = builder.build(testContext)
         result.size shouldBe 1
         result.first().title shouldBe "Another Fresh Novel"
-        result.first().reason shouldBe "current"
+        result.first().reason shouldBe "source"
     }
 }

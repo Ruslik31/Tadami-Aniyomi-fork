@@ -22,6 +22,7 @@ object SuggestionSourceWeight {
     const val EXTERNAL_MAL: Double = 0.9
     const val EXTERNAL_MU: Double = 0.9
     const val EXTERNAL_NU: Double = 0.9
+    const val EXTERNAL_SHIKIMORI: Double = 0.9
     const val RELATED: Double = 0.8
     const val SEARCH_TITLE: Double = 0.6
     const val SEARCH_AUTHOR: Double = 0.4
@@ -34,6 +35,7 @@ object SuggestionSourceWeight {
         SuggestionReason.EXTERNAL_MAL -> EXTERNAL_MAL
         SuggestionReason.EXTERNAL_MU -> EXTERNAL_MU
         SuggestionReason.EXTERNAL_NU -> EXTERNAL_NU
+        SuggestionReason.EXTERNAL_SHIKIMORI -> EXTERNAL_SHIKIMORI
         SuggestionReason.SEARCH_TITLE -> SEARCH_TITLE
         SuggestionReason.SEARCH_AUTHOR -> SEARCH_AUTHOR
         SuggestionReason.SEARCH_GENRE -> SEARCH_GENRE

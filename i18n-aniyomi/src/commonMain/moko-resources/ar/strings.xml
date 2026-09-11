@@ -1715,7 +1715,6 @@
     <string name="aurora_help">المساعدة</string>
     <string name="aurora_statistics">الإحصائيات</string>
     <string name="aurora_achievements">الإنجازات</string>
-    <string name="aurora_more">المزيد</string>
     <string name="debug_app_update_preview">معاينة تحديث التطبيق</string>
     <string name="debug_app_update_preview_summary">فتح ورقة التحديث ببيانات إصدار وهمية</string>
     <string name="debug_updated_changelog_preview">معاينة سجل التغييرات المحدث</string>

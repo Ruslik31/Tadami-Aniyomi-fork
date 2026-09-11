@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.discovery
 
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
 import org.junit.Test
 import tachiyomi.domain.discovery.model.DiscoveryRowType
@@ -159,4 +160,60 @@ class DiscoveryMixTest {
         (tasteScore(listOf("Action", "Comedy"), profile) > tasteScore(listOf("Drama"), profile)) shouldBe true
         matchedGenres(listOf("Drama", "Action"), profile) shouldBe listOf("Drama", "Action")
     }
+
+    @Test
+    fun `expandGenreSet adds russian and english variants both ways`() {
+        val fromRu = expandGenreSet(listOf("Фэнтези"))
+        fromRu shouldContain "фэнтези"
+        fromRu shouldContain "fantasy"
+
+        val fromEn = expandGenreSet(listOf("Action"))
+        fromEn shouldContain "action"
+        fromEn shouldContain "экшен"
+        fromEn shouldContain "боевик"
+    }
+
+    @Test
+    fun `taste matching works across russian profile and english item genres`() {
+        val profile = listOf("Фэнтези" to 3.0, "Экшен" to 2.0)
+        tasteScore(listOf("Fantasy", "Action", "Comedy"), profile) shouldBe 5.0
+        tasteScore(listOf("Comedy"), profile) shouldBe 0.0
+        // обоснование — в spelling профиля (язык библиотеки пользователя)
+        matchedGenres(listOf("Fantasy", "Comedy"), profile) shouldBe listOf("Фэнтези")
+        matchedGenres(listOf("action"), profile) shouldBe listOf("Экшен")
+    }
+
+    @Test
+    fun `dedupeCrossRow keeps higher priority row for stale duplicates`() {
+        val items = listOf(
+            dbSuggestion(DiscoveryRowType.TREND, "Solo Leveling"),
+            dbSuggestion(DiscoveryRowType.LIKE, "Solo Leveling"),
+            dbSuggestion(DiscoveryRowType.LIKE, "Unique Like", position = 1),
+            dbSuggestion(DiscoveryRowType.SOURCE, "Unique Like"),
+        )
+        val out = dedupeCrossRow(items)
+        out.map { it.rowType to it.title } shouldBe listOf(
+            DiscoveryRowType.LIKE to "Solo Leveling",
+            DiscoveryRowType.LIKE to "Unique Like",
+        )
+    }
+
+    private fun dbSuggestion(
+        row: DiscoveryRowType,
+        title: String,
+        position: Long = 0,
+    ) = tachiyomi.domain.discovery.model.DiscoverySuggestion(
+        id = position,
+        mediaType = tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME,
+        rowType = row,
+        title = title,
+        cleanTitle = title.lowercase(),
+        coverUrl = null,
+        reason = null,
+        seedTitle = null,
+        provider = "p",
+        score = 0.0,
+        position = position,
+        createdAt = 0L,
+    )
 }

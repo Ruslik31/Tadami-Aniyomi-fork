@@ -16,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -30,6 +31,9 @@ import uy.kohesive.injekt.api.get
 
 class AniListRecommendationSource(
     override val mediaType: SuggestionMediaType,
+    private val nsfwFilterProvider: () -> Boolean = {
+        eu.kanade.tachiyomi.data.discovery.discoveryNsfwFilterEnabled()
+    },
 ) : RecommendationPagingSource() {
 
     override val name: String = "AniList"
@@ -103,6 +107,7 @@ class AniListRecommendationSource(
                                         id
                                         type
                                         format
+                                        isAdult
                                         siteUrl
                                         title { romaji english native }
                                         coverImage { large }
@@ -266,11 +271,16 @@ class AniListRecommendationSource(
             val filteredTypeCount = intArrayOf(0)
             val edges = bestBaseMedia.first["recommendations"]?.jsonObject
                 ?.get("edges")?.jsonArray ?: emptyList()
+            val dropAdult = nsfwFilterProvider()
 
             edges.mapNotNull { edge ->
                 val rec = edge.jsonObject["node"]?.jsonObject
                     ?.get("mediaRecommendation")?.takeIf { it is JsonObject }?.jsonObject
                     ?: return@mapNotNull null
+
+                if (dropAdult && rec["isAdult"]?.jsonPrimitive?.booleanOrNull == true) {
+                    return@mapNotNull null
+                }
 
                 val recId = rec["id"]?.jsonPrimitive?.contentOrNull
                 val recType = rec["type"]?.jsonPrimitive?.contentOrNull
@@ -347,6 +357,7 @@ class AniListRecommendationSource(
                                         id
                                         type
                                         format
+                                        isAdult
                                         siteUrl
                                         title { romaji english native }
                                         coverImage { large }

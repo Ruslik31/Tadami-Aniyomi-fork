@@ -91,9 +91,6 @@ import eu.kanade.tachiyomi.data.discovery.interleaveMix
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionReason
 import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
-import eu.kanade.tachiyomi.ui.discovery.BadgeColorKind
-import eu.kanade.tachiyomi.ui.discovery.DiscoveryBadge
-import eu.kanade.tachiyomi.ui.discovery.badgeColor
 import eu.kanade.tachiyomi.ui.discovery.discoveryCoverData
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -148,9 +145,14 @@ internal fun discoveryReasonText(
     nextSeasonTemplate: String,
 ): String? = when (item.rowType) {
     DiscoveryRowType.LIKE -> item.seedTitle?.let { similarTemplate.replace("%1\$s", it) }
-    DiscoveryRowType.TREND -> if (item.reasonPayload == "next") nextSeasonTemplate else trendTemplate
-    DiscoveryRowType.TASTE -> item.reasonPayload
-    DiscoveryRowType.SOURCE -> null
+    DiscoveryRowType.TREND -> when (item.reasonPayload) {
+        "next" -> nextSeasonTemplate
+        // Тайтлы из каталога источника (novel-first path и fallback) — честно подписываем источником.
+        "source" -> item.provider
+        else -> trendTemplate
+    }
+    DiscoveryRowType.TASTE -> item.reasonPayload?.takeIf { it.isNotBlank() }
+    DiscoveryRowType.SOURCE -> item.provider
 }
 
 /**
@@ -191,11 +193,12 @@ internal fun HomeHubDiscoveryItem.toSuggestionItem(): SuggestionItem = Suggestio
         DiscoveryMediaType.MANGA -> SuggestionMediaType.MANGA
         DiscoveryMediaType.NOVEL -> SuggestionMediaType.NOVEL
     },
-    reason = when (provider) {
+    reason = when (provider.lowercase()) {
         "anilist" -> SuggestionReason.EXTERNAL_ANILIST
-        "mal" -> SuggestionReason.EXTERNAL_MAL
+        "myanimelist", "mal" -> SuggestionReason.EXTERNAL_MAL
         "mangaupdates" -> SuggestionReason.EXTERNAL_MU
         "novelupdates" -> SuggestionReason.EXTERNAL_NU
+        "shikimori" -> SuggestionReason.EXTERNAL_SHIKIMORI
         else -> SuggestionReason.SEARCH_TITLE
     },
 )
@@ -222,18 +225,6 @@ internal fun HomeHubSection.toDiscoveryMediaType(): DiscoveryMediaType = when (t
     HomeHubSection.Anime -> DiscoveryMediaType.ANIME
     HomeHubSection.Manga -> DiscoveryMediaType.MANGA
     HomeHubSection.Novel -> DiscoveryMediaType.NOVEL
-}
-
-/** Микро-бейдж сигнала для home-карточки (маппинг HomeHubDiscoveryItem → бейдж). */
-internal fun discoveryBadgeOf(item: HomeHubDiscoveryItem): DiscoveryBadge? = when (item.rowType) {
-    DiscoveryRowType.TASTE -> DiscoveryBadge(AYMR.strings.for_you_badge_taste, BadgeColorKind.TASTE)
-    DiscoveryRowType.TREND ->
-        DiscoveryBadge(
-            if (item.reasonPayload == "next") AYMR.strings.for_you_badge_season else AYMR.strings.for_you_badge_trend,
-            BadgeColorKind.FRESH,
-        )
-    DiscoveryRowType.SOURCE -> DiscoveryBadge(AYMR.strings.for_you_badge_source, BadgeColorKind.SOURCE)
-    DiscoveryRowType.LIKE -> null
 }
 
 internal data class HybridDiscoveryStripLayoutSpec(
@@ -490,7 +481,99 @@ private fun discoveryReasonOrNull(item: HomeHubDiscoveryItem): String? {
     val similarTemplate = stringResource(AYMR.strings.for_you_reason_similar)
     val trendTemplate = stringResource(AYMR.strings.for_you_reason_trending)
     val nextTemplate = stringResource(AYMR.strings.for_you_reason_season_next)
-    return discoveryReasonText(item, similarTemplate, trendTemplate, nextTemplate).orEmpty()
+    return discoveryReasonText(item, similarTemplate, trendTemplate, nextTemplate)
+}
+
+/** Круглая кнопка обновления ленты (общая для заголовка ForYouSection и Hybrid-полосы). */
+@Composable
+private fun DiscoveryRefreshIconButton(isRefreshing: Boolean, onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    val appHaptics = LocalAppHaptics.current
+    val rotationAnim = rememberInfiniteTransition(label = "discovery_refresh_rot")
+    val rotationAngle by if (isRefreshing) {
+        rotationAnim.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "refresh_angle",
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
+
+    val refreshRimBrush = remember(colors) {
+        if (colors.isEInk) {
+            SolidColor(colors.divider)
+        } else {
+            Brush.verticalGradient(
+                listOf(
+                    if (colors.isDark) {
+                        Color.White.copy(
+                            alpha = 0.18f,
+                        )
+                    } else {
+                        Color.White.copy(alpha = 0.50f)
+                    },
+                    Color.Transparent,
+                ),
+            )
+        }
+    }
+    val refreshTintBrush = remember(colors) {
+        if (colors.isEInk) {
+            SolidColor(Color.Transparent)
+        } else {
+            Brush.verticalGradient(
+                listOf(
+                    if (colors.isDark) {
+                        Color.White.copy(
+                            alpha = 0.08f,
+                        )
+                    } else {
+                        Color.White.copy(alpha = 0.20f)
+                    },
+                    Color.Transparent,
+                ),
+            )
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(Color.Transparent)
+            .border(
+                1.dp,
+                refreshRimBrush,
+                CircleShape,
+            )
+            .background(
+                brush = refreshTintBrush,
+                shape = CircleShape,
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = ripple(bounded = false, radius = 16.dp),
+                onClick = {
+                    appHaptics.tap()
+                    onClick()
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.Refresh,
+            contentDescription = stringResource(AYMR.strings.for_you_refresh),
+            tint = if (colors.isDark && !colors.isEInk) colors.accent else colors.textPrimary,
+            modifier = Modifier
+                .size(16.dp)
+                .graphicsLayer { rotationZ = rotationAngle },
+        )
+    }
 }
 
 /** Тизер-секция «Для тебя» на Home Hub: заголовок + «Ещё» + горизонтальный рельс карточек. */
@@ -501,6 +584,8 @@ internal fun ForYouSection(
     onMoreClick: () -> Unit,
     onItemClick: (HomeHubDiscoveryItem) -> Unit,
     onLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
+    isRefreshing: Boolean = false,
+    onRefreshClick: (() -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
@@ -535,12 +620,18 @@ internal fun ForYouSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                stringResource(AYMR.strings.aurora_for_you),
-                color = colors.textPrimary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(AYMR.strings.aurora_for_you),
+                    color = colors.textPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                )
+                if (onRefreshClick != null) {
+                    Spacer(Modifier.width(10.dp))
+                    DiscoveryRefreshIconButton(isRefreshing = isRefreshing, onClick = onRefreshClick)
+                }
+            }
             Text(
                 stringResource(AYMR.strings.aurora_more),
                 color = colors.accent,
@@ -650,91 +741,7 @@ internal fun HybridDiscoveryStrip(
                 )
                 if (onRefreshClick != null) {
                     Spacer(Modifier.width(10.dp))
-                    val rotationAnim = rememberInfiniteTransition(label = "hybrid_refresh_rot")
-                    val rotationAngle by if (isRefreshing) {
-                        rotationAnim.animateFloat(
-                            initialValue = 0f,
-                            targetValue = 360f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(durationMillis = 1000, easing = LinearEasing),
-                                repeatMode = RepeatMode.Restart,
-                            ),
-                            label = "refresh_angle",
-                        )
-                    } else {
-                        remember { mutableFloatStateOf(0f) }
-                    }
-
-                    val refreshRimBrush = remember(colors) {
-                        if (colors.isEInk) {
-                            SolidColor(colors.divider)
-                        } else {
-                            Brush.verticalGradient(
-                                listOf(
-                                    if (colors.isDark) {
-                                        Color.White.copy(
-                                            alpha = 0.18f,
-                                        )
-                                    } else {
-                                        Color.White.copy(alpha = 0.50f)
-                                    },
-                                    Color.Transparent,
-                                ),
-                            )
-                        }
-                    }
-                    val refreshTintBrush = remember(colors) {
-                        if (colors.isEInk) {
-                            SolidColor(Color.Transparent)
-                        } else {
-                            Brush.verticalGradient(
-                                listOf(
-                                    if (colors.isDark) {
-                                        Color.White.copy(
-                                            alpha = 0.08f,
-                                        )
-                                    } else {
-                                        Color.White.copy(alpha = 0.20f)
-                                    },
-                                    Color.Transparent,
-                                ),
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color.Transparent)
-                            .border(
-                                1.dp,
-                                refreshRimBrush,
-                                CircleShape,
-                            )
-                            .background(
-                                brush = refreshTintBrush,
-                                shape = CircleShape,
-                            )
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = ripple(bounded = false, radius = 16.dp),
-                                onClick = {
-                                    appHaptics.tap()
-                                    onRefreshClick()
-                                },
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Filled.Refresh,
-                            contentDescription = stringResource(AYMR.strings.for_you_refresh),
-                            tint = if (colors.isDark && !colors.isEInk) colors.accent else colors.textPrimary,
-                            modifier = Modifier
-                                .size(16.dp)
-                                .graphicsLayer { rotationZ = rotationAngle },
-                        )
-                    }
+                    DiscoveryRefreshIconButton(isRefreshing = isRefreshing, onClick = onRefreshClick)
                 }
             }
             Text(

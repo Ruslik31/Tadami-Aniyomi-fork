@@ -3,9 +3,11 @@ package eu.kanade.tachiyomi.ui.discovery
 import android.content.Context
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.tachiyomi.data.discovery.DiscoveryLibraryAdder
 import eu.kanade.tachiyomi.data.discovery.DiscoveryRowItem
 import eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob
+import eu.kanade.tachiyomi.data.discovery.dedupeCrossRow
 import eu.kanade.tachiyomi.data.discovery.interleaveMix
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionReason
@@ -39,7 +41,17 @@ data class DiscoveryFeedUiState(
     // открывает каталог источника/глобальный поиск вместо тупика.
     val searchFallbackItem: DiscoverySuggestion? = null,
     val addingTitles: Set<String> = emptySet(),
+    // Ряды, упавшие при последней генерации: в ленте показан устаревший кэш —
+    // surfaced баннером вместо молчаливой стужи.
+    val failedRows: Set<DiscoveryRowType> = emptySet(),
 )
+
+/** CSV ключей упавших рядов из prefs → набор [DiscoveryRowType]. */
+internal fun parseFailedRows(csv: String): Set<DiscoveryRowType> = csv
+    .splitToSequence(",")
+    .filter { it.isNotBlank() }
+    .mapNotNull { DiscoveryRowType.fromKey(it) }
+    .toSet()
 
 internal enum class FeedSignalTab { MIX, SIMILAR, TASTE, FRESH, SOURCE }
 
@@ -111,11 +123,12 @@ internal fun DiscoverySuggestion.toSuggestionItem(): SuggestionItem = Suggestion
         DiscoveryMediaType.MANGA -> SuggestionMediaType.MANGA
         DiscoveryMediaType.NOVEL -> SuggestionMediaType.NOVEL
     },
-    reason = when (provider) {
+    reason = when (provider.lowercase()) {
         "anilist" -> SuggestionReason.EXTERNAL_ANILIST
-        "mal" -> SuggestionReason.EXTERNAL_MAL
+        "myanimelist", "mal" -> SuggestionReason.EXTERNAL_MAL
         "mangaupdates" -> SuggestionReason.EXTERNAL_MU
         "novelupdates" -> SuggestionReason.EXTERNAL_NU
+        "shikimori" -> SuggestionReason.EXTERNAL_SHIKIMORI
         else -> SuggestionReason.SEARCH_TITLE
     },
 )
@@ -131,6 +144,7 @@ class DiscoveryFeedScreenModel(
     private val context: Context,
     private val repository: DiscoveryRepository = Injekt.get(),
     private val adder: DiscoveryLibraryAdder = DiscoveryLibraryAdder(),
+    private val preferences: DiscoveryPreferences = Injekt.get(),
 ) : StateScreenModel<DiscoveryFeedUiState>(DiscoveryFeedUiState(mediaType = initialMedia)) {
 
     private var observeJob: Job? = null
@@ -153,9 +167,14 @@ class DiscoveryFeedScreenModel(
                 repository.subscribe(mediaType),
                 refreshingFlow(),
                 repository.subscribeHidden(mediaType),
-            ) { all, refreshing, hidden -> Triple(all, refreshing, hidden) }
-                .collectLatest { (all, refreshing, hidden) ->
-                    val visible = all.filterNot { it.cleanTitle in hidden }
+                preferences.lastFailedRows(mediaType).changes(),
+            ) { all, refreshing, hidden, failedCsv ->
+                FeedSources(all, refreshing, hidden, failedCsv)
+            }
+                .collectLatest { (all, refreshing, hidden, failedCsv) ->
+                    // Кросс-рядовой дедуп: упавший ряд живёт старым кэшем и может
+                    // содержать тайтлы свежих рядов — приоритет у rowType.ordinal.
+                    val visible = dedupeCrossRow(all.filterNot { it.cleanTitle in hidden })
                     val rows = groupFeedRows(visible)
                     val mix = interleaveMix(rows.mapValues { (_, items) -> items.map { it.toRowItem() } })
                         .mapNotNull { row -> visible.firstOrNull { it.cleanTitle == row.cleanTitle } }
@@ -167,11 +186,19 @@ class DiscoveryFeedScreenModel(
                             lastUpdatedAt = all.maxOfOrNull { s -> s.createdAt },
                             isRefreshing = refreshing,
                             isLoading = false,
+                            failedRows = parseFailedRows(failedCsv),
                         )
                     }
                 }
         }
     }
+
+    private data class FeedSources(
+        val all: List<DiscoverySuggestion>,
+        val refreshing: Boolean,
+        val hidden: Set<String>,
+        val failedCsv: String,
+    )
 
     private fun DiscoverySuggestion.toRowItem() = DiscoveryRowItem(
         title = title,
@@ -188,8 +215,14 @@ class DiscoveryFeedScreenModel(
 
     fun refreshNow(): Long {
         val now = System.currentTimeMillis()
-        val remaining = remainingCooldownSeconds(state.value.lastUpdatedAt, now)
+        // Cooldown считается от нажатия (общий pref с home-рефрешем), а не от возраста контента:
+        // фоновое автообновление больше не блокирует ручное.
+        val remaining = remainingCooldownSeconds(
+            preferences.manualRefreshAt().get().takeIf { it > 0L },
+            now,
+        )
         if (remaining > 0L) return remaining
+        preferences.manualRefreshAt().set(now)
         DiscoveryUpdateJob.refreshNow(context, state.value.mediaType)
         return 0L
     }

@@ -19,10 +19,19 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
-internal fun parseJikanAnimePage(page: JsonObject, seasonLabel: String? = null): List<DiscoveryTrendingItem> =
+internal fun parseJikanAnimePage(
+    page: JsonObject,
+    seasonLabel: String? = null,
+    dropRx: Boolean = false,
+): List<DiscoveryTrendingItem> =
     page["data"]?.jsonArray
         ?.mapNotNull { runCatching { it.jsonObject }.getOrNull() }
         ?.mapNotNull { item ->
+            // NSFW-фильтр: MAL-рейтинг «Rx - Hentai» — единственный взрослый сигнал в выдаче Jikan.
+            if (dropRx) {
+                val rating = runCatching { item["rating"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                if (rating != null && rating.startsWith("Rx", ignoreCase = true)) return@mapNotNull null
+            }
             val title = item["title"]?.jsonPrimitive?.contentOrNull
                 ?: item["title_english"]?.jsonPrimitive?.contentOrNull
                 ?: return@mapNotNull null
@@ -53,6 +62,7 @@ internal fun parseJikanAnimePage(page: JsonObject, seasonLabel: String? = null):
 open class JikanTrendingSource(
     private val clientProvider: () -> OkHttpClient = { Injekt.get<NetworkHelper>().client },
     private val jsonProvider: () -> Json = { Injekt.get() },
+    private val nsfwFilterProvider: () -> Boolean = { discoveryNsfwFilterEnabled() },
 ) : DiscoveryTrendingSource {
 
     private val metaCache = mutableMapOf<String, DiscoveryMeta>()
@@ -78,11 +88,12 @@ open class JikanTrendingSource(
                 TrendSeason.NEXT -> "next"
                 else -> "current"
             }
+            ExternalApiThrottle.acquire(ExternalApiThrottle.Api.JIKAN)
             val response = clientProvider().newCall(GET(url))
                 .awaitSuccess()
                 .parseAs<JsonObject>(jsonProvider())
 
-            parseJikanAnimePage(response, seasonLabel)
+            parseJikanAnimePage(response, seasonLabel, dropRx = nsfwFilterProvider())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -100,6 +111,7 @@ open class JikanTrendingSource(
         if (mediaType != DiscoveryMediaType.ANIME || genres.isEmpty()) return emptyList()
         return try {
             val url = "https://api.jikan.moe/v4/top/anime?page=$page&limit=25&filter=bypopularity"
+            ExternalApiThrottle.acquire(ExternalApiThrottle.Api.JIKAN)
             val response = clientProvider().newCall(GET(url))
                 .awaitSuccess()
                 .parseAs<JsonObject>(jsonProvider())
@@ -118,6 +130,7 @@ open class JikanTrendingSource(
 
         return try {
             val url = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(title, "UTF-8")}&limit=1"
+            ExternalApiThrottle.acquire(ExternalApiThrottle.Api.JIKAN)
             val response = clientProvider().newCall(GET(url))
                 .awaitSuccess()
                 .parseAs<JsonObject>(jsonProvider())

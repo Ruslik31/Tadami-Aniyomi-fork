@@ -160,7 +160,7 @@ internal class MangaHomeHubScreenModel(
                 items.filterNot { it.cleanTitle in hidden } to (enabled to count)
             }
                 .collectLatest { (visible, prefs) ->
-                    cachedDiscoveryPool = visible
+                    cachedDiscoveryPool = eu.kanade.tachiyomi.data.discovery.dedupeCrossRow(visible)
                     val (enabled, count) = prefs
                     val teaser = if (enabled) {
                         composeTeaserItems(
@@ -194,6 +194,11 @@ internal class MangaHomeHubScreenModel(
         }
         discoveryOffset = 0
         if (state.value.isDiscoveryRefreshing) return
+        // Ручной рефреш делит общий cooldown с feed-экраном (5 мин от нажатия).
+        val now = System.currentTimeMillis()
+        val lastManual = discoveryPreferences.manualRefreshAt().get().takeIf { it > 0L }
+        if (eu.kanade.tachiyomi.ui.discovery.remainingCooldownSeconds(lastManual, now) > 0L) return
+        discoveryPreferences.manualRefreshAt().set(now)
         mutableState.update { it.copy(isDiscoveryRefreshing = true) }
         screenModelScope.launchIO {
             try {

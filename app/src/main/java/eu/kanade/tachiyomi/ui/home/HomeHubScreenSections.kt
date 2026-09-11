@@ -645,6 +645,8 @@ private fun HomeHubScreen(
                             onMoreClick = onForYouMoreClick,
                             onItemClick = { previewItem = it },
                             onLongClick = onDiscoveryLongClick,
+                            isRefreshing = state.isDiscoveryRefreshing,
+                            onRefreshClick = onDiscoveryRefreshClick,
                         )
                     }
                 }

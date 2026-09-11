@@ -24,6 +24,9 @@ enum class SuggestionReason {
     /** External recommendations sourced from NovelUpdates. */
     EXTERNAL_NU,
 
+    /** External similar-title recommendations sourced from Shikimori. */
+    EXTERNAL_SHIKIMORI,
+
     /** Matched via Tier 1 / Tier 2 (relaxed) title search in the active source. */
     SEARCH_TITLE,
 

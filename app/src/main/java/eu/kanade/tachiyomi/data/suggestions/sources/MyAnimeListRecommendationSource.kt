@@ -12,7 +12,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
@@ -41,12 +40,14 @@ class MyAnimeListRecommendationSource(
         val suggestions = try {
             val allSearchEntries = mutableListOf<JikanSearchEntry>()
 
-            for ((index, candidate) in seed.candidateTitles.take(3).withIndex()) {
-                if (index > 0) delay(350)
+            for (candidate in seed.candidateTitles.take(3)) {
                 try {
                     val searchUrl = "https://api.jikan.moe/v4/anime?q=${URLEncoder.encode(candidate, "UTF-8")}&limit=5"
                     logcat { "MAL suggestions: searching via $searchUrl" }
 
+                    eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.acquire(
+                        eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.Api.JIKAN,
+                    )
                     val searchResponse = client.newCall(GET(searchUrl))
                         .awaitSuccess()
                         .parseAs<JikanSearchResponse>(json)
@@ -76,8 +77,10 @@ class MyAnimeListRecommendationSource(
                 "[MAL] Base anime selected: '${bestMatch.title}' (ID=${bestMatch.malId}) for '${seed.primaryTitle}'"
             }
 
-            // Wait to respect rate limiting
-            delay(350)
+            // Единый rate-governor Jikan (60 rpm) вместо ручных delay.
+            eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.acquire(
+                eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.Api.JIKAN,
+            )
 
             val recUrl = "https://api.jikan.moe/v4/anime/${bestMatch.malId}/recommendations"
             logcat { "MAL suggestions: fetching recommendations from $recUrl" }

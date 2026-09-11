@@ -154,6 +154,33 @@ class DiscoveryRunnerTest {
     }
 
     @Test
+    fun `failed rows are reported through sink and cleared on success`() = runTest {
+        val captured = mutableListOf<Pair<DiscoveryMediaType, Set<DiscoveryRowType>>>()
+        val failingRunner = DiscoveryRunner(
+            repository = FakeRepository(),
+            preferences = DiscoveryPreferences(InMemoryPreferenceStore()),
+            seedSources = FakeSeedSources(),
+            coordinatorFactory = { DiscoveryCoordinator(fakeBuilders(failLike = true)) },
+            sourcePreferencesProvider = ::testSourcePrefs,
+            failedRowsSink = { media, rows -> captured += media to rows },
+        )
+        failingRunner.run(listOf(DiscoveryMediaType.NOVEL))
+        captured.single() shouldBe (DiscoveryMediaType.NOVEL to setOf(DiscoveryRowType.LIKE))
+
+        captured.clear()
+        val okRunner = DiscoveryRunner(
+            repository = FakeRepository(),
+            preferences = DiscoveryPreferences(InMemoryPreferenceStore()),
+            seedSources = FakeSeedSources(),
+            coordinatorFactory = { DiscoveryCoordinator(fakeBuilders(failLike = false)) },
+            sourcePreferencesProvider = ::testSourcePrefs,
+            failedRowsSink = { media, rows -> captured += media to rows },
+        )
+        okRunner.run(listOf(DiscoveryMediaType.NOVEL))
+        captured.single() shouldBe (DiscoveryMediaType.NOVEL to emptySet())
+    }
+
+    @Test
     fun `disabled rows are cleared in repository and builders omitted`() = runTest {
         val repo = FakeRepository()
         val prefs = DiscoveryPreferences(

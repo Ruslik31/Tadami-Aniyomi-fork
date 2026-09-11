@@ -8,7 +8,13 @@ import tachiyomi.domain.discovery.model.DiscoverySuggestion
 
 class HomeHubForYouCompositionTest {
 
-    private fun suggestion(row: DiscoveryRowType, title: String, position: Long, reason: String? = null) =
+    private fun suggestion(
+        row: DiscoveryRowType,
+        title: String,
+        position: Long,
+        reason: String? = null,
+        provider: String = "test",
+    ) =
         DiscoverySuggestion(
             id = position,
             mediaType = DiscoveryMediaType.NOVEL,
@@ -18,7 +24,7 @@ class HomeHubForYouCompositionTest {
             coverUrl = null,
             reason = reason,
             seedTitle = if (row == DiscoveryRowType.LIKE) "Seed" else null,
-            provider = "test",
+            provider = provider,
             score = 0.0,
             position = position,
             createdAt = 1L,
@@ -82,6 +88,28 @@ class HomeHubForYouCompositionTest {
         ).single()
         discoveryReasonText(trendNext, similar, "Trending now", "Next season") shouldBe
             "Next season"
+    }
+
+    @Test
+    fun `source row shows provider name and blank taste reason is hidden`() {
+        val similar = "Similar to “%1\$s”"
+        val source = composeTeaserItems(
+            listOf(suggestion(DiscoveryRowType.SOURCE, "S", 0, provider = "InkStory")),
+            6,
+        ).single()
+        discoveryReasonText(source, similar, "Trending now", "Next season") shouldBe "InkStory"
+
+        val trendFromSource = composeTeaserItems(
+            listOf(suggestion(DiscoveryRowType.TREND, "T", 0, reason = "source", provider = "RanobeHub")),
+            6,
+        ).single()
+        discoveryReasonText(trendFromSource, similar, "Trending now", "Next season") shouldBe "RanobeHub"
+
+        val tasteBlank = composeTeaserItems(
+            listOf(suggestion(DiscoveryRowType.TASTE, "X", 0, reason = "")),
+            6,
+        ).single()
+        discoveryReasonText(tasteBlank, similar, "Trending now", "Next season") shouldBe null
     }
 
     @Test

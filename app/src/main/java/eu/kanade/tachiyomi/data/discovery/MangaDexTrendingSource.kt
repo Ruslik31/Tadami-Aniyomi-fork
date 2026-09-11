@@ -74,12 +74,27 @@ internal fun parseMangaDexData(
     }
 }
 
+/**
+ * URL списка MangaDex с явным набором contentRating: NSFW-фильтр выключен —
+ * добавляем erotica/pornographic (MangaDex — единственный провайдер с честным
+ * серверным рейтингом контента).
+ */
+internal fun mangadexListUrl(orderParam: String, offset: Int, nsfwAllowed: Boolean): String {
+    val ratings = if (nsfwAllowed) {
+        "contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic"
+    } else {
+        "contentRating[]=safe&contentRating[]=suggestive"
+    }
+    return "https://api.mangadex.org/manga?limit=30&offset=$offset&$orderParam&includes[]=cover_art&$ratings"
+}
+
 open class MangaDexTrendingSource(
     private val clientProvider: () -> OkHttpClient = { Injekt.get<NetworkHelper>().client },
     private val jsonProvider: () -> Json = { Injekt.get() },
     private val isRussianLocaleProvider: () -> Boolean = {
         java.util.Locale.getDefault().language == "ru"
     },
+    private val nsfwAllowedProvider: () -> Boolean = { !discoveryNsfwFilterEnabled() },
 ) : DiscoveryTrendingSource {
 
     private val metaCache = mutableMapOf<String, DiscoveryMeta>()
@@ -103,8 +118,7 @@ open class MangaDexTrendingSource(
                 TrendSort.SCORE -> "order[rating]=desc"
                 TrendSort.POPULARITY -> "order[followedCount]=desc"
             }
-            val url = "https://api.mangadex.org/manga?limit=30&offset=$offset&$orderParam" +
-                "&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive"
+            val url = mangadexListUrl(orderParam, offset, nsfwAllowedProvider())
 
             val response = clientProvider().newCall(GET(url, headers = headers))
                 .awaitSuccess()
@@ -132,8 +146,7 @@ open class MangaDexTrendingSource(
                 TrendSort.SCORE -> "order[rating]=desc"
                 else -> "order[followedCount]=desc"
             }
-            val url = "https://api.mangadex.org/manga?limit=30&offset=$offset&$orderParam" +
-                "&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive"
+            val url = mangadexListUrl(orderParam, offset, nsfwAllowedProvider())
 
             val response = clientProvider().newCall(GET(url, headers = headers))
                 .awaitSuccess()

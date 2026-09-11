@@ -102,40 +102,27 @@ class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
             DiscoveryMediaType.MANGA -> {
                 val source = Injekt.get<MangaSourceManager>().getOrStub(sourceId) as? CatalogueSource
                     ?: return emptyList()
-                val filters = if (genres !=
-                    null
-                ) {
-                    withMangaGenreFilters(source.getFilterList(), genres)
-                } else {
-                    FilterList()
-                }
-                val page = if (filters.isEmpty()) source.getPopularManga(1) else source.getSearchManga(1, "", filters)
+                val filters = if (genres != null) withMangaGenreFilters(source.getFilterList(), genres) else null
+                // Жанровый запрос без применимого фильтра — честный пустой результат,
+                // а не popular-выдача под видом «твоего вкуса».
+                if (genres != null && filters == null) return emptyList()
+                val page = if (filters == null) source.getPopularManga(1) else source.getSearchManga(1, "", filters)
                 page.mangas.mapIndexed { idx, m -> rowItem(m.title, m.thumbnail_url, source.name, idx) }
             }
             DiscoveryMediaType.ANIME -> {
                 val source = Injekt.get<AnimeSourceManager>().getOrStub(sourceId) as? AnimeCatalogueSource
                     ?: return emptyList()
-                val filters = if (genres !=
-                    null
-                ) {
-                    withAnimeGenreFilters(source.getFilterList(), genres)
-                } else {
-                    AnimeFilterList()
-                }
-                val page = if (filters.isEmpty()) source.getPopularAnime(1) else source.getSearchAnime(1, "", filters)
+                val filters = if (genres != null) withAnimeGenreFilters(source.getFilterList(), genres) else null
+                if (genres != null && filters == null) return emptyList()
+                val page = if (filters == null) source.getPopularAnime(1) else source.getSearchAnime(1, "", filters)
                 page.animes.mapIndexed { idx, a -> rowItem(a.title, a.thumbnail_url, source.name, idx) }
             }
             DiscoveryMediaType.NOVEL -> {
                 val source = Injekt.get<NovelSourceManager>().getOrStub(sourceId) as? NovelCatalogueSource
                     ?: return emptyList()
-                val filters = if (genres !=
-                    null
-                ) {
-                    withNovelGenreFilters(source.getFilterList(), genres)
-                } else {
-                    NovelFilterList()
-                }
-                val page = if (filters.isEmpty()) source.getPopularNovels(1) else source.getSearchNovels(1, "", filters)
+                val filters = if (genres != null) withNovelGenreFilters(source.getFilterList(), genres) else null
+                if (genres != null && filters == null) return emptyList()
+                val page = if (filters == null) source.getPopularNovels(1) else source.getSearchNovels(1, "", filters)
                 page.novels.mapIndexed { idx, n -> rowItem(n.title, n.thumbnail_url, source.name, idx) }
             }
         }
@@ -157,41 +144,39 @@ class AppDiscoverySourceCatalog : DiscoverySourceCatalog {
         score = 1.0 - index * 0.01,
     )
 
-    private fun wantedSet(genres: List<String>) = genres.mapTo(HashSet()) { it.lowercase() }
-
-    private fun withMangaGenreFilters(filters: FilterList, genres: List<String>): FilterList {
-        val wanted = wantedSet(genres)
+    private fun withMangaGenreFilters(filters: FilterList, genres: List<String>): FilterList? {
+        val wanted = expandGenreSet(genres)
         val group = filters.filterIsInstance<Filter.Group<*>>()
             .firstOrNull { it.name.contains("genre", true) || it.name.contains("жанр", true) }
-            ?: return FilterList()
+            ?: return null
         val boxes = group.state.filterIsInstance<Filter.CheckBox>()
         val applied = boxes.count { box ->
-            (box.name.lowercase() in wanted).also { if (it) box.state = true }
+            (box.name.trim().lowercase() in wanted).also { if (it) box.state = true }
         }
-        return if (applied > 0) filters else FilterList()
+        return if (applied > 0) filters else null
     }
 
-    private fun withAnimeGenreFilters(filters: AnimeFilterList, genres: List<String>): AnimeFilterList {
-        val wanted = wantedSet(genres)
+    private fun withAnimeGenreFilters(filters: AnimeFilterList, genres: List<String>): AnimeFilterList? {
+        val wanted = expandGenreSet(genres)
         val group = filters.filterIsInstance<AnimeFilter.Group<*>>()
             .firstOrNull { it.name.contains("genre", true) || it.name.contains("жанр", true) }
-            ?: return AnimeFilterList()
+            ?: return null
         val boxes = group.state.filterIsInstance<AnimeFilter.CheckBox>()
         val applied = boxes.count { box ->
-            (box.name.lowercase() in wanted).also { if (it) box.state = true }
+            (box.name.trim().lowercase() in wanted).also { if (it) box.state = true }
         }
-        return if (applied > 0) filters else AnimeFilterList()
+        return if (applied > 0) filters else null
     }
 
-    private fun withNovelGenreFilters(filters: NovelFilterList, genres: List<String>): NovelFilterList {
-        val wanted = wantedSet(genres)
+    private fun withNovelGenreFilters(filters: NovelFilterList, genres: List<String>): NovelFilterList? {
+        val wanted = expandGenreSet(genres)
         val group = filters.filterIsInstance<NovelFilter.Group<*>>()
             .firstOrNull { it.name.contains("genre", true) || it.name.contains("жанр", true) }
-            ?: return NovelFilterList()
+            ?: return null
         val boxes = group.state.filterIsInstance<NovelFilter.CheckBox>()
         val applied = boxes.count { box ->
-            (box.name.lowercase() in wanted).also { if (it) box.state = true }
+            (box.name.trim().lowercase() in wanted).also { if (it) box.state = true }
         }
-        return if (applied > 0) filters else NovelFilterList()
+        return if (applied > 0) filters else null
     }
 }

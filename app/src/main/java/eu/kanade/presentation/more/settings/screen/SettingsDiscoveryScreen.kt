@@ -48,6 +48,7 @@ object SettingsDiscoveryScreen : SearchableSettings {
         var showResetHiddenDialog by remember { mutableStateOf(false) }
 
         val discoveryPreferences = remember { Injekt.get<DiscoveryPreferences>() }
+        val sourcePreferences = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>() }
 
         val enabled by discoveryPreferences.discoveryEnabled().collectAsStateWithLifecycle()
         val rowLike by discoveryPreferences.rowLikeEnabled().collectAsStateWithLifecycle()
@@ -102,6 +103,14 @@ object SettingsDiscoveryScreen : SearchableSettings {
                                 DiscoveryUpdateJob.setupTask(context)
                                 true
                             },
+                        ),
+                    )
+                    add(
+                        Preference.PreferenceItem.SwitchPreference(
+                            preference = discoveryPreferences.filterNsfw(),
+                            title = stringResource(AYMR.strings.pref_discovery_nsfw_filter),
+                            subtitle = stringResource(AYMR.strings.pref_discovery_nsfw_filter_summary),
+                            enabled = enabled,
                         ),
                     )
                     add(
@@ -214,6 +223,24 @@ object SettingsDiscoveryScreen : SearchableSettings {
                     Preference.PreferenceItem.SwitchPreference(
                         preference = discoveryPreferences.seedAdded(),
                         title = stringResource(AYMR.strings.pref_discovery_seed_added),
+                        enabled = enabled && rowLike,
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = sourcePreferences.suggestionsUseShikimori(),
+                        title = stringResource(AYMR.strings.pref_discovery_provider_shikimori),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_provider_shikimori_summary),
+                        enabled = enabled && rowLike,
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = sourcePreferences.suggestionsUseMangaUpdatesNovel(),
+                        title = stringResource(AYMR.strings.pref_discovery_provider_mangaupdates),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_provider_mangaupdates_summary),
+                        enabled = enabled && rowLike,
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = sourcePreferences.suggestionsUseNovelUpdates(),
+                        title = stringResource(AYMR.strings.pref_discovery_provider_novelupdates),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_provider_novelupdates_summary),
                         enabled = enabled && rowLike,
                     ),
                 ),

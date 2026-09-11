@@ -133,16 +133,68 @@ internal fun buildTasteProfile(
         .map { it.key to it.value }
 }
 
-/** Скор кандидата по профилю вкуса: сумма весов совпавших жанров. */
-internal fun tasteScore(itemGenres: List<String>, profile: List<Pair<String, Double>>): Double {
-    val weights = profile.toMap()
-    return itemGenres.sumOf { weights[it] ?: 0.0 }
+/**
+ * Lowercase-множество имён жанров плюс RU↔EN переводы (карта
+ * [eu.kanade.tachiyomi.data.suggestions.MultilingualQueryHelper.getGenreTranslations]):
+ * профиль вкуса строится из жанров библиотеки (часто русских), а теги внешних
+ * провайдеров — английские.
+ */
+internal fun expandGenreSet(genres: List<String>): Set<String> {
+    val out = mutableSetOf<String>()
+    genres.forEach { genre ->
+        val key = genre.trim().lowercase()
+        if (key.isEmpty()) return@forEach
+        out += key
+        eu.kanade.tachiyomi.data.suggestions.MultilingualQueryHelper.getGenreTranslations(genre).forEach { variant ->
+            val v = variant.trim().lowercase()
+            if (v.isNotEmpty()) out += v
+        }
+    }
+    return out
 }
 
-/** Жанры кандидата, совпавшие с профилем (топ-2 для обоснования). */
+private fun genreVariants(genre: String): Set<String> = expandGenreSet(listOf(genre))
+
+/** Веса профиля, развёрнутые по всем языковым вариантам каждого жанра. */
+internal fun expandedTasteWeights(profile: List<Pair<String, Double>>): Map<String, Double> {
+    val map = mutableMapOf<String, Double>()
+    profile.forEach { (genre, weight) ->
+        genreVariants(genre).forEach { variant ->
+            map[variant] = maxOf(map[variant] ?: 0.0, weight)
+        }
+    }
+    return map
+}
+
+/** Скор кандидата по профилю вкуса: сумма весов совпавших жанров с учётом RU↔EN переводов. */
+internal fun tasteScore(itemGenres: List<String>, profile: List<Pair<String, Double>>): Double {
+    val weights = expandedTasteWeights(profile)
+    return itemGenres.mapTo(HashSet()) { it.trim().lowercase() }
+        .sumOf { weights[it] ?: 0.0 }
+}
+
+/**
+ * Жанры кандидата, совпавшие с профилем (топ-2 для обоснования).
+ * Spelling — из профиля (язык библиотеки пользователя), порядок — по жанрам кандидата.
+ */
 internal fun matchedGenres(itemGenres: List<String>, profile: List<Pair<String, Double>>): List<String> {
-    val keys = profile.mapTo(HashSet()) { it.first }
-    return itemGenres.filter { it in keys }.take(2)
+    return itemGenres.mapNotNull { itemGenre ->
+        val key = itemGenre.trim().lowercase()
+        if (key.isEmpty()) return@mapNotNull null
+        profile.firstOrNull { (genre, _) -> key in genreVariants(genre) }?.first
+    }.distinct().take(2)
 }
 
 private const val DAY_MS = 24L * 60 * 60 * 1000
+
+/**
+ * Кросс-рядовой дедуп по cleanTitle: приоритет = [DiscoveryRowType.ordinal]
+ * (LIKE > TASTE > TREND > SOURCE). Упавший ряд сохраняет устаревший кэш, и тот же
+ * тайтл может появиться в свежем ряду другого типа — оставляем копию приоритетного ряда.
+ * Сортировка стабильна: порядок position внутри ряда сохраняется.
+ */
+internal fun dedupeCrossRow(
+    items: List<tachiyomi.domain.discovery.model.DiscoverySuggestion>,
+): List<tachiyomi.domain.discovery.model.DiscoverySuggestion> = items
+    .sortedBy { it.rowType.ordinal }
+    .distinctBy { it.cleanTitle }

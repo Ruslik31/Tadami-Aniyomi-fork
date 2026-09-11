@@ -90,7 +90,7 @@ class DiscoveryTrendRowBuilder(
                 catalog.latest(context.mediaType, context.sourceId, page = context.pageOffset)
             }.getOrNull().orEmpty().map { item ->
                 item.copy(
-                    reason = "current",
+                    reason = "source",
                     score = 0.0,
                 )
             }
@@ -111,7 +111,7 @@ class DiscoveryTrendRowBuilder(
                 title = item.title,
                 cleanTitle = item.cleanTitle,
                 coverUrl = item.coverUrl,
-                // Payload "current"/"next"/null — шаблон строки выбирается на рендере.
+                // Payload "current"/"next"/"source"/null — шаблон строки выбирается на рендере.
                 reason = item.seasonLabel,
                 seedTitle = null,
                 provider = item.provider,
@@ -131,7 +131,7 @@ class DiscoveryTrendRowBuilder(
                 catalog.latest(context.mediaType, sourceId, page = context.pageOffset)
             }.getOrNull().orEmpty().map { item ->
                 item.copy(
-                    reason = "current",
+                    reason = "source",
                     score = 0.0,
                 )
             }

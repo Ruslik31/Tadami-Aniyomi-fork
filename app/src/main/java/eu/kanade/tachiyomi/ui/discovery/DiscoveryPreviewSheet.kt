@@ -56,7 +56,6 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
-import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.components.AuroraCoverPlaceholderVariant
 import eu.kanade.presentation.components.buildAuroraCoverImageRequest
 import eu.kanade.presentation.components.rememberCoverReloadTick
@@ -74,32 +73,6 @@ import tachiyomi.domain.discovery.model.DiscoverySuggestion
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.LocalAppHaptics
-
-internal enum class BadgeColorKind { TASTE, FRESH, SOURCE }
-
-internal data class DiscoveryBadge(val textRes: StringResource, val colorKind: BadgeColorKind)
-
-/** Микро-бейдж сигнала для обложки: solid-пилюля по типу сигнала (прототип P3, V1). */
-internal fun discoveryBadge(item: DiscoverySuggestion): DiscoveryBadge? = when (item.rowType) {
-    DiscoveryRowType.TASTE -> DiscoveryBadge(AYMR.strings.for_you_badge_taste, BadgeColorKind.TASTE)
-    DiscoveryRowType.TREND ->
-        DiscoveryBadge(
-            if (item.reason == "next") AYMR.strings.for_you_badge_season else AYMR.strings.for_you_badge_trend,
-            BadgeColorKind.FRESH,
-        )
-    DiscoveryRowType.SOURCE -> DiscoveryBadge(AYMR.strings.for_you_badge_source, BadgeColorKind.SOURCE)
-    DiscoveryRowType.LIKE -> null
-}
-
-@Composable
-internal fun badgeColor(kind: BadgeColorKind): androidx.compose.ui.graphics.Color {
-    val colors = AuroraTheme.colors
-    return when (kind) {
-        BadgeColorKind.TASTE -> colors.gradientPurple
-        BadgeColorKind.FRESH -> colors.progressCyan
-        BadgeColorKind.SOURCE -> colors.accent
-    }
-}
 
 /**
  * Aurora Preview Bottom Sheet (прототип P3, V1): матовый лист с обложкой в ореоли,

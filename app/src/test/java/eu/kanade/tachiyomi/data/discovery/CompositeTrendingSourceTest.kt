@@ -153,6 +153,57 @@ class CompositeTrendingSourceTest {
     }
 
     @Test
+    fun `genre queries prefer Shikimori and never call MangaDex for manga`() = runTest {
+        val shikiItem = DiscoveryTrendingItem(
+            "Frieren",
+            "frieren",
+            null,
+            1L,
+            null,
+            genres = listOf("Fantasy"),
+            provider = "shikimori_trend",
+        )
+        val shikimori = MockTrendingSource("shikimori", items = listOf(shikiItem))
+        val mangadex = MockTrendingSource(
+            "mangadex",
+            items = listOf(DiscoveryTrendingItem("MD", "md", null, 0L, null, provider = "mangadex_trend")),
+        )
+        val anilist = MockTrendingSource("anilist")
+
+        val composite = CompositeTrendingSource(
+            shikimori = shikimori,
+            mangadex = mangadex,
+            jikan = MockTrendingSource("jikan"),
+            anilist = anilist,
+        )
+
+        val result = composite.fetchByGenres(DiscoveryMediaType.MANGA, listOf("Фэнтези"))
+        result.map { it.title } shouldBe listOf("Frieren")
+        shikimori.fetchCalled shouldBe true
+        mangadex.fetchCalled shouldBe false
+        anilist.fetchCalled shouldBe false
+    }
+
+    @Test
+    fun `genre queries fall back to AniList when Shikimori has no genre match`() = runTest {
+        val aniItem = DiscoveryTrendingItem("LN Title", "ln title", null, 2L, null, provider = "anilist_trend")
+        val shikimori = MockTrendingSource("shikimori", items = emptyList())
+        val anilist = MockTrendingSource("anilist", items = listOf(aniItem))
+
+        val composite = CompositeTrendingSource(
+            shikimori = shikimori,
+            mangadex = MockTrendingSource("mangadex"),
+            jikan = MockTrendingSource("jikan"),
+            anilist = anilist,
+        )
+
+        val result = composite.fetchByGenres(DiscoveryMediaType.ANIME, listOf("Экшен"))
+        result.first().provider shouldBe "anilist_trend"
+        shikimori.fetchCalled shouldBe true
+        anilist.fetchCalled shouldBe true
+    }
+
+    @Test
     fun `fetchMeta returns metadata from available provider`() = runTest {
         val expectedMeta = DiscoveryMeta("Awesome story", listOf("Action", "Fantasy"), "Alt Title")
         val mangadex = MockTrendingSource("mangadex", meta = expectedMeta)

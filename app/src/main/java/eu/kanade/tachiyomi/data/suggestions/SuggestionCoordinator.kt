@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.suggestions.sources.MangaUpdatesSimilarSource
 import eu.kanade.tachiyomi.data.suggestions.sources.MyAnimeListRecommendationSource
 import eu.kanade.tachiyomi.data.suggestions.sources.NovelUpdatesSimilarSource
 import eu.kanade.tachiyomi.data.suggestions.sources.RecommendationPagingSource
+import eu.kanade.tachiyomi.data.suggestions.sources.ShikimoriSimilarSource
 import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
 import eu.kanade.tachiyomi.data.suggestions.util.bestMatchScoreFor
 import eu.kanade.tachiyomi.data.suggestions.util.dedupeByCleanTitle
@@ -34,16 +35,22 @@ class SuggestionCoordinator(
      *
      * - AniList is always included (covers MANGA, ANIME, and NOVEL via
      *   AniList's "Novel" format on the MANGA type).
+     * - Shikimori is added for all media types (animes/mangas/ranobe
+     *   /:id/similar) — gated by [SourcePreferences.suggestionsUseShikimori].
      * - MAL is only added for ANIME.
      * - MangaUpdates is added for both MANGA and NOVEL (it stores light
      *   novels under type "Novel") — gated by the
      *   [SourcePreferences.suggestionsUseMangaUpdatesNovel] flag.
      * - NovelUpdates is added for NOVEL only — gated by
-     *   [SourcePreferences.suggestionsUseNovelUpdates].
+     *   [SourcePreferences.suggestionsUseNovelUpdates] (default off: the site
+     *   is Cloudflare-protected and scraping is a ToS/ban risk).
      */
     fun createSources(mediaType: SuggestionMediaType): List<RecommendationPagingSource> =
         buildList {
             add(AniListRecommendationSource(mediaType))
+            if (sourcePreferences.suggestionsUseShikimori().get()) {
+                add(ShikimoriSimilarSource(mediaType))
+            }
             if (mediaType == SuggestionMediaType.ANIME) {
                 add(MyAnimeListRecommendationSource(mediaType))
             }

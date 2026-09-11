@@ -952,14 +952,11 @@ object HomeHubTab : Tab {
                 hiddenSnackItem = null
             }
         }
-        val discoveryMediaTypeForSection = when (selectedSection) {
-            HomeHubSection.Anime -> tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME
-            HomeHubSection.Manga -> tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA
-            HomeHubSection.Novel -> tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL
-        }
         val onDiscoveryHide: (HomeHubDiscoveryItem) -> Unit = { item ->
             discoveryHideScope.launch {
-                discoveryRepository.hide(discoveryMediaTypeForSection, item.cleanTitle)
+                // mediaType берём из айтема, а не из текущей вкладки: snackbar переживает
+                // свайп между вкладками, и undo обязан целиться в исходный медиатип.
+                discoveryRepository.hide(item.mediaType, item.cleanTitle)
                 hiddenSnackItem = item
             }
         }
@@ -968,7 +965,7 @@ object HomeHubTab : Tab {
             hiddenSnackItem = null
             if (item != null) {
                 discoveryHideScope.launch {
-                    discoveryRepository.unhide(discoveryMediaTypeForSection, item.cleanTitle)
+                    discoveryRepository.unhide(item.mediaType, item.cleanTitle)
                 }
             }
         }

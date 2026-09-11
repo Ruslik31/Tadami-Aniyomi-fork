@@ -99,6 +99,14 @@ class DiscoveryUpdateJob(context: Context, workerParams: WorkerParameters) :
 
         const val KEY_TARGET_MEDIA_TYPE = "target_media_type"
 
+        /**
+         * Unique-имя ручного обновления — своё на медиатип: REPLACE не должен отменять
+         * bootstrap/рефреш соседней вкладки при быстром переключении (тот же TAG_MANUAL
+         * сохраняет работу isRunningFlow-индикаторов).
+         */
+        fun manualWorkName(mediaType: DiscoveryMediaType?): String =
+            if (mediaType == null) TAG_MANUAL else "$TAG_MANUAL:${mediaType.key}"
+
         fun refreshNow(context: Context, mediaType: DiscoveryMediaType? = null) {
             val preferences = Injekt.get<DiscoveryPreferences>()
             if (!preferences.discoveryEnabled().get()) return
@@ -116,7 +124,11 @@ class DiscoveryUpdateJob(context: Context, workerParams: WorkerParameters) :
                         .build(),
                 )
                 .build()
-            context.workManager.enqueueUniqueWork(TAG_MANUAL, ExistingWorkPolicy.REPLACE, request)
+            context.workManager.enqueueUniqueWork(
+                manualWorkName(mediaType),
+                ExistingWorkPolicy.REPLACE,
+                request,
+            )
         }
     }
 }

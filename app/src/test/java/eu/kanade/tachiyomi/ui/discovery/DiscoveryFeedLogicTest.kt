@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.discovery
 
+import eu.kanade.tachiyomi.data.suggestions.SuggestionReason
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
@@ -8,7 +9,7 @@ import tachiyomi.domain.discovery.model.DiscoverySuggestion
 
 class DiscoveryFeedLogicTest {
 
-    private fun suggestion(row: DiscoveryRowType, title: String) = DiscoverySuggestion(
+    private fun suggestion(row: DiscoveryRowType, title: String, provider: String = "AniList") = DiscoverySuggestion(
         id = 1,
         mediaType = DiscoveryMediaType.ANIME,
         rowType = row,
@@ -17,7 +18,7 @@ class DiscoveryFeedLogicTest {
         coverUrl = null,
         reason = null,
         seedTitle = null,
-        provider = "anilist",
+        provider = provider,
         score = 0.0,
         position = 0,
         createdAt = 100L,
@@ -69,5 +70,21 @@ class DiscoveryFeedLogicTest {
         item.title shouldBe "Some Title"
         item.searchQueries shouldBe listOf("Some Title")
         item.nativeSourceTarget shouldBe null // slice 1: всегда global search fallback
+    }
+
+    @Test
+    fun `real provider names map to external suggestion reasons`() {
+        suggestion(DiscoveryRowType.LIKE, "A", provider = "AniList")
+            .toSuggestionItem().reason shouldBe SuggestionReason.EXTERNAL_ANILIST
+        suggestion(DiscoveryRowType.LIKE, "M", provider = "MyAnimeList")
+            .toSuggestionItem().reason shouldBe SuggestionReason.EXTERNAL_MAL
+        suggestion(DiscoveryRowType.LIKE, "U", provider = "MangaUpdates")
+            .toSuggestionItem().reason shouldBe SuggestionReason.EXTERNAL_MU
+        suggestion(DiscoveryRowType.LIKE, "N", provider = "NovelUpdates")
+            .toSuggestionItem().reason shouldBe SuggestionReason.EXTERNAL_NU
+        suggestion(DiscoveryRowType.LIKE, "S", provider = "Shikimori")
+            .toSuggestionItem().reason shouldBe SuggestionReason.EXTERNAL_SHIKIMORI
+        suggestion(DiscoveryRowType.SOURCE, "P", provider = "InkStory")
+            .toSuggestionItem().reason shouldBe SuggestionReason.SEARCH_TITLE
     }
 }

@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.firstOrNull
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.discovery.model.DiscoveryMediaType
+import tachiyomi.domain.discovery.model.DiscoveryRowType
 import tachiyomi.domain.discovery.model.DiscoverySuggestion
 import tachiyomi.domain.discovery.model.normalizeDiscoveryTitle
 import tachiyomi.domain.discovery.repository.DiscoveryRepository
@@ -35,6 +36,10 @@ class DiscoveryRunner(
         SuggestionCoordinator(sourcePreferencesProvider())
     },
     private val sourceCatalog: DiscoverySourceCatalog = AppDiscoverySourceCatalog(),
+    /** Сигнал о провале рядов для UI-баннера «показан кэш»; дефолт персистит CSV в prefs. */
+    private val failedRowsSink: suspend (DiscoveryMediaType, Set<DiscoveryRowType>) -> Unit = { media, rows ->
+        preferences.lastFailedRows(media).set(rows.joinToString(",") { it.key })
+    },
     private val fallbackSourceIdProvider: (DiscoveryMediaType) -> Long = { mediaType ->
         runCatching {
             when (mediaType) {
@@ -175,7 +180,10 @@ class DiscoveryRunner(
                 add(DiscoverySourceRowBuilder(sourceCatalog))
             }
         }
-        if (builders.isEmpty()) return
+        if (builders.isEmpty()) {
+            failedRowsSink(mediaType, emptySet())
+            return
+        }
 
         val coordinator = coordinatorFactory(builders)
         val feed = coordinator.streamFeed(context) { rowType, items ->
@@ -210,5 +218,6 @@ class DiscoveryRunner(
         logcat {
             "[DiscoveryRunner] $mediaType done: rows=${feed.rows.mapValues { it.value.size }} failed=${feed.failedRows}"
         }
+        failedRowsSink(mediaType, feed.failedRows)
     }
 }

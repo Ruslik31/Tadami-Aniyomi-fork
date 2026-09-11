@@ -80,8 +80,9 @@ class CompositeTrendingSource(
                 "shikimori" to suspend { shikimori.fetchByGenres(mediaType, genres, sort, page) },
                 "anilist" to suspend { anilist.fetchByGenres(mediaType, genres, sort, page) },
             )
+            // Жанровой цепочкой MangaDex не владеет (fetchByGenres игнорировал жанры и
+            // возвращал популярность) — только реально фильтрующие провайдеры.
             DiscoveryMediaType.MANGA -> listOf(
-                "mangadex" to suspend { mangadex.fetchByGenres(mediaType, genres, sort, page) },
                 "shikimori" to suspend { shikimori.fetchByGenres(mediaType, genres, sort, page) },
                 "anilist" to suspend { anilist.fetchByGenres(mediaType, genres, sort, page) },
             )

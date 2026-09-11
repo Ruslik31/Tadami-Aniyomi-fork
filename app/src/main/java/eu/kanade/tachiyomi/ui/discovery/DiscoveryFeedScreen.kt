@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -261,6 +262,28 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                             }
                         },
                     )
+                    if (state.failedRows.isNotEmpty()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Outlined.Warning,
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(AYMR.strings.for_you_failed_banner),
+                                color = colors.textSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
                     val tabCounts = remember(state) {
                         FeedSignalTab.entries.associateWith { itemsForTab(state, it).size }
                     }
@@ -728,7 +751,7 @@ private fun FeedBody(
             items(items = items, key = { it.rowType.key + ":" + it.cleanTitle }) { item ->
                 val homeItem = remember(item) { item.toHomeHubDiscoveryItem() }
                 val reason = if (showReasons) {
-                    discoveryReasonText(homeItem, similarTemplate, trendTemplate, nextTemplate).orEmpty()
+                    discoveryReasonText(homeItem, similarTemplate, trendTemplate, nextTemplate)
                 } else {
                     null
                 }

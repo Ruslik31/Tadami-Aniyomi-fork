@@ -8,13 +8,13 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 class DiscoveryPreferencesTest {
 
     @Test
-    fun `defaults are discovery-on, hero-continue, interval 24, teaser 6`() {
+    fun `defaults are discovery-on, hero-continue, interval 12, teaser 16, seeds 3`() {
         val prefs = DiscoveryPreferences(InMemoryPreferenceStore())
         prefs.discoveryEnabled().get() shouldBe true
         prefs.homeHeroMode().get() shouldBe "continue"
-        prefs.refreshIntervalHours().get() shouldBe 2
+        prefs.refreshIntervalHours().get() shouldBe 12
         prefs.teaserCount().get() shouldBe 16
-        prefs.seedCount().get() shouldBe 5
+        prefs.seedCount().get() shouldBe 3
         prefs.seedCompleted().get() shouldBe true
         prefs.seedActive14().get() shouldBe true
         prefs.seedAdded().get() shouldBe false
@@ -32,6 +32,9 @@ class DiscoveryPreferencesTest {
         prefs.collageRotationIntervalHours().get() shouldBe 2
         prefs.collageAnimationSpeed().get() shouldBe "normal"
         prefs.collageLastRotationTime().get() shouldBe 0L
+        prefs.manualRefreshAt().get() shouldBe 0L
+        prefs.filterNsfw().get() shouldBe true
+        prefs.lastFailedRows(tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME).get() shouldBe ""
     }
 
     @Test

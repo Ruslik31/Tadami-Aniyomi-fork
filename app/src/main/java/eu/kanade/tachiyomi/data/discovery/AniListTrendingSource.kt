@@ -81,9 +81,16 @@ internal fun parseTrendingPage(page: JsonObject, seasonLabel: String? = null): L
 open class AniListTrendingSource(
     private val clientProvider: () -> okhttp3.OkHttpClient = { Injekt.get<NetworkHelper>().client },
     private val jsonProvider: () -> Json = { Injekt.get() }, // lazy: конструктор не требует Injekt-реестр (юнит-тесты)
+    private val nsfwFilterProvider: () -> Boolean = { discoveryNsfwFilterEnabled() },
 ) : DiscoveryTrendingSource {
 
     private val metaCache = mutableMapOf<String, DiscoveryMeta>()
+
+    /**
+     * isAdult=false исключает взрослый контент серверной фильтрацией AniList;
+     * null (фильтр выключен) — без ограничения.
+     */
+    private fun adultVariableValue(): Boolean? = if (nsfwFilterProvider()) false else null
 
     override suspend fun fetch(
         mediaType: DiscoveryMediaType,
@@ -125,9 +132,9 @@ open class AniListTrendingSource(
         page: Int = 1,
     ): List<DiscoveryTrendingItem> {
         val query = """
-            query (${'$'}season: MediaSeason, ${'$'}year: Int, ${'$'}sort: [MediaSort], ${'$'}page: Int) {
+            query (${'$'}season: MediaSeason, ${'$'}year: Int, ${'$'}sort: [MediaSort], ${'$'}page: Int, ${'$'}isAdult: Boolean) {
               Page(page: ${'$'}page, perPage: 50) {
-                media(type: ANIME, season: ${'$'}season, seasonYear: ${'$'}year, sort: ${'$'}sort) {
+                media(type: ANIME, season: ${'$'}season, seasonYear: ${'$'}year, sort: ${'$'}sort, isAdult: ${'$'}isAdult) {
                   id title { romaji english native } coverImage { large }
                 }
               }
@@ -141,6 +148,7 @@ open class AniListTrendingSource(
                     put("season", season)
                     put("year", year)
                     put("page", page)
+                    put("isAdult", adultVariableValue())
                     put(
                         "sort",
                         buildJsonArray {
@@ -161,9 +169,9 @@ open class AniListTrendingSource(
     ): List<DiscoveryTrendingItem> {
         val formatArg = if (format != null) ", format: ${'$'}format" else ""
         val query = """
-            query (${'$'}type: MediaType, ${'$'}sort: [MediaSort], ${'$'}page: Int${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
+            query (${'$'}type: MediaType, ${'$'}sort: [MediaSort], ${'$'}page: Int, ${'$'}isAdult: Boolean${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
               Page(page: ${'$'}page, perPage: 50) {
-                media(type: ${'$'}type, sort: ${'$'}sort$formatArg) {
+                media(type: ${'$'}type, sort: ${'$'}sort, isAdult: ${'$'}isAdult$formatArg) {
                   id title { romaji english native } coverImage { large }
                 }
               }
@@ -176,6 +184,7 @@ open class AniListTrendingSource(
                 buildJsonObject {
                     put("type", type)
                     put("page", page)
+                    put("isAdult", adultVariableValue())
                     put(
                         "sort",
                         buildJsonArray {
@@ -221,9 +230,9 @@ open class AniListTrendingSource(
     ): List<DiscoveryTrendingItem> {
         val formatArg = if (format != null) ", format: ${'$'}format" else ""
         val query = """
-            query (${'$'}type: MediaType, ${'$'}genres: [String], ${'$'}sort: [MediaSort], ${'$'}page: Int${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
+            query (${'$'}type: MediaType, ${'$'}genres: [String], ${'$'}sort: [MediaSort], ${'$'}page: Int, ${'$'}isAdult: Boolean${if (format != null) ", ${'$'}format: MediaFormat" else ""}) {
               Page(page: ${'$'}page, perPage: 50) {
-                media(type: ${'$'}type, genre_in: ${'$'}genres, sort: ${'$'}sort$formatArg) {
+                media(type: ${'$'}type, genre_in: ${'$'}genres, sort: ${'$'}sort, isAdult: ${'$'}isAdult$formatArg) {
                   id title { romaji english native } coverImage { large } genres
                 }
               }
@@ -237,6 +246,7 @@ open class AniListTrendingSource(
                     put("type", type)
                     put("genres", buildJsonArray { genres.forEach { add(JsonPrimitive(it)) } })
                     put("page", page)
+                    put("isAdult", adultVariableValue())
                     put(
                         "sort",
                         buildJsonArray {

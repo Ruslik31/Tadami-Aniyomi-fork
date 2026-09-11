@@ -62,4 +62,18 @@ class MangaDexTrendingSourceTest {
         val json = Json.parseToJsonElement("""{"result":"ok","data":[]}""") as JsonObject
         parseMangaDexData(json) shouldBe emptyList()
     }
+
+    @Test
+    fun `list url respects nsfw toggle`() {
+        val filtered = mangadexListUrl("order[followedCount]=desc", offset = 0, nsfwAllowed = false)
+        filtered.contains("contentRating[]=safe") shouldBe true
+        filtered.contains("contentRating[]=suggestive") shouldBe true
+        filtered.contains("erotica") shouldBe false
+        filtered.contains("pornographic") shouldBe false
+
+        val unfiltered = mangadexListUrl("order[rating]=desc", offset = 30, nsfwAllowed = true)
+        unfiltered.contains("offset=30") shouldBe true
+        unfiltered.contains("contentRating[]=erotica") shouldBe true
+        unfiltered.contains("contentRating[]=pornographic") shouldBe true
+    }
 }

@@ -48,4 +48,22 @@ class JikanTrendingSourceTest {
         val json = Json.parseToJsonElement("""{"data":[]}""") as JsonObject
         parseJikanAnimePage(json) shouldBe emptyList()
     }
+
+    @Test
+    fun `parseJikanAnimePage drops Rx hentai items when filter enabled`() {
+        val json = Json.parseToJsonElement(
+            """
+            {
+              "data": [
+                { "mal_id": 1, "title": "Normal Anime", "rating": "PG-13 - Teens 13 or older" },
+                { "mal_id": 2, "title": "Hentai Title", "rating": "Rx - Hentai" },
+                { "mal_id": 3, "title": "No Rating Field" }
+              ]
+            }
+            """.trimIndent(),
+        ) as JsonObject
+
+        parseJikanAnimePage(json, dropRx = true).map { it.title } shouldBe listOf("Normal Anime", "No Rating Field")
+        parseJikanAnimePage(json, dropRx = false).size shouldBe 3
+    }
 }
