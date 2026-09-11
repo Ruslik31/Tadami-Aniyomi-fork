@@ -8,7 +8,10 @@ import eu.kanade.tachiyomi.data.discovery.DiscoveryLibraryAdder
 import eu.kanade.tachiyomi.data.discovery.DiscoveryRowItem
 import eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob
 import eu.kanade.tachiyomi.data.discovery.dedupeCrossRow
+import eu.kanade.tachiyomi.data.discovery.expandGenreSet
 import eu.kanade.tachiyomi.data.discovery.interleaveMix
+import eu.kanade.tachiyomi.data.discovery.isBlacklisted
+import eu.kanade.tachiyomi.data.discovery.rrfScores
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionReason
 import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
@@ -44,6 +47,8 @@ data class DiscoveryFeedUiState(
     // Ряды, упавшие при последней генерации: в ленте показан устаревший кэш —
     // surfaced баннером вместо молчаливой стужи.
     val failedRows: Set<DiscoveryRowType> = emptySet(),
+    // B2: «Скрыть всё с тегом X» — tag к числу затронутых подборок (undo-snackbar).
+    val tagSnackbar: Pair<String, Int>? = null,
 )
 
 /** CSV ключей упавших рядов из prefs → набор [DiscoveryRowType]. */
@@ -52,6 +57,12 @@ internal fun parseFailedRows(csv: String): Set<DiscoveryRowType> = csv
     .filter { it.isNotBlank() }
     .mapNotNull { DiscoveryRowType.fromKey(it) }
     .toSet()
+
+/** Сколько текущих подборок скроется при блэклисте [tag] (для undo-snackbar «Скрыто N»). */
+internal fun countBlacklistImpact(items: List<DiscoverySuggestion>, tag: String): Int {
+    val expanded = expandGenreSet(listOf(tag))
+    return items.count { isBlacklisted(it, expanded) }
+}
 
 internal enum class FeedSignalTab { MIX, SIMILAR, TASTE, FRESH, SOURCE }
 
@@ -149,6 +160,7 @@ class DiscoveryFeedScreenModel(
 
     private var observeJob: Job? = null
     private var lastHidden: DiscoverySuggestion? = null
+    private var lastBlacklistedTag: String? = null
 
     fun start() {
         observeMedia(state.value.mediaType)
@@ -162,15 +174,21 @@ class DiscoveryFeedScreenModel(
                 refreshingFlow(),
                 repository.subscribeHidden(mediaType),
                 preferences.lastFailedRows(mediaType).changes(),
-            ) { all, refreshing, hidden, failedCsv ->
-                FeedSources(all, refreshing, hidden, failedCsv)
+                repository.subscribeBlacklist(mediaType),
+            ) { all, refreshing, hidden, failedCsv, blacklist ->
+                FeedSources(all, refreshing, hidden, failedCsv, blacklist)
             }
-                .collectLatest { (all, refreshing, hidden, failedCsv) ->
+                .collectLatest { (all, refreshing, hidden, failedCsv, blacklist) ->
                     // Кросс-рядовой дедуп: упавший ряд живёт старым кэшем и может
                     // содержать тайтлы свежих рядов — приоритет у rowType.ordinal.
-                    val visible = dedupeCrossRow(all.filterNot { it.cleanTitle in hidden })
+                    val expandedBlacklist = expandGenreSet(blacklist.toList())
+                    val visible = dedupeCrossRow(
+                        all.filterNot { it.cleanTitle in hidden || isBlacklisted(it, expandedBlacklist) },
+                    )
                     val rows = groupFeedRows(visible)
-                    val mix = interleaveMix(rows.mapValues { (_, items) -> items.map { it.toRowItem() } })
+                    val rowItems = rows.mapValues { (_, items) -> items.map { it.toRowItem() } }
+                    // RRF для fill-фазы: сырые скоры сигналов несопоставимы (LIKE 0..100 vs TREND 0.0).
+                    val mix = interleaveMix(rowItems, rrf = rrfScores(rowItems))
                         .mapNotNull { row -> visible.firstOrNull { it.cleanTitle == row.cleanTitle } }
                     mutableState.update {
                         it.copy(
@@ -192,6 +210,7 @@ class DiscoveryFeedScreenModel(
         val refreshing: Boolean,
         val hidden: Set<String>,
         val failedCsv: String,
+        val blacklist: Set<String>,
     )
 
     private fun DiscoverySuggestion.toRowItem() = DiscoveryRowItem(
@@ -238,6 +257,26 @@ class DiscoveryFeedScreenModel(
     }
 
     fun dismissHiddenSnackbar() = mutableState.update { it.copy(hiddenSnackbarTitle = null) }
+
+    /** B2: теговый блэклист — мгновенно фильтрует TASTE-ряд (read-time) и будущие генерации. */
+    fun blacklistTag(tag: String) {
+        val impacted = countBlacklistImpact(state.value.rows.values.flatten(), tag)
+        lastBlacklistedTag = tag
+        mutableState.update { it.copy(tagSnackbar = tag to impacted) }
+        screenModelScope.launchIO {
+            repository.blacklistTag(state.value.mediaType, tag)
+        }
+    }
+
+    fun undoBlacklistTag() {
+        val tag = lastBlacklistedTag ?: return
+        mutableState.update { it.copy(tagSnackbar = null) }
+        screenModelScope.launchIO {
+            repository.unblacklistTag(state.value.mediaType, tag)
+        }
+    }
+
+    fun dismissTagSnackbar() = mutableState.update { it.copy(tagSnackbar = null) }
 
     fun addToLibrary(item: DiscoverySuggestion) {
         if (item.title in state.value.addingTitles) return

@@ -101,6 +101,7 @@ internal fun AnimeHomeHub(
     hiddenSnackbar: String? = null,
     onUndoHidden: () -> Unit = {},
     onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
+    onDiscoveryBlacklistTag: ((HomeHubDiscoveryItem, String, Int) -> Unit)? = null,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -154,6 +155,7 @@ internal fun AnimeHomeHub(
         hiddenSnackbar = hiddenSnackbar,
         onUndoHidden = onUndoHidden,
         onDiscoveryLongClick = onDiscoveryLongClick,
+        onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(AnimeScreen(it)) },
         onPlayHero = { screenModel.playHeroEpisode(context) },
@@ -205,6 +207,7 @@ internal fun MangaHomeHub(
     hiddenSnackbar: String? = null,
     onUndoHidden: () -> Unit = {},
     onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
+    onDiscoveryBlacklistTag: ((HomeHubDiscoveryItem, String, Int) -> Unit)? = null,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -258,6 +261,7 @@ internal fun MangaHomeHub(
         hiddenSnackbar = hiddenSnackbar,
         onUndoHidden = onUndoHidden,
         onDiscoveryLongClick = onDiscoveryLongClick,
+        onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(MangaScreen(it)) },
         onPlayHero = { screenModel.readHeroChapter(context) },
@@ -312,6 +316,7 @@ internal fun NovelHomeHub(
     hiddenSnackbar: String? = null,
     onUndoHidden: () -> Unit = {},
     onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
+    onDiscoveryBlacklistTag: ((HomeHubDiscoveryItem, String, Int) -> Unit)? = null,
     activeSection: HomeHubSection,
     scrollResetToken: Int,
     onScrollSignal: (HomeHubSection, Float, Boolean) -> Unit,
@@ -364,6 +369,7 @@ internal fun NovelHomeHub(
         hiddenSnackbar = hiddenSnackbar,
         onUndoHidden = onUndoHidden,
         onDiscoveryLongClick = onDiscoveryLongClick,
+        onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
         contentPadding = contentPadding,
         onEntryClick = { navigator.push(NovelScreen(it)) },
         onPlayHero = {
@@ -429,6 +435,7 @@ private fun HomeHubScreen(
     hiddenSnackbar: String? = null,
     onUndoHidden: () -> Unit = {},
     onDiscoveryLongClick: ((HomeHubDiscoveryItem) -> Unit)? = null,
+    onDiscoveryBlacklistTag: ((HomeHubDiscoveryItem, String, Int) -> Unit)? = null,
     contentPadding: PaddingValues,
     onEntryClick: (Long) -> Unit,
     onPlayHero: () -> Unit,
@@ -496,6 +503,7 @@ private fun HomeHubScreen(
     var previewItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }
     var previewMeta by remember { mutableStateOf<DiscoveryMeta?>(null) }
     var previewMetaLoading by remember { mutableStateOf(false) }
+    var longPressItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }
     val trendingSource = remember { CompositeTrendingSource() }
 
     LaunchedEffect(previewItem) {
@@ -556,7 +564,7 @@ private fun HomeHubScreen(
                             coverMediaType = section.toDiscoveryMediaType(),
                             onMoreClick = onForYouMoreClick,
                             onItemClick = { previewItem = it },
-                            onLongClick = onDiscoveryLongClick,
+                            onLongClick = { longPressItem = it },
                         )
                     }
                 }
@@ -576,7 +584,7 @@ private fun HomeHubScreen(
                                 coverMediaType = section.toDiscoveryMediaType(),
                                 onMoreClick = onForYouMoreClick,
                                 onItemClick = { previewItem = it },
-                                onLongClick = onDiscoveryLongClick,
+                                onLongClick = { longPressItem = it },
                             )
                             heroPresentation == HomeHeroMode.Hybrid && hero != null -> Column {
                                 HeroSection(
@@ -592,7 +600,7 @@ private fun HomeHubScreen(
                                     coverMediaType = section.toDiscoveryMediaType(),
                                     onMoreClick = onForYouMoreClick,
                                     onItemClick = { previewItem = it },
-                                    onLongClick = onDiscoveryLongClick,
+                                    onLongClick = { longPressItem = it },
                                     isRefreshing = state.isDiscoveryRefreshing,
                                     onRefreshClick = onDiscoveryRefreshClick,
                                 )
@@ -644,7 +652,7 @@ private fun HomeHubScreen(
                             coverMediaType = section.toDiscoveryMediaType(),
                             onMoreClick = onForYouMoreClick,
                             onItemClick = { previewItem = it },
-                            onLongClick = onDiscoveryLongClick,
+                            onLongClick = { longPressItem = it },
                             isRefreshing = state.isDiscoveryRefreshing,
                             onRefreshClick = onDiscoveryRefreshClick,
                         )
@@ -725,6 +733,21 @@ private fun HomeHubScreen(
                     onDiscoveryLongClick?.invoke(item)
                 },
                 hazeState = LocalHomeHazeState.current,
+            )
+        }
+        longPressItem?.let { lpItem ->
+            DiscoveryHideOptionsSheet(
+                itemTitle = lpItem.title,
+                tag = firstBlacklistTag(lpItem.rowType, lpItem.reasonPayload),
+                onHide = {
+                    longPressItem = null
+                    onDiscoveryLongClick?.invoke(lpItem)
+                },
+                onBlacklistTag = { tag ->
+                    longPressItem = null
+                    onDiscoveryBlacklistTag?.invoke(lpItem, tag, countAffectedTeasers(state.discovery, tag))
+                },
+                onDismiss = { longPressItem = null },
             )
         }
     }

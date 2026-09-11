@@ -1,6 +1,17 @@
 package eu.kanade.presentation.more.settings.screen
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -10,7 +21,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob
@@ -46,6 +60,13 @@ object SettingsDiscoveryScreen : SearchableSettings {
         val scope = rememberCoroutineScope()
         val repository = remember { Injekt.get<DiscoveryRepository>() }
         var showResetHiddenDialog by remember { mutableStateOf(false) }
+        var showBlacklistDialog by remember { mutableStateOf(false) }
+        var blacklistTags by remember { mutableStateOf<List<Pair<DiscoveryMediaType, String>>>(emptyList()) }
+        val reloadBlacklist: suspend () -> Unit = {
+            blacklistTags = DiscoveryMediaType.entries.flatMap { media ->
+                repository.getBlacklistedTags(media).sorted().map { media to it }
+            }
+        }
 
         val discoveryPreferences = remember { Injekt.get<DiscoveryPreferences>() }
         val sourcePreferences = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>() }
@@ -84,6 +105,62 @@ object SettingsDiscoveryScreen : SearchableSettings {
                 },
                 dismissButton = {
                     TextButton(onClick = { showResetHiddenDialog = false }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
+                },
+            )
+        }
+
+        if (showBlacklistDialog) {
+            AlertDialog(
+                onDismissRequest = { showBlacklistDialog = false },
+                title = { Text(stringResource(AYMR.strings.pref_discovery_blacklist_tags)) },
+                text = {
+                    if (blacklistTags.isEmpty()) {
+                        Text(stringResource(AYMR.strings.pref_discovery_blacklist_empty))
+                    } else {
+                        Column(Modifier.verticalScroll(rememberScrollState())) {
+                            blacklistTags.forEach { (media, tag) ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            scope.launchIO {
+                                                repository.unblacklistTag(media, tag)
+                                                reloadBlacklist()
+                                            }
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "$tag · ${media.key}",
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Icon(
+                                        Icons.Outlined.Close,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            scope.launchIO {
+                                DiscoveryMediaType.entries.forEach { repository.clearBlacklist(it) }
+                                showBlacklistDialog = false
+                            }
+                        },
+                    ) {
+                        Text(stringResource(AYMR.strings.pref_discovery_blacklist_reset))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBlacklistDialog = false }) {
                         Text(stringResource(MR.strings.action_cancel))
                     }
                 },
@@ -363,6 +440,15 @@ object SettingsDiscoveryScreen : SearchableSettings {
                         title = stringResource(AYMR.strings.pref_discovery_clear_hidden_title),
                         subtitle = stringResource(AYMR.strings.pref_discovery_clear_hidden_summary),
                         onClick = { showResetHiddenDialog = true },
+                        enabled = enabled,
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(AYMR.strings.pref_discovery_blacklist_tags),
+                        subtitle = stringResource(AYMR.strings.pref_discovery_blacklist_tags_summary),
+                        onClick = {
+                            showBlacklistDialog = true
+                            scope.launchIO { reloadBlacklist() }
+                        },
                         enabled = enabled,
                     ),
                 ),

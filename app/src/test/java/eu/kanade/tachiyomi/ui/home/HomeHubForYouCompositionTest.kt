@@ -113,6 +113,37 @@ class HomeHubForYouCompositionTest {
     }
 
     @Test
+    fun `firstBlacklistTag picks first taste genre only`() {
+        firstBlacklistTag(DiscoveryRowType.TASTE, "Фэнтези, Драма") shouldBe "Фэнтези"
+        firstBlacklistTag(DiscoveryRowType.TASTE, " Фэнтези ") shouldBe "Фэнтези"
+        firstBlacklistTag(DiscoveryRowType.TASTE, "") shouldBe null
+        firstBlacklistTag(DiscoveryRowType.TASTE, null) shouldBe null
+        firstBlacklistTag(DiscoveryRowType.LIKE, "anything") shouldBe null
+        firstBlacklistTag(DiscoveryRowType.SOURCE, "anything") shouldBe null
+    }
+
+    @Test
+    fun `countAffectedTeasers counts taste cards matching tag with translations`() {
+        val items = listOf(
+            composeTeaserItems(
+                listOf(suggestion(DiscoveryRowType.TASTE, "A", 0, reason = "Фэнтези, Драма")),
+                6,
+            ).single(),
+            composeTeaserItems(
+                listOf(suggestion(DiscoveryRowType.TASTE, "B", 0, reason = "Экшен")),
+                6,
+            ).single(),
+            composeTeaserItems(
+                listOf(suggestion(DiscoveryRowType.LIKE, "C", 0)),
+                6,
+            ).single(),
+        )
+        countAffectedTeasers(items, "Fantasy") shouldBe 1
+        countAffectedTeasers(items, "Экшен") shouldBe 1
+        countAffectedTeasers(items, "Комедия") shouldBe 0
+    }
+
+    @Test
     fun `scroll enabled under welcome when discovery present`() {
         shouldEnableHomeHubScroll(
             showWelcome = true,

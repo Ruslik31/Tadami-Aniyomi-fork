@@ -126,6 +126,7 @@ class DiscoveryRunner(
             historyCleanTitles = seedSources.historyCleanTitles(mediaType),
             hiddenCleanTitles = repository.getHiddenTitles(mediaType),
             tasteProfile = buildTasteProfile(candidates),
+            blacklistedTags = repository.getBlacklistedTags(mediaType),
             sourceId = sourceId,
             // C1: ряд SOURCE строится из топ-3 источников по весу библиотеки.
             sourceIds = rankSourceIds(candidates),

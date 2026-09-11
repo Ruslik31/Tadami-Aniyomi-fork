@@ -42,8 +42,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.LabelOff
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -88,6 +92,7 @@ import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.presentation.theme.resolveAuroraSurfaceColor
 import eu.kanade.tachiyomi.data.discovery.DiscoveryRowItem
 import eu.kanade.tachiyomi.data.discovery.interleaveMix
+import eu.kanade.tachiyomi.data.discovery.rrfScores
 import eu.kanade.tachiyomi.data.suggestions.SuggestionItem
 import eu.kanade.tachiyomi.data.suggestions.SuggestionReason
 import eu.kanade.tachiyomi.data.suggestions.sources.SuggestionMediaType
@@ -119,7 +124,7 @@ internal fun composeTeaserItems(
                 DiscoveryRowItem(s.title, s.cleanTitle, s.coverUrl, s.reason, s.seedTitle, s.provider, s.score)
             }
         }
-    val fullMix = interleaveMix(rows, total = items.size)
+    val fullMix = interleaveMix(rows, total = items.size, rrf = rrfScores(rows))
     val rotated = if (fullMix.size <= capped || offset <= 0) {
         fullMix.take(capped)
     } else {
@@ -133,6 +138,29 @@ internal fun composeTeaserItems(
 
 /** Секция видна всегда при включённом discovery: при пустой ленте рендерит карточку-вход на полный экран. */
 internal fun shouldShowForYouSection(enabled: Boolean): Boolean = enabled
+
+/**
+ * B2: первый тег для «скрыть всё с тегом X» — только TASTE reason-CSV
+ * (жанры прочих рядов не персистятся; у них пункт меню disabled).
+ */
+internal fun firstBlacklistTag(
+    rowType: DiscoveryRowType,
+    reasonPayload: String?,
+): String? = when (rowType) {
+    DiscoveryRowType.TASTE -> reasonPayload?.splitToSequence(",")
+        ?.map { it.trim() }
+        ?.firstOrNull { it.isNotEmpty() }
+    else -> null
+}
+
+/** Сколько карточек текущего тизера скроется при блэклисте [tag] (для undo-snackbar). */
+internal fun countAffectedTeasers(items: List<HomeHubDiscoveryItem>, tag: String): Int {
+    val expanded = eu.kanade.tachiyomi.data.discovery.expandGenreSet(listOf(tag))
+    return items.count { item ->
+        item.rowType == DiscoveryRowType.TASTE &&
+            item.reasonPayload?.splitToSequence(",")?.any { it.trim().lowercase() in expanded } == true
+    }
+}
 
 /**
  * Локализованная подпись-обоснование. Шаблоны строк передаются параметрами,
@@ -1369,6 +1397,110 @@ private fun EmptyForYouCard(onMoreClick: () -> Unit) {
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
             )
+        }
+    }
+}
+
+/** B2: long-press меню — скрыть тайтл или скрыть все подборки с тегом (TASTE). */
+@Composable
+internal fun DiscoveryHideOptionsSheet(
+    itemTitle: String,
+    tag: String?,
+    onHide: () -> Unit,
+    onBlacklistTag: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    val appHaptics = LocalAppHaptics.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val tagEnabled = !tag.isNullOrBlank()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = when {
+            colors.isEInk -> colors.surface
+            colors.isDark -> Color(0xFF141824)
+            else -> Color.White
+        },
+        dragHandle = null,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        ) {
+            Text(
+                itemTitle,
+                color = colors.textSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(bottom = 10.dp, start = 8.dp, end = 8.dp),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        appHaptics.tap()
+                        onHide()
+                    }
+                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.VisibilityOff,
+                    contentDescription = null,
+                    tint = colors.textPrimary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                Text(
+                    stringResource(AYMR.strings.for_you_tag_hide_title),
+                    color = colors.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = tagEnabled) {
+                        appHaptics.tap()
+                        tag?.let { onBlacklistTag(it) }
+                    }
+                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.LabelOff,
+                    contentDescription = null,
+                    tint = if (tagEnabled) colors.accent else colors.textSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(
+                        if (tagEnabled) {
+                            stringResource(AYMR.strings.for_you_tag_blacklist_action, tag!!)
+                        } else {
+                            stringResource(AYMR.strings.for_you_tag_blacklist_action_generic)
+                        },
+                        color = if (tagEnabled) colors.textPrimary else colors.textSecondary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (!tagEnabled) {
+                        Text(
+                            stringResource(AYMR.strings.for_you_tag_blacklist_disabled),
+                            color = colors.textSecondary,
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
+            }
         }
     }
 }

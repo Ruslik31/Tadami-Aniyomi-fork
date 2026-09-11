@@ -84,6 +84,30 @@ class DiscoveryRepositoryImpl(
         handler.await { db -> db.discovery_hiddenQueries.deleteAllByMedia(mediaType.key) }
     }
 
+    override fun subscribeBlacklist(mediaType: DiscoveryMediaType): Flow<Set<String>> =
+        handler.subscribeToList { db ->
+            db.discovery_blacklist_tagsQueries.selectAllByMedia(mediaType.key) { _, tag, _ -> tag }
+        }.map { tags -> tags.toSet() }
+
+    override suspend fun getBlacklistedTags(mediaType: DiscoveryMediaType): Set<String> =
+        handler.awaitList { db ->
+            db.discovery_blacklist_tagsQueries.selectAllByMedia(mediaType.key) { _, tag, _ -> tag }
+        }.toSet()
+
+    override suspend fun blacklistTag(mediaType: DiscoveryMediaType, tag: String) {
+        handler.await { db ->
+            db.discovery_blacklist_tagsQueries.insertOrIgnore(mediaType.key, tag, System.currentTimeMillis())
+        }
+    }
+
+    override suspend fun unblacklistTag(mediaType: DiscoveryMediaType, tag: String) {
+        handler.await { db -> db.discovery_blacklist_tagsQueries.delete(mediaType.key, tag) }
+    }
+
+    override suspend fun clearBlacklist(mediaType: DiscoveryMediaType) {
+        handler.await { db -> db.discovery_blacklist_tagsQueries.deleteAllByMedia(mediaType.key) }
+    }
+
     override suspend fun lastUpdatedAt(mediaType: DiscoveryMediaType): Long? =
         handler.awaitOne { db -> db.discovery_suggestionsQueries.lastUpdatedAt(mediaType.key) }.takeIf { it > 0L }
 }

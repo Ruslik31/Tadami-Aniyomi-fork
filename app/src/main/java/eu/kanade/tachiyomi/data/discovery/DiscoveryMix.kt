@@ -15,12 +15,14 @@ data class DiscoveryMixQuotas(
  * Смешанный поток: round-robin по квотам сигналов (LIKE → TASTE → TREND → SOURCE),
  * внутри сигнала — порядок ряда (скор). Квота пустого сигнала перераспределяется
  * автоматически (round-robin просто пропускает пустой пул), остаток до [total]
- * добивается по убыванию скора из всех сигналов.
+ * добивается по убыванию [rrf]-скоров (ранговая fusion — шкалы сигналов несопоставимы),
+ * а при rrf = null — по сырому скору (прежнее поведение).
  */
 internal fun interleaveMix(
     rows: Map<DiscoveryRowType, List<DiscoveryRowItem>>,
     quotas: DiscoveryMixQuotas = DiscoveryMixQuotas(),
     total: Int = quotas.total,
+    rrf: Map<String, Double>? = null,
 ): List<DiscoveryRowItem> {
     val quotaOf = mapOf(
         DiscoveryRowType.LIKE to quotas.similar,
@@ -60,7 +62,7 @@ internal fun interleaveMix(
         pools.values.flatten()
             .filterNot { it.cleanTitle in seen }
             .distinctBy { it.cleanTitle }
-            .sortedByDescending { it.score }
+            .sortedByDescending { rrf?.get(it.cleanTitle) ?: it.score }
             .take(total - out.size)
             .forEach { item ->
                 out += item
@@ -68,6 +70,48 @@ internal fun interleaveMix(
             }
     }
     return out
+}
+
+/** Стандартная константа Reciprocal Rank Fusion. */
+internal const val RRF_K = 60
+
+/**
+ * RRF-скоры для fill-фазы микса: Σ 1/(k + rank) по всем рядам, где встречается
+ * cleanTitle. Ранговая основа делает несопоставимые шкалы сигналов
+ * (LIKE 0..100+, TASTE — сумма жанровых весов, TREND 0.0, SOURCE ~1.0) сравнимыми.
+ */
+internal fun rrfScores(
+    rows: Map<DiscoveryRowType, List<DiscoveryRowItem>>,
+    k: Int = RRF_K,
+): Map<String, Double> {
+    val out = mutableMapOf<String, Double>()
+    rows.forEach { (_, items) ->
+        items.forEachIndexed { rank, item ->
+            out[item.cleanTitle] = (out[item.cleanTitle] ?: 0.0) + 1.0 / (k + rank)
+        }
+    }
+    return out
+}
+
+/**
+ * Мердж двух списков с min-max нормализацией каждого (паттерн TASTE-ряда:
+ * trending-жанры и source-каталог имеют разные шкалы). Вырожденный список
+ * (0–1 элемент или равные скоры) → нейтральные 0.5, а не вершина выдачи.
+ */
+internal fun mergeNormalized(
+    a: List<DiscoveryRowItem>,
+    b: List<DiscoveryRowItem>,
+): List<DiscoveryRowItem> {
+    fun normalized(list: List<DiscoveryRowItem>): List<Pair<DiscoveryRowItem, Double>> {
+        if (list.size < 2) return list.map { it to 0.5 }
+        val max = list.maxOf { it.score }
+        val min = list.minOf { it.score }
+        if (max == min) return list.map { it to 0.5 }
+        return list.map { it to (it.score - min) / (max - min) }
+    }
+    return (normalized(a) + normalized(b))
+        .sortedByDescending { it.second }
+        .map { it.first }
 }
 
 /**
@@ -198,3 +242,19 @@ internal fun dedupeCrossRow(
 ): List<tachiyomi.domain.discovery.model.DiscoverySuggestion> = items
     .sortedBy { it.rowType.ordinal }
     .distinctBy { it.cleanTitle }
+
+/**
+ * Read-time фильтр tag-blacklist (B2): у TASTE-ряда жанры профиля сохранены в
+ * reason-CSV — они фильтруются мгновенно, без регенерации. У TREND/LIKE/SOURCE
+ * жанры не персистятся: для них блэклист действует со следующего обновления ряда.
+ * [expandedBlacklist] — уже развёрнутый [expandGenreSet] (RU↔EN варианты).
+ */
+internal fun isBlacklisted(
+    item: tachiyomi.domain.discovery.model.DiscoverySuggestion,
+    expandedBlacklist: Set<String>,
+): Boolean {
+    if (expandedBlacklist.isEmpty()) return false
+    if (item.rowType != tachiyomi.domain.discovery.model.DiscoveryRowType.TASTE) return false
+    val reason = item.reason ?: return false
+    return reason.splitToSequence(",").any { tag -> tag.trim().lowercase() in expandedBlacklist }
+}

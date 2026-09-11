@@ -34,6 +34,11 @@ class DiscoveryRunnerTest {
         override suspend fun unhide(mediaType: DiscoveryMediaType, cleanTitle: String) {}
         override suspend fun clearHidden(mediaType: DiscoveryMediaType) {}
         override suspend fun lastUpdatedAt(mediaType: DiscoveryMediaType): Long? = null
+        override fun subscribeBlacklist(mediaType: DiscoveryMediaType): Flow<Set<String>> = MutableStateFlow(emptySet())
+        override suspend fun getBlacklistedTags(mediaType: DiscoveryMediaType): Set<String> = setOf("harem")
+        override suspend fun blacklistTag(mediaType: DiscoveryMediaType, tag: String) {}
+        override suspend fun unblacklistTag(mediaType: DiscoveryMediaType, tag: String) {}
+        override suspend fun clearBlacklist(mediaType: DiscoveryMediaType) {}
     }
 
     private class FakeSeedSources : DiscoverySeedSources {
@@ -181,6 +186,7 @@ class DiscoveryRunnerTest {
         )
         runner.run(listOf(DiscoveryMediaType.NOVEL))
         captured.single().sourceIds shouldBe listOf(11L, 22L)
+        captured.single().blacklistedTags shouldBe setOf("harem")
     }
 
     @Test

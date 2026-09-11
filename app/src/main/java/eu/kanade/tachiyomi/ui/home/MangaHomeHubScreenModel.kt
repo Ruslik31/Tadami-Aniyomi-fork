@@ -156,15 +156,23 @@ internal class MangaHomeHubScreenModel(
                 discoveryPreferences.discoveryEnabled().changes(),
                 discoveryPreferences.teaserCount().changes(),
                 discoveryRepository.subscribeHidden(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
-            ) { items, enabled, count, hidden ->
-                items.filterNot { it.cleanTitle in hidden } to (enabled to count)
+                discoveryRepository.subscribeBlacklist(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+            ) { items, enabled, count, hidden, blacklist ->
+                items.filterNot { it.cleanTitle in hidden } to Triple(
+                    enabled,
+                    count,
+                    eu.kanade.tachiyomi.data.discovery.expandGenreSet(blacklist.toList()),
+                )
             }
                 .collectLatest { (visible, prefs) ->
-                    cachedDiscoveryPool = eu.kanade.tachiyomi.data.discovery.dedupeCrossRow(visible)
-                    val (enabled, count) = prefs
+                    val (enabled, count, expandedBlacklist) = prefs
+                    val filtered = visible.filterNot {
+                        eu.kanade.tachiyomi.data.discovery.isBlacklisted(it, expandedBlacklist)
+                    }
+                    cachedDiscoveryPool = eu.kanade.tachiyomi.data.discovery.dedupeCrossRow(filtered)
                     val teaser = if (enabled) {
                         composeTeaserItems(
-                            visible,
+                            cachedDiscoveryPool,
                             count,
                             offset = discoveryOffset,
                         )

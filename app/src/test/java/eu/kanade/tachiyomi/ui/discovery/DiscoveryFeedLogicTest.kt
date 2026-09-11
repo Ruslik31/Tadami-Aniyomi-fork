@@ -9,20 +9,37 @@ import tachiyomi.domain.discovery.model.DiscoverySuggestion
 
 class DiscoveryFeedLogicTest {
 
-    private fun suggestion(row: DiscoveryRowType, title: String, provider: String = "AniList") = DiscoverySuggestion(
+    private fun suggestion(
+        row: DiscoveryRowType,
+        title: String,
+        provider: String = "AniList",
+        reason: String? = null,
+    ) = DiscoverySuggestion(
         id = 1,
         mediaType = DiscoveryMediaType.ANIME,
         rowType = row,
         title = title,
         cleanTitle = title.lowercase(),
         coverUrl = null,
-        reason = null,
+        reason = reason,
         seedTitle = null,
         provider = provider,
         score = 0.0,
         position = 0,
         createdAt = 100L,
     )
+
+    @Test
+    fun `countBlacklistImpact counts taste items with translated tag`() {
+        val items = listOf(
+            suggestion(DiscoveryRowType.TASTE, "A", reason = "Фэнтези"),
+            suggestion(DiscoveryRowType.TASTE, "B", reason = "Драма"),
+            suggestion(DiscoveryRowType.LIKE, "C", reason = "Фэнтези"),
+        )
+        countBlacklistImpact(items, "Fantasy") shouldBe 1
+        countBlacklistImpact(items, "Драма") shouldBe 1
+        countBlacklistImpact(items, "Комедия") shouldBe 0
+    }
 
     @Test
     fun `manual refresh blocked during cooldown and allowed after`() {

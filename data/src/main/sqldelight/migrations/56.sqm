@@ -1,0 +1,8 @@
+-- Tag-blacklist «Для тебя»: теги, скрытые пользователем («скрыть всё с тегом X»), по медиатипам.
+-- Новая таблица, данных не теряет; IF NOT EXISTS на случай повторного наката.
+CREATE TABLE IF NOT EXISTS discovery_blacklist_tags (
+    media_type TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (media_type, tag)
+);

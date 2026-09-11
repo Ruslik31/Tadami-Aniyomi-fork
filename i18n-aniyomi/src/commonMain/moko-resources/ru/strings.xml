@@ -1824,6 +1824,15 @@
     <string name="pref_discovery_nsfw_filter">Скрывать контент 18+</string>
     <string name="pref_discovery_nsfw_filter_summary">Независимый переключатель: фильтрует взрослый контент внешних провайдеров независимо от общих настроек приложения. Каталоги плагинов регулируются общими настройками</string>
     <string name="for_you_failed_banner">Часть подборок не обновилась — показаны прежние результаты</string>
+    <string name="for_you_tag_hide_title">Скрыть тайтл</string>
+    <string name="for_you_tag_blacklist_action">Скрыть всё с тегом „%1$s“</string>
+    <string name="for_you_tag_blacklist_action_generic">Скрыть всё с тегом</string>
+    <string name="for_you_tag_blacklist_disabled">Теги появятся после следующего обновления подборки</string>
+    <string name="for_you_tag_blacklist_undo">Скрыто подборок с тегом „%2$s“: %1$d</string>
+    <string name="pref_discovery_blacklist_tags">Скрытые теги</string>
+    <string name="pref_discovery_blacklist_tags_summary">Теговый уровень «не интересно»: подборки с этими жанрами исключаются</string>
+    <string name="pref_discovery_blacklist_empty">Пока нет скрытых тегов</string>
+    <string name="pref_discovery_blacklist_reset">Сбросить все теги</string>
     <string name="pref_home_hero_mode">Вид главного баннера</string>
     <string name="pref_collage_rotation_interval">Интервал смены плиток</string>
     <string name="pref_collage_rotation_interval_0">Отключено</string>

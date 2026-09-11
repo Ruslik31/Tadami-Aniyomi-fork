@@ -149,6 +149,7 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
         var sheetItem by remember { mutableStateOf<DiscoverySuggestion?>(null) }
         var sheetMeta by remember { mutableStateOf<DiscoveryMeta?>(null) }
         var sheetMetaLoading by remember { mutableStateOf(false) }
+        var longPressItem by remember { mutableStateOf<DiscoverySuggestion?>(null) }
         val trendingSource = remember { CompositeTrendingSource() }
 
         val navigateFor: (DiscoverySuggestion) -> Unit = { item ->
@@ -210,7 +211,7 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                     bottom = 24.dp,
                 ),
                 onItemClick = { sheetItem = it },
-                onItemLongClick = { screenModel.hide(it) },
+                onItemLongClick = { longPressItem = it },
                 onItemAdd = { screenModel.addToLibrary(it) },
                 onRetry = { screenModel.refreshNow() },
                 modifier = Modifier
@@ -301,6 +302,8 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                 onUndo = { screenModel.undoHide() },
                 onDismissHidden = { screenModel.dismissHiddenSnackbar() },
                 onDismissAdded = { screenModel.dismissAddedSnackbar() },
+                onUndoTag = { screenModel.undoBlacklistTag() },
+                onDismissTag = { screenModel.dismissTagSnackbar() },
             )
             // «+» промахнулся (внешний провайдер или нет точного совпадения в источнике
             // рекомендации): уходим в каталог источника/глобальный поиск вместо тупика.
@@ -329,6 +332,21 @@ class DiscoveryFeedScreen(val initialMediaKey: String) : Screen(), Serializable 
                         sheetItem = null
                     },
                     hazeState = hazeState,
+                )
+            }
+            longPressItem?.let { lpItem ->
+                eu.kanade.tachiyomi.ui.home.DiscoveryHideOptionsSheet(
+                    itemTitle = lpItem.title,
+                    tag = eu.kanade.tachiyomi.ui.home.firstBlacklistTag(lpItem.rowType, lpItem.reason),
+                    onHide = {
+                        screenModel.hide(lpItem)
+                        longPressItem = null
+                    },
+                    onBlacklistTag = { tag ->
+                        screenModel.blacklistTag(tag)
+                        longPressItem = null
+                    },
+                    onDismiss = { longPressItem = null },
                 )
             }
         }
@@ -903,11 +921,14 @@ private fun FeedSnackbar(
     onUndo: () -> Unit,
     onDismissHidden: () -> Unit,
     onDismissAdded: () -> Unit,
+    onUndoTag: () -> Unit,
+    onDismissTag: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
     val hiddenTitle = state.hiddenSnackbarTitle
     val addedTitle = state.addedSnackbarTitle
+    val tagSnack = state.tagSnackbar
     LaunchedEffect(hiddenTitle) {
         if (hiddenTitle != null) {
             delay(4000)
@@ -920,8 +941,15 @@ private fun FeedSnackbar(
             onDismissAdded()
         }
     }
+    LaunchedEffect(tagSnack) {
+        if (tagSnack != null) {
+            delay(4000)
+            onDismissTag()
+        }
+    }
     val message = when {
         hiddenTitle != null -> stringResource(AYMR.strings.for_you_hidden_snackbar)
+        tagSnack != null -> stringResource(AYMR.strings.for_you_tag_blacklist_undo, tagSnack.second, tagSnack.first)
         addedTitle != null -> stringResource(AYMR.strings.for_you_added_snackbar, addedTitle)
         else -> null
     } ?: return
@@ -938,7 +966,7 @@ private fun FeedSnackbar(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(message, color = colors.textPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                if (hiddenTitle != null) {
+                if (hiddenTitle != null || tagSnack != null) {
                     Spacer(Modifier.width(12.dp))
                     Text(
                         stringResource(AYMR.strings.for_you_undo),
@@ -947,7 +975,7 @@ private fun FeedSnackbar(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.clickable {
                             appHaptics.tap()
-                            onUndo()
+                            if (tagSnack != null) onUndoTag() else onUndo()
                         },
                     )
                 }

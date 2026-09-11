@@ -106,6 +106,40 @@ class DiscoveryTrendRowBuilderTest {
     }
 
     @Test
+    fun `blacklisted genre filtered from trending items`() = runTest {
+        val trending = FakeTrending(
+            items = listOf(
+                DiscoveryTrendingItem(
+                    "Fantasy Anime",
+                    "fantasy anime",
+                    null,
+                    1L,
+                    seasonLabel = "current",
+                    genres = listOf("Fantasy"),
+                ),
+                DiscoveryTrendingItem(
+                    "Action Anime",
+                    "action anime",
+                    null,
+                    2L,
+                    seasonLabel = "current",
+                    genres = listOf("Action"),
+                ),
+            ),
+        )
+        val builder = DiscoveryTrendRowBuilder(
+            trending = trending,
+            catalog = FakeCatalog(),
+            seasonProvider = { TrendSeason.CURRENT },
+            sortProvider = { TrendSort.POPULARITY },
+        )
+        val result = builder.build(
+            testContext.copy(mediaType = DiscoveryMediaType.ANIME, blacklistedTags = setOf("фэнтези")),
+        )
+        result.map { it.title } shouldBe listOf("Action Anime")
+    }
+
+    @Test
     fun `falls back to catalog latest when AniList returns empty list`() = runTest {
         val trending = FakeTrending(items = emptyList())
         val catalog = FakeCatalog(

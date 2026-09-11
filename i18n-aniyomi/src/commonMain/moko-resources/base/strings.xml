@@ -2174,6 +2174,15 @@
     <string name="pref_discovery_nsfw_filter">Hide 18+ content</string>
     <string name="pref_discovery_nsfw_filter_summary">Independent switch: filters adult content from external providers regardless of the app-wide NSFW setting. Plugin catalogues follow the app setting</string>
     <string name="for_you_failed_banner">Some picks failed to update — showing previous results</string>
+    <string name="for_you_tag_hide_title">Hide title</string>
+    <string name="for_you_tag_blacklist_action">Hide all with tag “%1$s”</string>
+    <string name="for_you_tag_blacklist_action_generic">Hide all with tag</string>
+    <string name="for_you_tag_blacklist_disabled">Tags appear after the next feed update</string>
+    <string name="for_you_tag_blacklist_undo">Hid %1$d picks with tag “%2$s”</string>
+    <string name="pref_discovery_blacklist_tags">Hidden tags</string>
+    <string name="pref_discovery_blacklist_tags_summary">Tag-level “not interested”: picks with these genres are filtered out</string>
+    <string name="pref_discovery_blacklist_empty">No hidden tags yet</string>
+    <string name="pref_discovery_blacklist_reset">Reset all tags</string>
     <string name="pref_home_hero_mode">Main banner style</string>
     <string name="pref_collage_rotation_interval">Tile rotation interval</string>
     <string name="pref_collage_rotation_interval_0">Disabled</string>

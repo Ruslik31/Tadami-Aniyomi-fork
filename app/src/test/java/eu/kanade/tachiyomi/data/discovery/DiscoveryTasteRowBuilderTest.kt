@@ -58,13 +58,17 @@ class DiscoveryTasteRowBuilderTest {
         ): List<DiscoveryRowItem> = emptyList()
     }
 
-    private fun context(profile: List<Pair<String, Double>> = listOf("Fantasy" to 2.0)) = DiscoveryBuildContext(
+    private fun context(
+        profile: List<Pair<String, Double>> = listOf("Fantasy" to 2.0),
+        blacklistedTags: Set<String> = emptySet(),
+    ) = DiscoveryBuildContext(
         mediaType = DiscoveryMediaType.MANGA,
         seeds = emptyList(),
         libraryCleanTitles = emptySet(),
         historyCleanTitles = emptySet(),
         hiddenCleanTitles = emptySet(),
         tasteProfile = profile,
+        blacklistedTags = blacklistedTags,
         sourceId = 7L,
     )
 
@@ -118,5 +122,27 @@ class DiscoveryTasteRowBuilderTest {
     @Test
     fun `builder row type is TASTE`() {
         builder(FakeTrending(), FakeCatalog()).rowType shouldBe DiscoveryRowType.TASTE
+    }
+
+    @Test
+    fun `blacklisted genre is excluded from profile and item filter`() = runTest {
+        val trending = FakeTrending(
+            genreItems = listOf(
+                DiscoveryTrendingItem("Fantasy Item", "fantasy item", null, 1L, null, genres = listOf("Fantasy")),
+                DiscoveryTrendingItem("Action Item", "action item", null, 2L, null, genres = listOf("Action")),
+            ),
+        )
+        val result = builder(trending, FakeCatalog()).build(
+            context(profile = listOf("Fantasy" to 2.0, "Action" to 1.0), blacklistedTags = setOf("фэнтези")),
+        )
+        result.map { it.title } shouldBe listOf("Action Item")
+    }
+
+    @Test
+    fun `fully blacklisted profile yields empty row without calls`() = runTest {
+        val result = builder(FakeTrending(shouldFail = true), FakeCatalog(shouldFail = true)).build(
+            context(profile = listOf("Fantasy" to 2.0), blacklistedTags = setOf("Fantasy")),
+        )
+        result shouldBe emptyList()
     }
 }

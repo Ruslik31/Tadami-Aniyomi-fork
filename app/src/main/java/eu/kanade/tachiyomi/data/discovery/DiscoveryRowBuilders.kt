@@ -84,6 +84,8 @@ class DiscoveryTrendRowBuilder(
         }
         // C1: приоритет — топ-взвешенный источник библиотеки, иначе lastUsed/fallback.
         val preferredSourceId = context.sourceIds.firstOrNull() ?: context.sourceId
+        // B2: жанры из tag-blacklist не проходят в ряд (best-effort: без жанров — без фильтра).
+        val expandedBlacklist = expandGenreSet(context.blacklistedTags.toList())
 
         // Для новелл приоритет отдаём установленному источнику пользователя (InkStory, Ranobe и др.),
         // где новеллы реально можно читать прямо в приложении.
@@ -108,18 +110,20 @@ class DiscoveryTrendRowBuilder(
                 sort = effectiveSort,
                 page = context.pageOffset,
             )
-        }.getOrNull().orEmpty().map { item ->
-            DiscoveryRowItem(
-                title = item.title,
-                cleanTitle = item.cleanTitle,
-                coverUrl = item.coverUrl,
-                // Payload "current"/"next"/"source"/null — шаблон строки выбирается на рендере.
-                reason = item.seasonLabel,
-                seedTitle = null,
-                provider = item.provider,
-                score = 0.0,
-            )
-        }
+        }.getOrNull().orEmpty()
+            .filterNot { item -> item.genres.any { it.trim().lowercase() in expandedBlacklist } }
+            .map { item ->
+                DiscoveryRowItem(
+                    title = item.title,
+                    cleanTitle = item.cleanTitle,
+                    coverUrl = item.coverUrl,
+                    // Payload "current"/"next"/"source"/null — шаблон строки выбирается на рендере.
+                    reason = item.seasonLabel,
+                    seedTitle = null,
+                    provider = item.provider,
+                    score = 0.0,
+                )
+            }
 
         if (fromTrending.isNotEmpty()) {
             return fromTrending
@@ -160,7 +164,12 @@ class DiscoveryTasteRowBuilder(
     override suspend fun build(context: DiscoveryBuildContext): List<DiscoveryRowItem> {
         val profile = context.tasteProfile
         if (profile.isEmpty()) return emptyList()
-        val genreNames = profile.take(4).map { it.first }
+        // B2: заблэклиженные жанры выключаются из профиля ДО запросов — они не
+        // должны попадать ни в genre-запросы, ни в скор/обоснования.
+        val expandedBlacklist = expandGenreSet(context.blacklistedTags.toList())
+        val activeProfile = profile.filterNot { (genre, _) -> genre.trim().lowercase() in expandedBlacklist }
+        if (activeProfile.isEmpty()) return emptyList()
+        val genreNames = activeProfile.take(4).map { it.first }
         val trendingResult = runCatching {
             trending.fetchByGenres(context.mediaType, genreNames, sortProvider(), page = context.pageOffset)
         }
@@ -169,31 +178,32 @@ class DiscoveryTasteRowBuilder(
         } else {
             null
         }
-        val fromTrending = trendingResult.getOrNull().orEmpty().map { item ->
-            DiscoveryRowItem(
-                title = item.title,
-                cleanTitle = item.cleanTitle,
-                coverUrl = item.coverUrl,
-                reason = matchedGenres(item.genres, profile).joinToString(", "),
-                seedTitle = null,
-                provider = item.provider,
-                score = tasteScore(item.genres, profile),
-            )
-        }
+        val fromTrending = trendingResult.getOrNull().orEmpty()
+            // best-effort: провайдеры без жанров в выдаче (source-latest) не фильтруются
+            .filterNot { item -> item.genres.any { it.trim().lowercase() in expandedBlacklist } }
+            .map { item ->
+                DiscoveryRowItem(
+                    title = item.title,
+                    cleanTitle = item.cleanTitle,
+                    coverUrl = item.coverUrl,
+                    reason = matchedGenres(item.genres, activeProfile).joinToString(", "),
+                    seedTitle = null,
+                    provider = item.provider,
+                    score = tasteScore(item.genres, activeProfile),
+                )
+            }
         val fromSource = sourceResult?.getOrNull().orEmpty().map { item ->
             item.copy(
                 reason = genreNames.take(2).joinToString(", "),
                 score = 0.5 + item.score * 0.1,
             )
         }
-        val combined = (fromTrending + fromSource)
+        val combined = mergeNormalized(fromTrending, fromSource)
         val anyFailed = trendingResult.isFailure || (sourceResult?.isFailure ?: false)
         if (combined.isEmpty() && anyFailed) {
             throw IOException("taste sources failed without results")
         }
-        return combined
-            .sortedByDescending { it.score }
-            .take(20)
+        return combined.take(20)
     }
 }
 

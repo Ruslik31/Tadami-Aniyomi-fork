@@ -945,11 +945,16 @@ object HomeHubTab : Tab {
             }
         }
         var hiddenSnackItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }
+        // B2: теговый snackbar — (тег, число скрытых карточек, исходный медиатип для undo).
+        var tagSnack by remember {
+            mutableStateOf<Triple<String, Int, tachiyomi.domain.discovery.model.DiscoveryMediaType>?>(null)
+        }
         val discoveryHideScope = rememberCoroutineScope()
-        LaunchedEffect(hiddenSnackItem) {
-            if (hiddenSnackItem != null) {
+        LaunchedEffect(hiddenSnackItem, tagSnack) {
+            if (hiddenSnackItem != null || tagSnack != null) {
                 delay(4000)
                 hiddenSnackItem = null
+                tagSnack = null
             }
         }
         val onDiscoveryHide: (HomeHubDiscoveryItem) -> Unit = { item ->
@@ -960,19 +965,38 @@ object HomeHubTab : Tab {
                 hiddenSnackItem = item
             }
         }
+        val onDiscoveryBlacklistTag: (HomeHubDiscoveryItem, String, Int) -> Unit = { item, tag, count ->
+            discoveryHideScope.launch {
+                discoveryRepository.blacklistTag(item.mediaType, tag)
+                tagSnack = Triple(tag, count, item.mediaType)
+            }
+        }
         val onUndoHidden: () -> Unit = {
-            val item = hiddenSnackItem
-            hiddenSnackItem = null
-            if (item != null) {
+            val snack = tagSnack
+            if (snack != null) {
+                tagSnack = null
                 discoveryHideScope.launch {
-                    discoveryRepository.unhide(item.mediaType, item.cleanTitle)
+                    discoveryRepository.unblacklistTag(snack.third, snack.first)
+                }
+            } else {
+                val item = hiddenSnackItem
+                hiddenSnackItem = null
+                if (item != null) {
+                    discoveryHideScope.launch {
+                        discoveryRepository.unhide(item.mediaType, item.cleanTitle)
+                    }
                 }
             }
         }
-        val hiddenSnackText = if (hiddenSnackItem != null) {
-            stringResource(AYMR.strings.for_you_hidden_snackbar)
-        } else {
-            null
+        val currentTagSnack = tagSnack
+        val hiddenSnackText = when {
+            currentTagSnack != null -> stringResource(
+                AYMR.strings.for_you_tag_blacklist_undo,
+                currentTagSnack.second,
+                currentTagSnack.first,
+            )
+            hiddenSnackItem != null -> stringResource(AYMR.strings.for_you_hidden_snackbar)
+            else -> null
         }
 
         val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -1035,6 +1059,7 @@ object HomeHubTab : Tab {
                                 hiddenSnackbar = hiddenSnackText,
                                 onUndoHidden = onUndoHidden,
                                 onDiscoveryLongClick = onDiscoveryHide,
+                                onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -1055,6 +1080,7 @@ object HomeHubTab : Tab {
                                 hiddenSnackbar = hiddenSnackText,
                                 onUndoHidden = onUndoHidden,
                                 onDiscoveryLongClick = onDiscoveryHide,
+                                onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -1075,6 +1101,7 @@ object HomeHubTab : Tab {
                                 hiddenSnackbar = hiddenSnackText,
                                 onUndoHidden = onUndoHidden,
                                 onDiscoveryLongClick = onDiscoveryHide,
+                                onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.discovery
 
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.doubles.plusOrMinus
 import io.kotest.matchers.shouldBe
 import org.junit.Test
 import tachiyomi.domain.discovery.model.DiscoveryRowType
@@ -196,6 +197,65 @@ class DiscoveryMixTest {
             DiscoveryRowType.LIKE to "Solo Leveling",
             DiscoveryRowType.LIKE to "Unique Like",
         )
+    }
+
+    @Test
+    fun `isBlacklisted filters taste rows by reason csv with translations`() {
+        val taste = dbSuggestion(DiscoveryRowType.TASTE, "Item").copy(reason = "Фэнтези, Драма")
+        val like = dbSuggestion(DiscoveryRowType.LIKE, "Item").copy(reason = "Фэнтези")
+        val expanded = expandGenreSet(listOf("Fantasy"))
+        isBlacklisted(taste, expanded) shouldBe true
+        // LIKE-ряд не имеет персистентных жанров — read-time фильтр его не трогает
+        isBlacklisted(like, expanded) shouldBe false
+        isBlacklisted(taste, emptySet()) shouldBe false
+        isBlacklisted(dbSuggestion(DiscoveryRowType.TASTE, "NoReason"), expanded) shouldBe false
+    }
+
+    @Test
+    fun `rrfScores sums reciprocal ranks across rows`() {
+        val rows = mapOf(
+            DiscoveryRowType.LIKE to listOf(item(DiscoveryRowType.LIKE, "A"), item(DiscoveryRowType.LIKE, "B")),
+            DiscoveryRowType.TREND to listOf(item(DiscoveryRowType.TREND, "A"), item(DiscoveryRowType.TREND, "C")),
+        )
+        val scores = rrfScores(rows)
+        (scores.getValue("a") > scores.getValue("b")) shouldBe true
+        scores.getValue("a") shouldBe (2.0 / 60 plusOrMinus 1e-9)
+        scores.getValue("b") shouldBe (1.0 / 61 plusOrMinus 1e-9)
+        scores.getValue("b") shouldBe scores.getValue("c")
+    }
+
+    @Test
+    fun `fill phase uses rrf ranks instead of raw scores when provided`() {
+        val like = (1..12).map { i ->
+            item(DiscoveryRowType.LIKE, "L$i", if (i >= 11) 100.0 - (i - 11) else 1.0)
+        }
+        val trend = (1..8).map { item(DiscoveryRowType.TREND, "T$it", 0.0) }
+        val rows = mapOf(DiscoveryRowType.LIKE to like, DiscoveryRowType.TREND to trend)
+
+        // без rrf — прежнее поведение по сырым скорам (LIKE 100/99 топится выше TREND 0.0)
+        interleaveMix(rows, total = 30).takeLast(4).map { it.title } shouldBe
+            listOf("L11", "L12", "T7", "T8")
+        // с rrf — ранг важнее шкалы: T7 (rank 6) опережает L11 (rank 10)
+        interleaveMix(rows, total = 30, rrf = rrfScores(rows)).takeLast(4).map { it.title } shouldBe
+            listOf("T7", "T8", "L11", "L12")
+    }
+
+    @Test
+    fun `mergeNormalized spreads degenerate list to neutral and orders by normalized score`() {
+        val a = listOf(
+            item(DiscoveryRowType.TASTE, "A1", 0.0),
+            item(DiscoveryRowType.TASTE, "A2", 2.5),
+            item(DiscoveryRowType.TASTE, "A3", 5.0),
+        )
+        val b = listOf(item(DiscoveryRowType.TASTE, "B1", 0.6))
+        // A3=1.0; A2=0.5; B1 — вырожденный список → нейтральные 0.5 (стабильно после A2); A1=0.0
+        mergeNormalized(a, b).map { it.title } shouldBe listOf("A3", "A2", "B1", "A1")
+
+        val equal = listOf(
+            item(DiscoveryRowType.TASTE, "E1", 2.0),
+            item(DiscoveryRowType.TASTE, "E2", 2.0),
+        )
+        mergeNormalized(equal, emptyList()).map { it.title } shouldBe listOf("E1", "E2")
     }
 
     private fun dbSuggestion(

@@ -1,0 +1,18 @@
+CREATE TABLE discovery_blacklist_tags (
+    media_type TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (media_type, tag)
+);
+
+selectAllByMedia:
+SELECT * FROM discovery_blacklist_tags WHERE media_type = ?;
+
+insertOrIgnore:
+INSERT OR IGNORE INTO discovery_blacklist_tags(media_type, tag, added_at) VALUES (?, ?, ?);
+
+delete:
+DELETE FROM discovery_blacklist_tags WHERE media_type = ? AND tag = ?;
+
+deleteAllByMedia:
+DELETE FROM discovery_blacklist_tags WHERE media_type = ?;

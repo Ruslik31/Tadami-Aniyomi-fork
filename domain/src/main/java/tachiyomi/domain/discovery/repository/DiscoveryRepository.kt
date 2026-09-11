@@ -14,4 +14,11 @@ interface DiscoveryRepository {
     suspend fun unhide(mediaType: DiscoveryMediaType, cleanTitle: String)
     suspend fun clearHidden(mediaType: DiscoveryMediaType)
     suspend fun lastUpdatedAt(mediaType: DiscoveryMediaType): Long?
+
+    /** Tag-blacklist «скрыть всё с тегом X» (B2). */
+    fun subscribeBlacklist(mediaType: DiscoveryMediaType): Flow<Set<String>>
+    suspend fun getBlacklistedTags(mediaType: DiscoveryMediaType): Set<String>
+    suspend fun blacklistTag(mediaType: DiscoveryMediaType, tag: String)
+    suspend fun unblacklistTag(mediaType: DiscoveryMediaType, tag: String)
+    suspend fun clearBlacklist(mediaType: DiscoveryMediaType)
 }
