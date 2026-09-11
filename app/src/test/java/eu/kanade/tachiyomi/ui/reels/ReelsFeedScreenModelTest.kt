@@ -1395,7 +1395,7 @@ class ReelsFeedScreenModelTest {
         }
 
     @Test
-    fun `toggleFollow persists both directions, restores per source and refuses past the cap`() =
+    fun `toggleFollow persists both directions and restores per source`() =
         runTest(testDispatcher) {
             val sourceA = RecordingCreatorFeedSource(1104L) { _, _, _ -> FeedPage(emptyList(), false) }
             val sourceB = RecordingCreatorFeedSource(1105L) { _, _, _ -> FeedPage(emptyList(), false) }
@@ -1407,7 +1407,7 @@ class ReelsFeedScreenModelTest {
             )
             testDispatcher.scheduler.advanceUntilIdle()
 
-            screenModel.toggleFollow("alice") shouldBe true
+            screenModel.toggleFollow("alice")
             testDispatcher.scheduler.advanceUntilIdle()
             screenModel.state.value.followingCreators.contains("alice") shouldBe true
             follows.follows.keys shouldBe setOf(1104L to "alice")
@@ -1421,17 +1421,17 @@ class ReelsFeedScreenModelTest {
             screenModel.state.value.followingCreators.contains("alice") shouldBe true
 
             // ...and unfollowing removes the row.
-            screenModel.toggleFollow("alice") shouldBe true
+            screenModel.toggleFollow("alice")
             testDispatcher.scheduler.advanceUntilIdle()
             follows.follows.isEmpty() shouldBe true
 
-            // Soft cap: 100 rows per source, the 101st is refused without any DB write.
-            repeat(100) { index -> check(screenModel.toggleFollow("creator-$index")) }
+            // Uncapped: follows beyond the former 100-row soft cap persist like any other row.
+            repeat(100) { index -> screenModel.toggleFollow("creator-$index") }
             testDispatcher.scheduler.advanceUntilIdle()
-            screenModel.toggleFollow("over-cap") shouldBe false
-            screenModel.state.value.followingCreators.contains("over-cap") shouldBe false
-            follows.follows.size shouldBe 100
-            follows.follows.keys.none { it.second == "over-cap" } shouldBe true
+            screenModel.toggleFollow("over-cap")
+            testDispatcher.scheduler.advanceUntilIdle()
+            screenModel.state.value.followingCreators.contains("over-cap") shouldBe true
+            follows.follows.size shouldBe 101
         }
 
     @Test

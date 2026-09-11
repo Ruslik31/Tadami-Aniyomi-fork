@@ -130,10 +130,9 @@ class ReelsFeedScreenModel(
     companion object {
         val sharedSessionSound = ReelsSessionSoundState()
 
-        // Fan-out protection for the FOLLOWING aggregation: a generation fetches one page
-        // per followed creator, so the cap bounds concurrent requests. Enforced host-side
-        // (the repository stores whatever it is told).
-        const val MAX_FOLLOWS_PER_SOURCE = 100
+        // Fan-out protection for the FOLLOWING aggregation: one page per followed creator,
+        // fetched in bounded-concurrency chunks (the follow count itself is uncapped).
+        const val FOLLOWING_FETCH_CONCURRENCY = 12
 
         // Shown when a login returns false (rejected credentials); transport errors surface
         // their own message instead.
@@ -562,11 +561,12 @@ class ReelsFeedScreenModel(
                         current.copy(isLoading = false, pageError = t.localizedMessage ?: "Failed to load feed")
                     }
                 }
-                // Cloudflare managed challenge (403 challenge page on web-login-capable
-                // sources): bootstrap the session cookies via an offscreen WebView without
-                // any user interaction; the import verification reloads the feed on success.
+                // Cloudflare managed challenge (403) or a dead account bearer (401) on
+                // web-login-capable sources: bootstrap the session cookies/tokens via an
+                // offscreen WebView without any user interaction; the import verification
+                // reloads the feed on success.
                 val msg = t.localizedMessage.orEmpty()
-                if ("403" in msg && source is AnimeFeedWebLoginSource) {
+                if (("403" in msg || "401" in msg) && source is AnimeFeedWebLoginSource) {
                     mutableState.update { it.copy(cfBootstrapAttempt = it.cfBootstrapAttempt + 1) }
                 }
             }
@@ -631,9 +631,13 @@ class ReelsFeedScreenModel(
             }
 
             val outcomes: List<Result<FeedPage>> = coroutineScope {
-                requests.map { (stream, page, cursor) ->
-                    async { runCatching { capable.getCreatorFeed(stream.creator, page, cursor) } }
-                }.map { it.await() }
+                // Bounded concurrency: chunked fan-out keeps a huge follow set from opening
+                // one socket per creator at once (order of outcomes is preserved).
+                requests.chunked(FOLLOWING_FETCH_CONCURRENCY).flatMap { chunk ->
+                    chunk.map { (stream, page, cursor) ->
+                        async { runCatching { capable.getCreatorFeed(stream.creator, page, cursor) } }
+                    }.map { it.await() }
+                }
             }
             currentCoroutineContext().ensureActive()
             if (loadGeneration.get() != generation) return
@@ -671,6 +675,11 @@ class ReelsFeedScreenModel(
             followingStreams = if (reset) alive else followingStreams.filterNot { it in failedStreams }
             val merged = mergeFollowingStreams(followingStreams)
             val failedText = failures.joinToString("; ")
+            // Same self-healing as loadFeed: a Cloudflare/dead-session failure inside the
+            // creator streams re-lifts the web session through the bootstrap WebView.
+            if (("403" in failedText || "401" in failedText) && src is AnimeFeedWebLoginSource) {
+                mutableState.update { it.copy(cfBootstrapAttempt = it.cfBootstrapAttempt + 1) }
+            }
 
             mutableState.update { current ->
                 if (loadGeneration.get() != generation) return@update current
@@ -751,15 +760,12 @@ class ReelsFeedScreenModel(
 
     /**
      * Follow/unfollow the given creator on the current source. Explicit user data: the
-     * write persists regardless of incognito (same rule as favorite removal).
-     *
-     * @return false when the new-follow would cross [MAX_FOLLOWS_PER_SOURCE] (no state or
-     * DB change happens; the caller surfaces the refusal, e.g. with a snackbar).
+     * write persists regardless of incognito (same rule as favorite removal). Uncapped —
+     * the FOLLOWING fan-out is bounded at fetch time, not at the follow set.
      */
-    fun toggleFollow(creator: String): Boolean {
+    fun toggleFollow(creator: String) {
         val sourceId = state.value.currentSourceId
         val willFollow = creator !in state.value.followingCreators
-        if (willFollow && state.value.followingCreators.size >= MAX_FOLLOWS_PER_SOURCE) return false
         decidedFollows += creator
         mutableState.update { state ->
             val newFollows = if (willFollow) {
@@ -778,7 +784,6 @@ class ReelsFeedScreenModel(
                 reelsFollowRepository.delete(sourceId, creator)
             }
         }
-        return true
     }
 
     private fun loadPersistedFollows(sourceId: Long) {

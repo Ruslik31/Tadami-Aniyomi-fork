@@ -16,6 +16,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -40,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,7 +53,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -150,14 +154,10 @@ data class ReelsFeedScreen(
         val snackbarHostState = remember { SnackbarHostState() }
         var pendingDeleteFeed by remember { mutableStateOf<CustomFeedRef?>(null) }
         val retryLabel = stringResource(MR.strings.action_retry)
-        val followCapMessage = stringResource(MR.strings.reels_follow_cap_reached)
 
-        // Follow tap at the per-source cap: no state/DB change, just the refusal snackbar.
         fun handleFollowToggle(creatorName: String?) {
             if (creatorName == null) return
-            if (!screenModel.toggleFollow(creatorName)) {
-                coroutineScope.launch { snackbarHostState.showSnackbar(followCapMessage) }
-            }
+            screenModel.toggleFollow(creatorName)
         }
         // Preload gating must be reactive: a plain context.isOnWifi() call here would be
         // recomputed (stale) on every recomposition instead of tracking network changes.
@@ -280,6 +280,17 @@ data class ReelsFeedScreen(
                         }
                     }
 
+                    // Horizontal swipe switches feeds: left on the global feed opens this
+                    // source's Following feed, right on Following pops back. The vertical
+                    // pager owns the orthogonal axis; landscape fullscreen ignores swipes.
+                    val feedSwipeEnabled = !landscapeFullscreen &&
+                        (
+                            followingFeed ||
+                                (state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL && state.isCreatorCapable)
+                            )
+                    val swipeThresholdPx = with(LocalDensity.current) { 110.dp.toPx() }
+                    var horizontalDragPx by remember { mutableFloatStateOf(0f) }
+
                     // Vertical Pager for reels video cards
                     VerticalPager(
                         state = pagerState,
@@ -289,7 +300,32 @@ data class ReelsFeedScreen(
                         // the feed programmatically (portrait reels exit fullscreen, see
                         // ReelsVideoPage).
                         userScrollEnabled = !landscapeFullscreen,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(feedSwipeEnabled, swipeThresholdPx) {
+                                if (!feedSwipeEnabled) return@pointerInput
+                                detectHorizontalDragGestures(
+                                    onDragStart = { horizontalDragPx = 0f },
+                                    onDragCancel = { horizontalDragPx = 0f },
+                                    onDragEnd = {
+                                        when {
+                                            horizontalDragPx <= -swipeThresholdPx && !followingFeed ->
+                                                navigator.push(
+                                                    ReelsFeedScreen(
+                                                        sourceId = state.currentSourceId,
+                                                        followingFeed = true,
+                                                    ),
+                                                )
+                                            horizontalDragPx >= swipeThresholdPx && followingFeed ->
+                                                navigator.pop()
+                                        }
+                                        horizontalDragPx = 0f
+                                    },
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    horizontalDragPx += dragAmount
+                                }
+                            },
                     ) { page ->
                         val item = state.items.getOrNull(page)
                         if (item != null) {
