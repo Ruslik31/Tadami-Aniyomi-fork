@@ -72,18 +72,22 @@ fun ReelsWebLoginDialog(
     var dumpMember by remember { mutableStateOf<((Map<String, String>, Map<String, String>) -> Unit)?>(null) }
     var dumpCookiesHolder by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var dumpGen by remember { mutableStateOf(0) }
+    var isStage2Active by remember { mutableStateOf(false) }
 
     // Stage 2 (contract v20): load the source's own PKCE authorize URL in the same WebView;
     // with the auth2 cookie from the SPA flow it auto-completes and its state-matched
     // redirect is intercepted by [isOwnRedirect]/[onOwnRedirect] below for the code exchange.
     LaunchedEffect(stage2Attempt) {
         if (stage2Attempt > 0) {
+            isStage2Active = true
+            dumpMember = null
+            dumpGen = 0
             webView?.loadUrl(freshStartUrl() ?: startUrl)
         }
     }
 
     fun deliverDump(gen: Int, storage: Map<String, String>) {
-        if (dumpGen != gen || gen == 0) return
+        if (isStage2Active || dumpGen != gen || gen == 0) return
         val consumer = dumpMember ?: return
         dumpMember = null
         dumpGen = 0
@@ -208,11 +212,23 @@ fun ReelsWebLoginDialog(
                                 cookieManager.setAcceptThirdPartyCookies(this, true)
                                 webChromeClient = chromeClient
                                 webViewClient = object : WebViewClient() {
+                                    private fun handleRedirect(view: WebView, url: String?): Boolean {
+                                        if (url == null) return false
+                                        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+                                        if (uri.getQueryParameter("code") != null && isOwnRedirect(url)) {
+                                            view.stopLoading()
+                                            onOwnRedirect(url, cookieDump(cookieOrigins))
+                                            return true
+                                        }
+                                        return false
+                                    }
+
                                     override fun onPageStarted(
                                         view: WebView,
                                         url: String?,
                                         favicon: android.graphics.Bitmap?,
                                     ) {
+                                        if (handleRedirect(view, url)) return
                                         originOf(url)?.let { cookieOrigins += it }
                                         // Instrument the SPA's own fetch/XHR so the dump can lift
                                         // its live api bearer + handshake session id.
@@ -227,17 +243,12 @@ fun ReelsWebLoginDialog(
                                         request: WebResourceRequest,
                                     ): Boolean {
                                         val url = request.url.toString()
-                                        // Only OUR in-flight PKCE redirects are intercepted and
-                                        // handed to the source for the code exchange; the SPA's
-                                        // own callback redirects must load normally.
-                                        if (Uri.parse(url).getQueryParameter("code") != null && isOwnRedirect(url)) {
-                                            onOwnRedirect(url, cookieDump(cookieOrigins))
-                                            return true
-                                        }
+                                        if (handleRedirect(view, url)) return true
                                         return false
                                     }
 
                                     override fun onPageFinished(view: WebView, url: String?) {
+                                        if (handleRedirect(view, url)) return
                                         // Navigation trail without page content: host + first path
                                         // segment only (deep slugs can carry sensitive words).
                                         val safe = url?.let { u ->
@@ -250,10 +261,14 @@ fun ReelsWebLoginDialog(
                                         // api calls (with its live bearer) only after boot,
                                         // i.e. after this page-finished event.
                                         view.evaluateJavascript(INSTRUMENT_JS, null)
-                                        if (url != null && isBackOnServiceSite(url, startUrl)) {
+                                        if (!isStage2Active && url != null && isBackOnServiceSite(url, startUrl)) {
                                             requestDump(view, onSession)
-                                            view.postDelayed({ requestDump(view, onSession) }, 4000)
-                                            view.postDelayed({ requestDump(view, onSession) }, 9000)
+                                            view.postDelayed({
+                                                if (!isStage2Active) requestDump(view, onSession)
+                                            }, 4000)
+                                            view.postDelayed({
+                                                if (!isStage2Active) requestDump(view, onSession)
+                                            }, 9000)
                                         }
                                     }
 
@@ -289,16 +304,6 @@ fun ReelsWebLoginDialog(
                         container
                     },
                 )
-
-                // Stage 2 (contract v20): the Done press found no liftable session (the SPA
-                // keeps its tokens in memory) — load the source's OWN PKCE authorize URL in
-                // the same WebView; the auth2 cookie from the SPA login makes it auto-complete
-                // and its redirect is intercepted via [isOwnRedirect]+[onOwnRedirect].
-                LaunchedEffect(stage2Attempt) {
-                    if (stage2Attempt > 0) {
-                        webView?.loadUrl(freshStartUrl() ?: startUrl)
-                    }
-                }
             }
         }
     }

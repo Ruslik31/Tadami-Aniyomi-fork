@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.reels
 
+import android.net.Uri
+import android.webkit.CookieManager
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -1317,11 +1319,41 @@ class ReelsFeedScreenModel(
     /** Clears the persisted login session of the current source and reloads the feed. */
     fun logout() {
         val loginSource = source as? AnimeFeedLoginSource ?: return
+        val webLoginSource = source as? AnimeFeedWebLoginSource
         screenModelScope.launch(NonCancellable + ioDispatcher) {
             runCatching { loginSource.logout() }
+            if (webLoginSource != null) {
+                runCatching { clearWebLoginCookies(webLoginSource.webLoginUrl()) }
+            }
             mutableState.update { it.copy(loggedInAccount = null, loginError = null) }
             loadFeed(reset = true)
         }
+    }
+
+    private fun clearWebLoginCookies(startUrl: String) {
+        val uri = runCatching { Uri.parse(startUrl) }.getOrNull() ?: return
+        val host = uri.host ?: return
+        val origins = mutableSetOf<String>()
+        val scheme = uri.scheme ?: "https"
+        origins += "$scheme://$host"
+        val labels = host.split('.')
+        if (labels.size >= 2) {
+            val root = labels.takeLast(2).joinToString(".")
+            origins += "$scheme://$root"
+            origins += "$scheme://auth2.$root"
+            origins += "$scheme://api.$root"
+        }
+        val cm = CookieManager.getInstance()
+        origins.forEach { origin ->
+            val cookieStr = cm.getCookie(origin) ?: return@forEach
+            cookieStr.split(';').forEach { pair ->
+                val key = pair.substringBefore('=').trim()
+                if (key.isNotEmpty()) {
+                    cm.setCookie(origin, "$key=; Max-Age=0; Path=/")
+                }
+            }
+        }
+        cm.flush()
     }
 
     private fun loadPersistedFavorites(sourceId: Long) {
