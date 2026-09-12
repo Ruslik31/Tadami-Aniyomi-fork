@@ -1,6 +1,7 @@
 package eu.kanade.presentation.reader.novel
 
 import android.text.format.DateUtils
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,14 +27,11 @@ import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SettingsVoice
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Timer
-import androidx.compose.material.icons.outlined.TimerOff
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,7 +52,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.reader.settings.auroraRimColor
 import eu.kanade.presentation.theme.AuroraTheme
@@ -366,7 +363,7 @@ internal fun NovelReaderTtsControls(
     if (!snapshot.showControls) return
 
     var showOptions by remember { mutableStateOf(false) }
-    var showSleepTimer by remember { mutableStateOf(false) }
+    var timerExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -468,7 +465,7 @@ internal fun NovelReaderTtsControls(
                 )
             }
 
-            IconButton(onClick = { showSleepTimer = true }) {
+            IconButton(onClick = { timerExpanded = !timerExpanded }) {
                 Icon(
                     imageVector = Icons.Outlined.Timer,
                     contentDescription = stringResource(AYMR.strings.timer_title),
@@ -505,6 +502,44 @@ internal fun NovelReaderTtsControls(
             }
         }
 
+        AnimatedVisibility(visible = timerExpanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    novelReaderTtsSleepTimerPresetsMinutes.forEach { minutes ->
+                        NovelReaderTtsSleepChip(
+                            label = minutes.toString(),
+                            selected = false,
+                            onClick = { onSetSleepTimer(minutes * 60) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                NovelReaderTtsSleepChip(
+                    label = stringResource(AYMR.strings.novel_tts_sleep_end_of_chapter),
+                    selected = snapshot.sleepTimerEndOfChapter,
+                    onClick = onSetSleepTimerEndOfChapter,
+                    icon = Icons.Outlined.Bedtime,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (snapshot.sleepTimerActive) {
+                    NovelReaderTtsSleepChip(
+                        label = stringResource(AYMR.strings.timer_cancel_timer),
+                        selected = false,
+                        onClick = { onSetSleepTimer(0) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+
         uiState.errorMessage?.takeIf { it.isNotBlank() }?.let { errorMessage ->
             Text(
                 text = errorMessage,
@@ -536,15 +571,6 @@ internal fun NovelReaderTtsControls(
             onStopVoicePreview = onStopVoicePreview,
         )
     }
-
-    if (showSleepTimer) {
-        NovelReaderTtsSleepTimerSheet(
-            snapshot = snapshot,
-            onDismiss = { showSleepTimer = false },
-            onSetSleepTimer = onSetSleepTimer,
-            onSetSleepTimerEndOfChapter = onSetSleepTimerEndOfChapter,
-        )
-    }
 }
 
 @Composable
@@ -556,141 +582,6 @@ private fun novelReaderTtsSleepTimerCaption(snapshot: NovelReaderTtsControlSnaps
             AYMR.strings.timer_remaining,
             DateUtils.formatElapsedTime(snapshot.sleepTimerRemainingSeconds.toLong()),
         )
-    }
-}
-
-@Composable
-private fun NovelReaderTtsSleepTimerSheet(
-    snapshot: NovelReaderTtsControlSnapshot,
-    onDismiss: () -> Unit,
-    onSetSleepTimer: (Int) -> Unit,
-    onSetSleepTimerEndOfChapter: () -> Unit,
-) {
-    val aurora = AuroraTheme.colors
-    val sheetContainer = when {
-        aurora.isEInk -> MaterialTheme.colorScheme.surfaceContainerHigh
-        aurora.isDark -> Color.Black.copy(alpha = 0.72f)
-        else -> Color.White.copy(alpha = 0.90f)
-    }
-    val sheetShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-
-    AdaptiveSheet(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.border(width = 1.dp, color = aurora.divider, shape = sheetShape),
-        containerColor = sheetContainer,
-        applyStatusBarsPadding = false,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 20.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(36.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(aurora.textSecondary.copy(alpha = 0.35f)),
-                )
-            }
-
-            Text(
-                text = stringResource(AYMR.strings.timer_title).uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 1.sp,
-                color = aurora.textSecondary,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 14.dp),
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                novelReaderTtsSleepTimerPresetsMinutes.forEach { minutes ->
-                    NovelReaderTtsSleepChip(
-                        label = minutes.toString(),
-                        selected = false,
-                        onClick = {
-                            onSetSleepTimer(minutes * 60)
-                            onDismiss()
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            NovelReaderTtsSleepChip(
-                label = stringResource(AYMR.strings.novel_tts_sleep_end_of_chapter),
-                selected = snapshot.sleepTimerEndOfChapter,
-                onClick = {
-                    onSetSleepTimerEndOfChapter()
-                    onDismiss()
-                },
-                icon = Icons.Outlined.Bedtime,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            if (snapshot.sleepTimerActive) {
-                HorizontalDivider(
-                    modifier = Modifier.padding(top = 14.dp),
-                    color = aurora.divider,
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Schedule,
-                        contentDescription = null,
-                        tint = aurora.accent,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = novelReaderTtsSleepTimerCaption(snapshot),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = aurora.accent,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = {
-                            onSetSleepTimer(0)
-                            onDismiss()
-                        },
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.TimerOff,
-                            contentDescription = null,
-                            tint = aurora.accent,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = stringResource(AYMR.strings.timer_cancel_timer),
-                            color = aurora.accent,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -709,18 +600,13 @@ private fun NovelReaderTtsSleepChip(
             .clip(shape)
             .background(
                 when {
-                    selected -> colors.accent.copy(alpha = if (colors.isDark) 0.30f else 0.18f)
+                    selected -> colors.accent.copy(alpha = 0.18f)
                     colors.isDark -> Color.White.copy(alpha = 0.06f)
-                    else -> Color.Black.copy(alpha = 0.04f)
+                    else -> Color.Black.copy(alpha = 0.05f)
                 },
             )
-            .border(
-                width = 1.dp,
-                color = if (selected) colors.accent else auroraRimColor(),
-                shape = shape,
-            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
     ) {
@@ -735,7 +621,7 @@ private fun NovelReaderTtsSleepChip(
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) colors.accent else colors.textSecondary,
         )
     }
