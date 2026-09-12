@@ -73,6 +73,7 @@ fun ReelsWebLoginDialog(
     var dumpCookiesHolder by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var dumpGen by remember { mutableStateOf(0) }
     var isStage2Active by remember { mutableStateOf(false) }
+    var redirectHandled by remember { mutableStateOf(false) }
 
     // Stage 2 (contract v20): load the source's own PKCE authorize URL in the same WebView;
     // with the auth2 cookie from the SPA flow it auto-completes and its state-matched
@@ -80,9 +81,13 @@ fun ReelsWebLoginDialog(
     LaunchedEffect(stage2Attempt) {
         if (stage2Attempt > 0) {
             isStage2Active = true
+            redirectHandled = false
             dumpMember = null
             dumpGen = 0
             webView?.loadUrl(freshStartUrl() ?: startUrl)
+        } else {
+            isStage2Active = false
+            redirectHandled = false
         }
     }
 
@@ -213,9 +218,10 @@ fun ReelsWebLoginDialog(
                                 webChromeClient = chromeClient
                                 webViewClient = object : WebViewClient() {
                                     private fun handleRedirect(view: WebView, url: String?): Boolean {
-                                        if (url == null) return false
+                                        if (redirectHandled || url == null) return false
                                         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
                                         if (uri.getQueryParameter("code") != null && isOwnRedirect(url)) {
+                                            redirectHandled = true
                                             view.stopLoading()
                                             onOwnRedirect(url, cookieDump(cookieOrigins))
                                             return true
