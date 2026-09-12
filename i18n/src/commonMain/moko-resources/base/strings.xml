@@ -1338,24 +1338,19 @@
     <string name="achievement_stat_unlocked">Achievements unlocked</string>
     <string name="achievement_vs_last_month">vs last month</string>
     <string name="achievement_no_data">No data</string>
-    <string name="achievement_year_activity_title">Activity for the year</string>
-    <string name="achievement_period_jan_jun">Jan–Jun</string>
-    <string name="achievement_period_jul_dec">Jul–Dec</string>
-    <string name="achievement_stat_total">Total: %d</string>
-    <string name="achievement_stat_chapters">Chapters: %d</string>
-    <string name="achievement_stat_episodes">Episodes: %d</string>
-    <string name="achievement_stat_time">Time: %s</string>
-    <string name="achievement_stat_achievements">Achievements: %d</string>
     <string name="achievement_no_activity">No activity</string>
     <string name="achievement_hours_minutes">%1$dh %2$dm</string>
     <string name="achievement_hours">%1$dh</string>
     <string name="achievement_minutes">%1$dm</string>
     <string name="achievement_hours_minutes_alt">%1$dh %2$dm</string>
     <string name="achievement_minutes_alt">%1$dm</string>
-    <string name="achievement_heatmap_title">Daily activity</string>
+    <string name="achievement_heatmap_title">Activity</string>
     <string name="achievement_heatmap_period">365 days</string>
     <string name="achievement_heatmap_less">Less</string>
     <string name="achievement_heatmap_more">More</string>
+    <string name="achievement_summary_active_days">Active days</string>
+    <string name="achievement_summary_current_streak">Current streak</string>
+    <string name="achievement_summary_best_streak">Best streak</string>
 
     <!-- External metadata status labels -->
     <string name="status_finished">Finished</string>

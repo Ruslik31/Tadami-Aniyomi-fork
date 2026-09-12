@@ -7,12 +7,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.longClick
-import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.achievement.components.AchievementActivityGraph
+import eu.kanade.presentation.achievement.components.AchievementHeatmapCard
 import eu.kanade.presentation.achievement.components.AchievementStatsComparison
 import eu.kanade.presentation.theme.AuroraColors
 import eu.kanade.presentation.theme.LocalAuroraColors
@@ -62,9 +59,7 @@ class AchievementScreenTest {
     }
 
     @Test
-    fun activityGraph_displaysTitleAndBars() {
-        val yearlyStats = generateTestYearlyStats()
-
+    fun heatmapCard_displaysTitleAndPeriod() {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalAuroraColors provides AuroraColors.Dark) {
                 Box(
@@ -72,12 +67,38 @@ class AchievementScreenTest {
                         .background(AuroraColors.Dark.background)
                         .padding(16.dp),
                 ) {
-                    AchievementActivityGraph(yearlyStats = yearlyStats)
+                    AchievementHeatmapCard(
+                        activityData = emptyList(),
+                        yearlyStats = generateTestYearlyStats(),
+                    )
                 }
             }
         }
 
-        composeTestRule.onNodeWithText("Активность за год").assertIsDisplayed()
+        composeTestRule.onNodeWithText("АКТИВНОСТЬ").assertIsDisplayed()
+        composeTestRule.onNodeWithText("365 ДНЕЙ").assertIsDisplayed()
+    }
+
+    @Test
+    fun heatmapCard_displaysSummaryStats() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalAuroraColors provides AuroraColors.Dark) {
+                Box(
+                    modifier = Modifier
+                        .background(AuroraColors.Dark.background)
+                        .padding(16.dp),
+                ) {
+                    AchievementHeatmapCard(
+                        activityData = emptyList(),
+                        yearlyStats = generateTestYearlyStats(),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithText("ДНЕЙ АКТИВНОСТИ").assertIsDisplayed()
+        composeTestRule.onNodeWithText("ТЕКУЩАЯ СЕРИЯ").assertIsDisplayed()
+        composeTestRule.onNodeWithText("РЕКОРДНАЯ СЕРИЯ").assertIsDisplayed()
     }
 
     @Test
@@ -106,60 +127,6 @@ class AchievementScreenTest {
 
         composeTestRule.onNodeWithText("9999").assertIsDisplayed()
         composeTestRule.onNodeWithText("1").assertIsDisplayed()
-    }
-
-    @Test
-    fun activityGraph_tooltipShowsOnLongPress() {
-        val yearlyStats = generateTestYearlyStats()
-
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalAuroraColors provides AuroraColors.Dark) {
-                Box(
-                    modifier = Modifier
-                        .background(AuroraColors.Dark.background)
-                        .padding(16.dp),
-                ) {
-                    AchievementActivityGraph(yearlyStats = yearlyStats)
-                }
-            }
-        }
-
-        composeTestRule.onAllNodesWithContentDescription("Activity bar", substring = true)[0]
-            .performTouchInput { longClick() }
-
-        composeTestRule.waitForIdle()
-    }
-
-    @Test
-    fun activityGraph_displaysCorrectMetricsInTooltip() {
-        val month = YearMonth.now().minusMonths(1)
-        val stats = MonthStats(
-            chaptersRead = 5,
-            episodesWatched = 3,
-            timeInAppMinutes = 120,
-            achievementsUnlocked = 2,
-        )
-        val yearlyStats = listOf(month to stats)
-
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalAuroraColors provides AuroraColors.Dark) {
-                Box(
-                    modifier = Modifier
-                        .background(AuroraColors.Dark.background)
-                        .padding(16.dp),
-                ) {
-                    AchievementActivityGraph(yearlyStats = yearlyStats)
-                }
-            }
-        }
-
-        composeTestRule.onAllNodesWithContentDescription("Activity bar", substring = true)[0]
-            .performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithText("Всего: 8").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Глав: 5").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Эпизодов: 3").assertIsDisplayed()
     }
 
     private fun generateTestYearlyStats(): List<Pair<YearMonth, MonthStats>> {

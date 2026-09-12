@@ -1152,24 +1152,19 @@
     <string name="achievement_stat_unlocked">Достижений получено</string>
     <string name="achievement_vs_last_month">vs прошлый месяц</string>
     <string name="achievement_no_data">Нет данных</string>
-    <string name="achievement_year_activity_title">Активность за год</string>
-    <string name="achievement_period_jan_jun">Янв–Июнь</string>
-    <string name="achievement_period_jul_dec">Июль–Дек</string>
-    <string name="achievement_stat_total">Всего: %d</string>
-    <string name="achievement_stat_chapters">Глав: %d</string>
-    <string name="achievement_stat_episodes">Эпизодов: %d</string>
-    <string name="achievement_stat_time">Время: %s</string>
-    <string name="achievement_stat_achievements">Достижений: %d</string>
     <string name="achievement_no_activity">Нет активности</string>
     <string name="achievement_hours_minutes">%1$dч %2$dм</string>
     <string name="achievement_hours">%1$dч</string>
     <string name="achievement_minutes">%1$dм</string>
     <string name="achievement_hours_minutes_alt">%1$dч %2$dмин</string>
     <string name="achievement_minutes_alt">%1$dмин</string>
-    <string name="achievement_heatmap_title">Активность по дням</string>
+    <string name="achievement_heatmap_title">Активность</string>
     <string name="achievement_heatmap_period">365 дней</string>
     <string name="achievement_heatmap_less">Меньше</string>
     <string name="achievement_heatmap_more">Больше</string>
+    <string name="achievement_summary_active_days">Дней активности</string>
+    <string name="achievement_summary_current_streak">Текущая серия</string>
+    <string name="achievement_summary_best_streak">Рекордная серия</string>
 
     <!-- External metadata status labels -->
     <string name="status_finished">Завершён</string>

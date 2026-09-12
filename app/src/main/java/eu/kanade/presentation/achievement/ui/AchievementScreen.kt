@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.sp
 import eu.kanade.domain.easteregg.aurora.AuroraHeartManager
 import eu.kanade.domain.easteregg.aurora.AuroraLocalization
 import eu.kanade.domain.easteregg.aurora.AuroraPayload
-import eu.kanade.presentation.achievement.components.AchievementActivityGraph
 import eu.kanade.presentation.achievement.components.AchievementCard
 import eu.kanade.presentation.achievement.components.AchievementCategoryTabs
 import eu.kanade.presentation.achievement.components.AchievementContent
@@ -158,17 +157,11 @@ fun AchievementScreen(
                             }
                         }
 
-                        // График активности
-                        item {
-                            AchievementActivityGraph(
-                                yearlyStats = state.yearlyStats,
-                            )
-                        }
-
-                        // Дневной activity heatmap
+                        // Единая карточка активности: summary + дневной heatmap + month-strip
                         item {
                             AchievementHeatmapCard(
                                 activityData = state.activityData,
+                                yearlyStats = state.yearlyStats,
                             )
                         }
 
