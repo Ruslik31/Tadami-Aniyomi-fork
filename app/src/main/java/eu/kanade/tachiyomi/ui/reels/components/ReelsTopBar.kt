@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.HighQuality
@@ -150,6 +151,7 @@ fun ReelsTopBar(
     onToggleDataSaver: () -> Unit,
     onTogglePreload: () -> Unit,
     onTogglePreloadWifiOnly: () -> Unit,
+    onClearVideoCache: () -> Unit = {},
     onToggleSearchBar: () -> Unit,
     onOpenFilterDialog: () -> Unit,
     onSearch: (String) -> Unit,
@@ -510,6 +512,10 @@ fun ReelsTopBar(
                                 onTogglePreloadWifiOnly()
                                 openHub = HubMenu.NONE
                             },
+                            onClearVideoCache = {
+                                onClearVideoCache()
+                                openHub = HubMenu.NONE
+                            },
                             onDismiss = { openHub = HubMenu.NONE },
                         )
                     }
@@ -816,6 +822,7 @@ private fun ReelsMoreMenu(
     onToggleDataSaver: () -> Unit,
     onTogglePreload: () -> Unit,
     onTogglePreloadWifiOnly: () -> Unit,
+    onClearVideoCache: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val density = LocalDensity.current
@@ -916,6 +923,20 @@ private fun ReelsMoreMenu(
                 value = null,
                 checked = dataSaverEnabled,
                 onClick = onToggleDataSaver,
+            )
+            MoreMenuRow(
+                icon = {
+                    Icon(
+                        Icons.Outlined.DeleteSweep,
+                        null,
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+                label = stringResource(MR.strings.reels_clear_video_cache),
+                value = null,
+                checked = null,
+                onClick = onClearVideoCache,
             )
         }
     }

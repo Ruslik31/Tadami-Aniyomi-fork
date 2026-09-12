@@ -542,7 +542,9 @@ fun ReelsPlayerView(
     }
 }
 
-private const val REELS_CACHE_BYTES = 200L * 1024 * 1024
+private const val REELS_CACHE_BYTES = 1024L * 1024 * 1024
+
+private const val REELS_CACHE_DIR = "reels_video"
 
 // One decode size shared by the blurred background and the placeholder overlay.
 private const val POSTER_DECODE_SIZE = 480
@@ -579,8 +581,33 @@ private var reelsVideoCache: SimpleCache? = null
 // SQLiteOpenHelper that would otherwise retain the first Activity forever.
 private fun getReelsVideoCache(context: android.content.Context): SimpleCache {
     return reelsVideoCache ?: SimpleCache(
-        File(context.cacheDir, "reels_video"),
+        File(context.cacheDir, REELS_CACHE_DIR),
         LeastRecentlyUsedCacheEvictor(REELS_CACHE_BYTES),
         StandaloneDatabaseProvider(context),
     ).also { reelsVideoCache = it }
+}
+
+/**
+ * Empties the reels video disk cache; returns the freed bytes. While the process-wide
+ * SimpleCache is live, spans are removed through it — deleting files under an active
+ * index would corrupt it. A reel playing over a removed span falls back to the network
+ * (FLAG_IGNORE_CACHE_ON_ERROR). With no live instance the folder (index included) is
+ * deleted outright. File IO: call from a background dispatcher.
+ */
+internal fun clearReelsVideoCache(context: android.content.Context): Long {
+    val cache = reelsVideoCache
+    if (cache == null) {
+        val dir = File(context.cacheDir, REELS_CACHE_DIR)
+        val freed = dir.walk().filter { it.isFile }.sumOf { it.length() }
+        dir.deleteRecursively()
+        return freed
+    }
+    var freed = 0L
+    for (key in cache.keys.toList()) {
+        for (span in cache.getCachedSpans(key).toList()) {
+            freed += span.length
+            cache.removeSpan(span)
+        }
+    }
+    return freed
 }

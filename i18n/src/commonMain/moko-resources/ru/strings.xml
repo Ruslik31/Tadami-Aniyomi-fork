@@ -1705,6 +1705,8 @@
     <string name="reels_preload_wifi_only">Предзагрузка только по Wi-Fi</string>
     <string name="reels_unmute_hint">Нажмите, чтобы включить звук</string>
     <string name="reels_data_saver_metered">SD в мобильных сетях</string>
+    <string name="reels_clear_video_cache">Очистить кеш видео</string>
+    <string name="reels_video_cache_cleared">Очищено %1$s кеша видео</string>
     <string name="reels_favorites_removed_snackbar">Видео удалено из избранного</string>
     <string name="reels_unknown_source">Неизвестный источник</string>
     <string name="reels_follow">Подписаться</string>

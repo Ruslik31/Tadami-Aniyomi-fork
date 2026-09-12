@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.text.format.Formatter
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -82,9 +83,13 @@ import eu.kanade.tachiyomi.ui.reels.components.ReelsSourcePickerSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsTopBar
 import eu.kanade.tachiyomi.ui.reels.components.ReelsVideoPage
 import eu.kanade.tachiyomi.ui.reels.components.ReelsWebLoginDialog
+import eu.kanade.tachiyomi.ui.reels.player.clearReelsVideoCache
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.reels.anime.model.ReelsFavorite
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -597,6 +602,17 @@ data class ReelsFeedScreen(
                     onToggleDataSaver = screenModel::toggleDataSaver,
                     onTogglePreload = screenModel::togglePreload,
                     onTogglePreloadWifiOnly = screenModel::togglePreloadWifiOnly,
+                    onClearVideoCache = {
+                        coroutineScope.launch {
+                            val freed = withContext(Dispatchers.IO) { clearReelsVideoCache(context) }
+                            snackbarHostState.showSnackbar(
+                                context.stringResource(
+                                    MR.strings.reels_video_cache_cleared,
+                                    Formatter.formatFileSize(context, freed),
+                                ),
+                            )
+                        }
+                    },
                     onToggleSearchBar = { screenModel.toggleSearchBar(!state.isSearchBarOpen) },
                     onOpenFilterDialog = { screenModel.toggleFilterDialog(true) },
                     onOpenFavorites = { navigator.push(ReelsFavoritesScreen()) },
