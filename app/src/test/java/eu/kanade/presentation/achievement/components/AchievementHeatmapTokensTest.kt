@@ -2,6 +2,7 @@ package eu.kanade.presentation.achievement.components
 
 import androidx.compose.ui.graphics.Color
 import org.junit.jupiter.api.Test
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.Locale
 import kotlin.test.assertEquals
@@ -59,5 +60,15 @@ class AchievementHeatmapTokensTest {
 
         assertEquals("11 сен", formatHeatmapDayLabel(date, Locale.forLanguageTag("ru")))
         assertEquals("11 sep", formatHeatmapDayLabel(date, Locale.ENGLISH))
+    }
+
+    @Test
+    fun `weekday label follows locale without pattern letters`() {
+        val ru = Locale.forLanguageTag("ru")
+
+        assertEquals("пн", formatHeatmapWeekdayLabel(DayOfWeek.MONDAY, ru))
+        assertEquals("ср", formatHeatmapWeekdayLabel(DayOfWeek.WEDNESDAY, ru))
+        assertEquals("пт", formatHeatmapWeekdayLabel(DayOfWeek.FRIDAY, ru))
+        assertEquals("Mon", formatHeatmapWeekdayLabel(DayOfWeek.MONDAY, Locale.ENGLISH))
     }
 }

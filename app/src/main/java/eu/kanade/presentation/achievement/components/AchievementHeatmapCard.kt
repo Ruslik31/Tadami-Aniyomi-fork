@@ -63,7 +63,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -161,6 +161,10 @@ internal fun heatmapLevelColor(
 
 internal fun formatHeatmapDayLabel(date: LocalDate, locale: Locale): String {
     return "${date.dayOfMonth} ${formatMonthShortLabel(YearMonth.from(date), locale)}"
+}
+
+internal fun formatHeatmapWeekdayLabel(dayOfWeek: DayOfWeek, locale: Locale): String {
+    return dayOfWeek.getDisplayName(TextStyle.SHORT_STANDALONE, locale)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -290,7 +294,6 @@ private fun HeatmapBody(
         val cellSize = ((maxWidth - dayLabelWidth - bodyGap - cellGap * (HEATMAP_COLUMNS - 1)) / HEATMAP_COLUMNS)
             .coerceAtLeast(1.dp)
         val gridHeight = cellSize * HEATMAP_ROWS + cellGap * (HEATMAP_ROWS - 1)
-        val weekdayFormatter = remember(locale) { DateTimeFormatter.ofPattern("EEEEEE", locale) }
 
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(horizontalArrangement = Arrangement.spacedBy(bodyGap)) {
@@ -308,7 +311,7 @@ private fun HeatmapBody(
                             4 to DayOfWeek.FRIDAY,
                         ).forEach { (row, dayOfWeek) ->
                             Text(
-                                text = weekdayFormatter.format(dayOfWeek),
+                                text = formatHeatmapWeekdayLabel(dayOfWeek, locale),
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .offset(y = (cellSize + cellGap) * row + cellSize / 2 - 4.dp),
