@@ -44,6 +44,7 @@ import eu.kanade.presentation.achievement.components.AchievementActivityGraph
 import eu.kanade.presentation.achievement.components.AchievementCard
 import eu.kanade.presentation.achievement.components.AchievementCategoryTabs
 import eu.kanade.presentation.achievement.components.AchievementContent
+import eu.kanade.presentation.achievement.components.AchievementHeatmapCard
 import eu.kanade.presentation.achievement.components.AchievementStatsComparison
 import eu.kanade.presentation.achievement.screenmodel.AchievementScreenState
 import eu.kanade.presentation.more.settings.AuroraTopBarLayout
@@ -161,6 +162,13 @@ fun AchievementScreen(
                         item {
                             AchievementActivityGraph(
                                 yearlyStats = state.yearlyStats,
+                            )
+                        }
+
+                        // Дневной activity heatmap
+                        item {
+                            AchievementHeatmapCard(
+                                activityData = state.activityData,
                             )
                         }
 

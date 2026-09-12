@@ -1352,6 +1352,10 @@
     <string name="achievement_minutes">%1$dm</string>
     <string name="achievement_hours_minutes_alt">%1$dh %2$dm</string>
     <string name="achievement_minutes_alt">%1$dm</string>
+    <string name="achievement_heatmap_title">Daily activity</string>
+    <string name="achievement_heatmap_period">365 days</string>
+    <string name="achievement_heatmap_less">Less</string>
+    <string name="achievement_heatmap_more">More</string>
 
     <!-- External metadata status labels -->
     <string name="status_finished">Finished</string>

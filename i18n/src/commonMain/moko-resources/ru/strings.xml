@@ -1166,6 +1166,10 @@
     <string name="achievement_minutes">%1$dм</string>
     <string name="achievement_hours_minutes_alt">%1$dч %2$dмин</string>
     <string name="achievement_minutes_alt">%1$dмин</string>
+    <string name="achievement_heatmap_title">Активность по дням</string>
+    <string name="achievement_heatmap_period">365 дней</string>
+    <string name="achievement_heatmap_less">Меньше</string>
+    <string name="achievement_heatmap_more">Больше</string>
 
     <!-- External metadata status labels -->
     <string name="status_finished">Завершён</string>
