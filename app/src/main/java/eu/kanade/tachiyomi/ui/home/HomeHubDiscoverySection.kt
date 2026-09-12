@@ -45,9 +45,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,7 +76,9 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.domain.ui.model.HomeHeroMode
+import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.components.AuroraCoverPlaceholderVariant
+import eu.kanade.presentation.components.AuroraSheetWindowFx
 import eu.kanade.presentation.components.buildAuroraCoverImageRequest
 import eu.kanade.presentation.components.rememberCoverReloadTick
 import eu.kanade.presentation.components.rememberThemeAwareCoverErrorPainter
@@ -90,6 +91,7 @@ import eu.kanade.presentation.theme.aurora.adaptive.AuroraDeviceClass
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.presentation.theme.resolveAuroraSurfaceColor
+import eu.kanade.presentation.util.rememberSupportsBlurBehind
 import eu.kanade.tachiyomi.data.discovery.DiscoveryRowItem
 import eu.kanade.tachiyomi.data.discovery.interleaveMix
 import eu.kanade.tachiyomi.data.discovery.rrfScores
@@ -1412,92 +1414,125 @@ internal fun DiscoveryHideOptionsSheet(
 ) {
     val colors = AuroraTheme.colors
     val appHaptics = LocalAppHaptics.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val tagEnabled = !tag.isNullOrBlank()
-    ModalBottomSheet(
+    val supportsBlurBehind = rememberSupportsBlurBehind(colors.isEInk)
+    val sheetContainer = when {
+        colors.isEInk -> MaterialTheme.colorScheme.surfaceContainerHigh
+        !supportsBlurBehind -> colors.surface
+        colors.isDark -> Color.Black.copy(alpha = 0.70f)
+        else -> Color.White.copy(alpha = 0.88f)
+    }
+    var sheetReveal by remember { mutableFloatStateOf(0f) }
+    AdaptiveSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = when {
-            colors.isEInk -> colors.surface
-            colors.isDark -> Color(0xFF141824)
-            else -> Color.White
-        },
-        dragHandle = null,
+        containerColor = sheetContainer,
+        scrimAlpha = if (supportsBlurBehind) 0f else 0.5f,
+        applyStatusBarsPadding = false,
+        onRevealChange = { sheetReveal = it },
     ) {
+        AuroraSheetWindowFx(sheetReveal)
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                .padding(bottom = 24.dp),
         ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 8.dp)
+                    .align(Alignment.CenterHorizontally)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(
+                        if (colors.isDark) Color.White.copy(alpha = 0.18f) else Color.Black.copy(alpha = 0.15f),
+                    ),
+            )
             Text(
                 itemTitle,
-                color = colors.textSecondary,
-                fontSize = 12.sp,
+                color = colors.textPrimary,
+                fontSize = 15.5.sp,
                 fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+                lineHeight = 20.sp,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 10.dp, start = 8.dp, end = 8.dp),
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 10.dp),
             )
-            Row(
-                Modifier
+            Box(
+                modifier = Modifier
+                    .padding(start = 24.dp, end = 24.dp, bottom = 10.dp)
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                        appHaptics.tap()
-                        onHide()
-                    }
-                    .padding(vertical = 12.dp, horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .height(1.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color.Transparent, colors.accent.copy(alpha = 0.22f), Color.Transparent),
+                        ),
+                    ),
+            )
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(
-                    Icons.Outlined.VisibilityOff,
-                    contentDescription = null,
-                    tint = colors.textPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                Text(
-                    stringResource(AYMR.strings.for_you_tag_hide_title),
-                    color = colors.textPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(enabled = tagEnabled) {
-                        appHaptics.tap()
-                        tag?.let { onBlacklistTag(it) }
-                    }
-                    .padding(vertical = 12.dp, horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Outlined.LabelOff,
-                    contentDescription = null,
-                    tint = if (tagEnabled) colors.accent else colors.textSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                Column {
-                    Text(
-                        if (tagEnabled) {
-                            stringResource(AYMR.strings.for_you_tag_blacklist_action, tag)
-                        } else {
-                            stringResource(AYMR.strings.for_you_tag_blacklist_action_generic)
-                        },
-                        color = if (tagEnabled) colors.textPrimary else colors.textSecondary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable {
+                            appHaptics.tap()
+                            onHide()
+                        }
+                        .padding(vertical = 13.dp, horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Outlined.VisibilityOff,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(20.dp),
                     )
-                    if (!tagEnabled) {
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        stringResource(AYMR.strings.for_you_tag_hide_title),
+                        color = colors.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(enabled = tagEnabled) {
+                            appHaptics.tap()
+                            tag?.let { onBlacklistTag(it) }
+                        }
+                        .padding(vertical = 13.dp, horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.LabelOff,
+                        contentDescription = null,
+                        tint = if (tagEnabled) colors.accent else colors.textSecondary.copy(alpha = 0.6f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column {
                         Text(
-                            stringResource(AYMR.strings.for_you_tag_blacklist_disabled),
-                            color = colors.textSecondary,
-                            fontSize = 11.sp,
+                            if (tagEnabled) {
+                                stringResource(AYMR.strings.for_you_tag_blacklist_action, tag)
+                            } else {
+                                stringResource(AYMR.strings.for_you_tag_blacklist_action_generic)
+                            },
+                            color = if (tagEnabled) colors.textPrimary else colors.textSecondary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
                         )
+                        if (!tagEnabled) {
+                            Text(
+                                stringResource(AYMR.strings.for_you_tag_blacklist_disabled),
+                                color = colors.textSecondary,
+                                fontSize = 11.5.sp,
+                                lineHeight = 16.sp,
+                            )
+                        }
                     }
                 }
             }

@@ -308,7 +308,6 @@ private fun PhoneAdaptiveSheet(
                         },
                     )
                 }
-                .navigationBarsPadding()
                 .then(if (applyStatusBarsPadding) Modifier.statusBarsPadding() else Modifier)
                 .padding(top = if (applyStatusBarsPadding) 8.dp else 0.dp)
                 .clip(phoneSheetShape)
@@ -323,7 +322,10 @@ private fun PhoneAdaptiveSheet(
                 enabled = !dismissRequested,
                 onBack = internalOnDismissRequest,
             )
-            content()
+            // Surface extends behind the navigation bar; content stays above it.
+            Box(modifier = Modifier.navigationBarsPadding()) {
+                content()
+            }
         }
 
         LaunchedEffect(dismissRequested) {
