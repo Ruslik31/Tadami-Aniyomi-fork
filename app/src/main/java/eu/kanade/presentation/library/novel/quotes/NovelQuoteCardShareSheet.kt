@@ -1,18 +1,20 @@
 package eu.kanade.presentation.library.novel.quotes
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Image
@@ -21,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -32,14 +35,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -58,10 +58,12 @@ import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+private const val CARD_PREVIEW_RATIO = 0.8f
+
 /**
  * «Поделиться карточкой» bottom sheet: live-превью карточки 4:5, сегменты трёх стилей
- * и кнопка шаринга. Превью и финальный bitmap рендерит ОДИН graphics layer: контент
- * записывается ровно в 1080×1350px, для показа он лишь масштабируется.
+ * и кнопка шаринга. Превью компонуется как обычно; share-bitmap пишет скрытый
+ * capture-узел ровно в 1080×1350px, ничего не рисуя на экране.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,16 +81,39 @@ fun NovelQuoteCardShareSheet(
     val sharer = remember(context) { NovelQuoteCardSharerImpl(context) }
 
     val graphicsLayer = rememberGraphicsLayer()
-    val density = LocalDensity.current
-    val cardWidth = with(density) { NovelQuoteCardModel.CARD_WIDTH_PX.toDp() }
-    val cardHeight = with(density) { NovelQuoteCardModel.CARD_HEIGHT_PX.toDp() }
+    val sheetContainer = when {
+        colors.isEInk -> MaterialTheme.colorScheme.surfaceContainerHigh
+        colors.isDark -> Color.Black.copy(alpha = 0.72f)
+        else -> Color.White.copy(alpha = 0.90f)
+    }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = sheetContainer,
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(colors.textSecondary.copy(alpha = 0.35f)),
+                )
+            }
+        },
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
@@ -103,35 +128,34 @@ fun NovelQuoteCardShareSheet(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center,
             ) {
-                val scale = (maxWidth * 0.66f) / cardWidth
-                Box(
+                val maxPreviewHeight = LocalConfiguration.current.screenHeightDp.dp * 0.40f
+                val previewWidth = minOf(maxWidth, maxPreviewHeight * CARD_PREVIEW_RATIO)
+                NovelQuoteCard(
+                    model = model,
                     modifier = Modifier
-                        .size(cardWidth * scale, cardHeight * scale)
-                        .clip(RoundedCornerShape(6.dp))
-                        .clipToBounds(),
-                ) {
+                        .width(previewWidth)
+                        .aspectRatio(CARD_PREVIEW_RATIO),
+                )
+            }
+
+            // Capture-only: скрытый узел пишет layer ровно 1080×1350px (360×450dp при
+            // Density 3f) и не рисует ничего на экране — превью выше не зависит от
+            // scale/clip-артефактов и не может обрезаться.
+            Box(modifier = Modifier.size(0.dp)) {
+                CompositionLocalProvider(LocalDensity provides Density(density = 3f, fontScale = 1f)) {
                     Box(
                         modifier = Modifier
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                transformOrigin = TransformOrigin(0f, 0f)
-                            }
                             .drawWithContent {
                                 graphicsLayer.record {
                                     this@drawWithContent.drawContent()
                                 }
-                                drawLayer(graphicsLayer)
                             }
-                            // requiredSize: входящие constraints превью-бокса меньше карточки,
-                            // а layer обязан писать ровно 1080×1350px.
-                            .requiredSize(cardWidth, cardHeight),
+                            .requiredSize(
+                                with(LocalDensity.current) { NovelQuoteCardModel.CARD_WIDTH_PX.toDp() },
+                                with(LocalDensity.current) { NovelQuoteCardModel.CARD_HEIGHT_PX.toDp() },
+                            ),
                     ) {
-                        // Фиксированная плотность: карточка детерминированно 1080×1350px
-                        // на любом устройстве и не зависит от пользовательского fontScale.
-                        CompositionLocalProvider(LocalDensity provides Density(density = 3f, fontScale = 1f)) {
-                            NovelQuoteCard(model = model, modifier = Modifier.fillMaxSize())
-                        }
+                        NovelQuoteCard(model = model, modifier = Modifier.fillMaxSize())
                     }
                 }
             }
@@ -139,9 +163,8 @@ fun NovelQuoteCardShareSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (colors.isDark) Color.Black.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.06f))
-                    .border(1.dp, colors.divider, RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (colors.isDark) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.05f))
                     .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
@@ -158,14 +181,14 @@ fun NovelQuoteCardShareSheet(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(999.dp))
                             .background(
                                 brush = if (selected) {
                                     Brush.verticalGradient(listOf(colors.accent, colors.accentVariant))
                                 } else {
                                     Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
                                 },
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(999.dp),
                             )
                             .clickable {
                                 style = entry
@@ -188,12 +211,11 @@ fun NovelQuoteCardShareSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(999.dp))
                     .background(
                         Brush.verticalGradient(listOf(colors.accent, colors.accentVariant)),
-                        RoundedCornerShape(16.dp),
+                        RoundedCornerShape(999.dp),
                     )
-                    .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
                     .clickable(enabled = !sharing) {
                         scope.launch {
                             sharing = true
