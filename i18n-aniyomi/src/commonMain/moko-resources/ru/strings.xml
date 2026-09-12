@@ -643,6 +643,7 @@
     <string name="novel_reader_tts_no_voices_for_selected_language">Для выбранного языка нет доступных озвучек</string>
     <string name="novel_reader_tts_speech_rate_value">Скорость речи: %d%%</string>
     <string name="novel_reader_tts_pitch_value">Высота голоса: %d%%</string>
+    <string name="novel_tts_sleep_end_of_chapter">До конца главы</string>
     <string name="novel_reader_ai_translator_show">AI переводчик: показать</string>
     <string name="novel_reader_ai_translator_hide">AI переводчик: скрыть</string>
     <string name="novel_reader_translation_provider">Провайдер</string>

@@ -110,6 +110,8 @@ data class NovelReaderScreenActions(
     val onDisableTts: () -> Unit = {},
     val onPreviewTtsVoice: (String) -> Unit = {},
     val onStopTtsVoicePreview: () -> Unit = {},
+    val onSetTtsSleepTimer: (Int) -> Unit = {},
+    val onSetTtsSleepTimerEndOfChapter: () -> Unit = {},
     val onOpenPreviousChapter: ((Long) -> Unit)? = null,
     val onOpenNextChapter: ((Long) -> Unit)? = null,
     val onPrepareAutoScrollHandoff: (targetChapterId: Long, speed: Int) -> Unit = { _, _ -> },

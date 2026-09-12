@@ -299,6 +299,8 @@ internal fun NovelReaderContentHost(
     val onDisableTts = actions.onDisableTts
     val onPreviewTtsVoice = actions.onPreviewTtsVoice
     val onStopTtsVoicePreview = actions.onStopTtsVoicePreview
+    val onSetTtsSleepTimer = actions.onSetTtsSleepTimer
+    val onSetTtsSleepTimerEndOfChapter = actions.onSetTtsSleepTimerEndOfChapter
     val onOpenPreviousChapter = actions.onOpenPreviousChapter
     val onOpenNextChapter = actions.onOpenNextChapter
     val onPrepareAutoScrollHandoff = actions.onPrepareAutoScrollHandoff
@@ -4175,6 +4177,8 @@ internal fun NovelReaderContentHost(
                 onDisableTts = onDisableTts,
                 onPreviewTtsVoice = onPreviewTtsVoice,
                 onStopTtsVoicePreview = onStopTtsVoicePreview,
+                onSetTtsSleepTimer = onSetTtsSleepTimer,
+                onSetTtsSleepTimerEndOfChapter = onSetTtsSleepTimerEndOfChapter,
                 onOpenPreviousChapterFromReader = { openPreviousChapterFromReader() },
                 onOpenNextChapterFromReader = { openNextChapterFromReader() },
                 navigationBarHeightPx = navigationBarHeight,

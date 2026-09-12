@@ -98,6 +98,13 @@ class NovelTtsSessionController(
      *  only the text source changes (e.g. original <-> translated switch during resume). */
     private var cachedResolvedChapter: NovelTtsResolvedChapter? = null
 
+    /**
+     * Sleep-timer "until end of chapter" seam: consulted when the last utterance of a chapter
+     * completes, before the auto-advance handoff. Returning true means the sleep timer owns the
+     * boundary and the session must not advance to the next chapter.
+     */
+    var endOfChapterSleepGate: (suspend () -> Boolean)? = null
+
     suspend fun startFromCurrentPosition(
         chapterId: Long,
         utteranceId: String?,
@@ -177,6 +184,8 @@ class NovelTtsSessionController(
             speaker.speak(nextSession.utterance, flushQueue = true, startWordIndex = 0)
             return
         }
+
+        if (endOfChapterSleepGate?.invoke() == true) return
 
         if (session.autoAdvanceChapter && session.nextChapterId != null) {
             persistChapterHandoffCheckpoint(session)

@@ -1030,6 +1030,7 @@
     <string name="novel_reader_tts_no_voices_for_selected_language">No voices available for the selected language</string>
     <string name="novel_reader_tts_speech_rate_value">Speech rate: %d%%</string>
     <string name="novel_reader_tts_pitch_value">Pitch: %d%%</string>
+    <string name="novel_tts_sleep_end_of_chapter">Until end of chapter</string>
     <string name="novel_reader_ai_translator_show">AI translator: show</string>
     <string name="novel_reader_ai_translator_hide">AI translator: hide</string>
     <string name="novel_reader_translation_provider">Provider</string>

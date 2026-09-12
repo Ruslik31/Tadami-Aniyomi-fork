@@ -31,11 +31,13 @@ import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsResolvedChapter
 import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsSession
 import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsSessionController
 import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsSessionUiState
+import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsSleepTimer
 import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsTextSource
 import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsWordTokenizer
 import eu.kanade.tachiyomi.ui.reader.novel.tts.SharedNovelTtsSessionStore
 import eu.kanade.tachiyomi.ui.reader.novel.tts.resolveActiveTtsHighlightMode
 import eu.kanade.tachiyomi.ui.reader.novel.tts.resolveNovelTtsVoiceSelection
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,6 +50,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.entries.novel.model.Novel
 import tachiyomi.domain.items.novelchapter.model.NovelChapter
@@ -170,6 +173,15 @@ internal class NovelTtsController(
 
     private var ttsUiState: NovelReaderTtsUiState = NovelReaderTtsUiState()
 
+    private val ttsSleepTimer = NovelTtsSleepTimer(
+        scope = host.ttsScope,
+        onTick = { remainingSeconds ->
+            ttsUiState = ttsUiState.copy(sleepTimerRemainingSeconds = remainingSeconds)
+            refreshTtsUiState()
+        },
+        onExpire = { handleTtsSleepTimerExpired() },
+    )
+
     /** Snapshot of the TTS UI state, merged into the reader state by the screen model. */
     fun snapshot(): NovelReaderTtsUiState = ttsUiState
 
@@ -182,6 +194,7 @@ internal class NovelTtsController(
      * screen model's init.
      */
     fun attach() {
+        ttsSessionController.endOfChapterSleepGate = { ttsSleepTimer.completeEndOfChapter() }
         ttsEngine.setProgressListener(
             object : NovelTtsPlaybackProgressListener {
                 override fun onUtteranceStart(utteranceId: String) {
@@ -654,6 +667,28 @@ internal class NovelTtsController(
         host.ttsRefreshTtsUiState(ttsUiState)
     }
 
+    private fun applyTtsSleepTimerUiState() {
+        ttsUiState = ttsUiState.copy(
+            sleepTimerRemainingSeconds = ttsSleepTimer.remainingSeconds,
+            sleepTimerEndOfChapter = ttsSleepTimer.isEndOfChapterArmed,
+        )
+        refreshTtsUiState()
+    }
+
+    private fun cancelTtsSleepTimer() {
+        ttsSleepTimer.cancel()
+        applyTtsSleepTimerUiState()
+    }
+
+    private suspend fun handleTtsSleepTimerExpired() {
+        val announceExpiry = shouldPauseAndAnnounceSleepTimerExpiry(ttsSessionController.state.value.playbackState)
+        ttsUiState = ttsUiState.copy(sleepTimerRemainingSeconds = 0, sleepTimerEndOfChapter = false)
+        refreshTtsUiState()
+        if (!announceExpiry) return
+        ttsSessionController.pause()
+        withUIContext { application.toast(AYMR.strings.toast_sleep_timer_ended) }
+    }
+
     fun toggleTtsPlayback(
         startRequest: NovelTtsPlaybackStartRequest = NovelTtsPlaybackStartRequest(),
     ) {
@@ -692,9 +727,21 @@ internal class NovelTtsController(
         host.ttsScope.launch {
             ttsWordProgressJob?.cancel()
             ttsWordProgressJob = null
+            cancelTtsSleepTimer()
             ttsAudioFocusManager.abandonPlaybackFocus()
             ttsSessionController.stop()
         }
+    }
+
+    /** Arms the session sleep timer countdown; [seconds] below 1 turns an armed timer off. */
+    fun setTtsSleepTimer(seconds: Int) {
+        ttsSleepTimer.start(seconds)
+        applyTtsSleepTimerUiState()
+    }
+
+    fun setTtsSleepTimerEndOfChapter() {
+        ttsSleepTimer.startEndOfChapter()
+        applyTtsSleepTimerUiState()
     }
 
     fun skipToNextTtsSegment() {
@@ -865,6 +912,7 @@ internal class NovelTtsController(
             ttsWordProgressJob?.cancel()
             ttsWordProgressJob = null
             pendingTtsStartRequest = null
+            cancelTtsSleepTimer()
             ttsAudioFocusManager.abandonPlaybackFocus()
             ttsSessionController.stop()
             if (novelReaderPreferences.getSourceOverride(sourceId) != null) {
@@ -1062,3 +1110,10 @@ internal fun mapTtsEngineRangeStartToWordIndex(
     engineStartChar: Int,
     spokenTextStartChar: Int,
 ): Int? = utterance.wordIndexForCharOffset(spokenTextStartChar + engineStartChar)
+
+/**
+ * Sleep-timer expiry policy: only an expiry landing on actually speaking playback pauses and
+ * announces itself; one landing on an already paused or stopped session is a silent no-op.
+ */
+internal fun shouldPauseAndAnnounceSleepTimerExpiry(playbackState: NovelTtsPlaybackState): Boolean =
+    playbackState == NovelTtsPlaybackState.PLAYING

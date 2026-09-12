@@ -1783,6 +1783,10 @@ class NovelReaderScreenModel(
 
     fun stopTtsVoicePreview() = ttsController.stopTtsVoicePreview()
 
+    fun setTtsSleepTimer(seconds: Int) = ttsController.setTtsSleepTimer(seconds)
+
+    fun setTtsSleepTimerEndOfChapter() = ttsController.setTtsSleepTimerEndOfChapter()
+
     fun disableTts() = ttsController.disableTts()
 
     fun createTtsPlaybackServiceRuntime(): NovelTtsPlaybackServiceRuntime =

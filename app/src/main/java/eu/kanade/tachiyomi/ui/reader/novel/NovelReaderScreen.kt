@@ -405,6 +405,8 @@ class NovelReaderScreen(
                             onDisableTts = screenModel::disableTts,
                             onPreviewTtsVoice = screenModel::previewTtsVoice,
                             onStopTtsVoicePreview = screenModel::stopTtsVoicePreview,
+                            onSetTtsSleepTimer = screenModel::setTtsSleepTimer,
+                            onSetTtsSleepTimerEndOfChapter = screenModel::setTtsSleepTimerEndOfChapter,
                             onSelectedTextSelectionChanged = screenModel::updateSelectedTextSelection,
                             onUpdateHighlight = screenModel::updateHighlight,
                             onDeleteHighlight = screenModel::deleteHighlight,

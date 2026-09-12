@@ -103,6 +103,8 @@ internal fun NovelReaderBottomPanel(
     onDisableTts: () -> Unit,
     onPreviewTtsVoice: (String) -> Unit,
     onStopTtsVoicePreview: () -> Unit,
+    onSetTtsSleepTimer: (Int) -> Unit,
+    onSetTtsSleepTimerEndOfChapter: () -> Unit,
     onOpenPreviousChapterFromReader: () -> Unit,
     onOpenNextChapterFromReader: () -> Unit,
     navigationBarHeightPx: Int,
@@ -155,6 +157,8 @@ internal fun NovelReaderBottomPanel(
                     onDisableTts = onDisableTts,
                     onPreviewVoice = onPreviewTtsVoice,
                     onStopVoicePreview = onStopTtsVoicePreview,
+                    onSetSleepTimer = onSetTtsSleepTimer,
+                    onSetSleepTimerEndOfChapter = onSetTtsSleepTimerEndOfChapter,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
