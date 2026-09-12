@@ -78,6 +78,10 @@ fun ReelsVideoPage(
     // portrait activity (software rotation — no orientation request, no player rebuild).
     isLandscapeFullscreen: Boolean = false,
     onLandscapeFullscreenChange: (Boolean) -> Unit = {},
+    // Sticky landscape intent (see ReelsFeedScreen): while armed, a settled landscape
+    // reel re-enters fullscreen automatically; a portrait reel only auto-exits.
+    landscapeAutoRestore: Boolean = false,
+    onLandscapeAutoExit: () -> Unit = {},
     // Stable per-source prefix; the page appends item id + the PINNED quality to build the
     // progressive cache key.
     cachePrefix: String? = null,
@@ -119,10 +123,18 @@ fun ReelsVideoPage(
     var isLandscapeVideo by remember(item) { mutableStateOf<Boolean?>(null) }
 
     // Landscape fullscreen survives auto-advance only while the reels stay wide: a
-    // portrait reel settling in the rotated frame drops back to the normal feed.
+    // portrait reel settling in the rotated frame drops back to the normal feed (the
+    // sticky intent stays armed).
     LaunchedEffect(isActive, isLandscapeFullscreen, isLandscapeVideo) {
         if (isActive && isLandscapeFullscreen && isLandscapeVideo == false) {
-            onLandscapeFullscreenChange(false)
+            onLandscapeAutoExit()
+        }
+    }
+    // Sticky re-entry: the next landscape reel that settles while the intent is armed
+    // goes fullscreen without a tap.
+    LaunchedEffect(isActive, landscapeAutoRestore, isLandscapeFullscreen, isLandscapeVideo) {
+        if (isActive && landscapeAutoRestore && !isLandscapeFullscreen && isLandscapeVideo == true) {
+            onLandscapeFullscreenChange(true)
         }
     }
 

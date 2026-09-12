@@ -1435,7 +1435,7 @@ class ReelsFeedScreenModelTest {
         }
 
     @Test
-    fun `following feed k-way merges creator streams newest first`() = runTest(testDispatcher) {
+    fun `following feed shuffles merged creator streams without same-author runs`() = runTest(testDispatcher) {
         val follows = FakeReelsFollowRepository()
         follows.follows[1106L to "alice"] = ReelsFollow(1106L, "alice", Date(0))
         follows.follows[1106L to "bob"] = ReelsFollow(1106L, "bob", Date(0))
@@ -1457,7 +1457,9 @@ class ReelsFeedScreenModelTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         screenModel.state.value.mode shouldBe ReelsFeedScreenModel.FeedMode.FOLLOWING
-        screenModel.state.value.items.map { it.id } shouldBe listOf("a300", "b200", "a100")
+        // 2 alice + 1 bob: the only separable shape puts bob in the middle.
+        screenModel.state.value.items.map { it.id }.sorted() shouldBe listOf("a100", "a300", "b200")
+        screenModel.state.value.items[1].id shouldBe "b200"
         screenModel.state.value.error shouldBe null
         screenModel.state.value.canLoadMore shouldBe false
     }
@@ -1534,7 +1536,7 @@ class ReelsFeedScreenModelTest {
             )
             testDispatcher.scheduler.advanceUntilIdle()
 
-            screenModel.state.value.items.map { it.id } shouldBe listOf("a1", "b1")
+            screenModel.state.value.items.map { it.id }.sorted() shouldBe listOf("a1", "b1")
             screenModel.state.value.canLoadMore shouldBe true
 
             // Near the merged tail only alice is topped up — with its own locked cursor.
@@ -1546,7 +1548,8 @@ class ReelsFeedScreenModelTest {
                 Triple("bob", 1, null),
                 Triple("alice", 2, "ac1"),
             )
-            screenModel.state.value.items.map { it.id } shouldBe listOf("a1", "b1", "a2")
+            screenModel.state.value.items.map { it.id }.sorted() shouldBe listOf("a1", "a2", "b1")
+            screenModel.state.value.items.last().id shouldBe "a2"
             screenModel.state.value.canLoadMore shouldBe false
         }
 
@@ -1567,6 +1570,39 @@ class ReelsFeedScreenModelTest {
         screenModel.state.value.canLoadMore shouldBe false
         source.creatorRequests.shouldBeEmpty()
     }
+
+    @Test
+    fun `following feed never places the same author twice in a row when separable`() =
+        runTest(testDispatcher) {
+            val follows = FakeReelsFollowRepository()
+            follows.follows[1111L to "alice"] = ReelsFollow(1111L, "alice", Date(0))
+            follows.follows[1111L to "bob"] = ReelsFollow(1111L, "bob", Date(0))
+            // alice posts strictly newer reels: the pre-shuffle newest-first merge would
+            // emit aaa/bbb runs; the separated feed must interleave (3+3 of 6 is feasible).
+            val source = RecordingCreatorFeedSource(1111L) { creator, _, _ ->
+                val base = if (creator == "alice") 300L else 100L
+                FeedPage(
+                    (0 until 3).map { timedItem("$creator-${base - it * 10}", base - it * 10) },
+                    hasNextPage = false,
+                )
+            }
+            repeat(3) {
+                val screenModel = buildModel(
+                    sourceId = 1111L,
+                    manager = sourceManagerOf(source),
+                    followRepository = follows,
+                    followingFeed = true,
+                )
+                testDispatcher.scheduler.advanceUntilIdle()
+
+                val items = screenModel.state.value.items
+                items.shouldHaveSize(6)
+                // The shuffle keys on the stream creator even when items carry no author
+                // metadata: derive it from the id prefix.
+                items.zipWithNext { a, b -> a.id.substringBefore('-') to b.id.substringBefore('-') }
+                    .none { (first, second) -> first == second } shouldBe true
+            }
+        }
 
     // ---- Contract v19: account login + custom feeds ----
 

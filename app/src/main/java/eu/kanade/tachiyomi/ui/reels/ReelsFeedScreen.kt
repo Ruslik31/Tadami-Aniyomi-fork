@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -180,9 +181,15 @@ data class ReelsFeedScreen(
         val effectiveHd = if (state.dataSaverMetered && !isOnWifi) false else state.isHdQuality
         var chromeVisible by remember { mutableStateOf(true) }
         // Landscape fullscreen (software-rotated overlay, see ReelsVideoPage): entered from
-        // the expand button on landscape reels, left via the button or system back.
+        // the expand button on landscape reels, left via the button or system back. The intent
+        // is sticky: an auto-exit on a portrait reel keeps it armed so the next landscape reel
+        // re-enters fullscreen on its own; a manual exit disarms it.
         var landscapeFullscreen by remember { mutableStateOf(false) }
-        BackHandler(enabled = landscapeFullscreen) { landscapeFullscreen = false }
+        var landscapeAutoRestore by remember { mutableStateOf(false) }
+        BackHandler(enabled = landscapeFullscreen) {
+            landscapeFullscreen = false
+            landscapeAutoRestore = false
+        }
 
         // Hide the system bars while the rotated video owns the screen; restore on exit
         // and on screen disposal so the rest of the app is unaffected.
@@ -197,6 +204,18 @@ data class ReelsFeedScreen(
             onDispose {
                 controller?.show(WindowInsetsCompat.Type.systemBars())
             }
+        }
+
+        // A playing reel keeps the screen awake (auto-advance must not fall asleep mid-feed);
+        // a paused reel lets the system timeout apply, same as the video player.
+        DisposableEffect(state.isPlaying) {
+            val window = (context as? Activity)?.window
+            if (state.isPlaying) {
+                window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         }
 
         // Immersive: auto-hide the top bar after 3s of playback; any tap reveals it.
@@ -346,7 +365,12 @@ data class ReelsFeedScreen(
                                 isCropMode = state.isCropMode,
                                 chromeVisible = chromeVisible && !landscapeFullscreen,
                                 isLandscapeFullscreen = landscapeFullscreen,
-                                onLandscapeFullscreenChange = { landscapeFullscreen = it },
+                                landscapeAutoRestore = landscapeAutoRestore,
+                                onLandscapeFullscreenChange = { enter ->
+                                    landscapeFullscreen = enter
+                                    landscapeAutoRestore = enter
+                                },
+                                onLandscapeAutoExit = { landscapeFullscreen = false },
                                 onTogglePlayPause = {
                                     chromeVisible = true
                                     screenModel.togglePlayPause()

@@ -65,6 +65,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Date
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.random.Random
 
 /**
  * Session-scoped "user has not decided sound yet" flag. Process-wide by default: every
@@ -687,7 +688,10 @@ class ReelsFeedScreenModel(
                 if (loadGeneration.get() != generation) return@update current
                 val anyAlive = followingStreams.any { !it.exhausted }
                 if (reset) {
-                    val newItems = merged.distinctBy { it.id }
+                    val newItems = shuffleFollowingBatch(
+                        merged.distinctBy { it.second.id },
+                        prevTailAuthor = null,
+                    ).map { it.second }
                     if (newItems.isEmpty() && failures.isNotEmpty() && alive.isEmpty()) {
                         // All-failed fan-out: nothing to show, surface the combined error.
                         current.copy(
@@ -712,7 +716,10 @@ class ReelsFeedScreenModel(
                         )
                     }
                 } else {
-                    val fresh = merged.filterNot { it.id in current.seenIds }
+                    val fresh = shuffleFollowingBatch(
+                        merged.filterNot { (_, item) -> item.id in current.seenIds },
+                        prevTailAuthor = current.items.lastOrNull()?.author,
+                    ).map { it.second }
                     current.copy(
                         items = (current.items + fresh).toImmutableList(),
                         seenIds = (current.seenIds + fresh.map { it.id }).toImmutableSet(),
@@ -741,10 +748,11 @@ class ReelsFeedScreenModel(
      * k-way merge over the streams' buffer heads: newest first by
      * [ShortVideoItem.createdAtEpochSec]; heads without a timestamp keep their own stream
      * order and are pulled round-robin among themselves. Drains every buffer — the merged
-     * result is the feed tail until the next top-up.
+     * result is the feed tail until the next top-up. Items come back paired with their
+     * stream creator so [shuffleFollowingBatch] can separate same-author runs.
      */
-    private fun mergeFollowingStreams(streams: List<FollowingStream>): List<ShortVideoItem> {
-        val merged = mutableListOf<ShortVideoItem>()
+    private fun mergeFollowingStreams(streams: List<FollowingStream>): List<Pair<String, ShortVideoItem>> {
+        val merged = mutableListOf<Pair<String, ShortVideoItem>>()
         var roundRobin = 0
         while (true) {
             val withItems = streams.filter { it.buffer.isNotEmpty() }
@@ -756,7 +764,7 @@ class ReelsFeedScreenModel(
             } else {
                 withItems[roundRobin++ % withItems.size]
             }
-            merged += pick.buffer.removeFirst()
+            merged += pick.creator to pick.buffer.removeFirst()
         }
     }
 
@@ -1337,8 +1345,8 @@ class ReelsFeedScreenModel(
         val scheme = uri.scheme ?: "https"
         origins += "$scheme://$host"
         val labels = host.split('.')
+        val root = if (labels.size >= 2) labels.takeLast(2).joinToString(".") else host
         if (labels.size >= 2) {
-            val root = labels.takeLast(2).joinToString(".")
             origins += "$scheme://$root"
             origins += "$scheme://auth2.$root"
             origins += "$scheme://api.$root"
@@ -1350,6 +1358,8 @@ class ReelsFeedScreenModel(
                 val key = pair.substringBefore('=').trim()
                 if (key.isNotEmpty()) {
                     cm.setCookie(origin, "$key=; Max-Age=0; Path=/")
+                    cm.setCookie(origin, "$key=; Domain=.$root; Max-Age=0; Path=/")
+                    cm.setCookie(origin, "$key=; Domain=$host; Max-Age=0; Path=/")
                 }
             }
         }
@@ -1617,4 +1627,42 @@ class ReelsFeedScreenModel(
         // Session-scoped "tap to unmute" pill: visible while the user has not decided sound.
         val showUnmuteHint: Boolean = false,
     )
+}
+
+/**
+ * Constrained shuffle of one FOLLOWING batch: uniform-random order with no two videos of
+ * the same creator back to back whenever a valid arrangement exists (the largest creator
+ * holds at most ceil(n/2) items); degenerate batches keep the unavoidable minimum of runs.
+ * The batch head also avoids [prevTailAuthor] so an appended batch does not extend the
+ * creator run at the feed's tail. Keys on the stream creator (always non-null), never on
+ * [ShortVideoItem.author]. Pure and retry-safe: [entries] is not mutated.
+ */
+internal fun shuffleFollowingBatch(
+    entries: List<Pair<String, ShortVideoItem>>,
+    prevTailAuthor: String?,
+    random: Random = Random.Default,
+): List<Pair<String, ShortVideoItem>> {
+    if (entries.size < 2) return entries
+    val groups = LinkedHashMap<String, ArrayDeque<Pair<String, ShortVideoItem>>>()
+    for (entry in entries.shuffled(random)) {
+        groups.getOrPut(entry.first) { ArrayDeque() } += entry
+    }
+    val result = ArrayList<Pair<String, ShortVideoItem>>(entries.size)
+    var prev = prevTailAuthor
+    while (result.size < entries.size) {
+        val candidates = groups.entries.filter { (creator, queue) -> creator != prev && queue.isNotEmpty() }
+        val pick = if (candidates.isEmpty()) {
+            // Only the previous author's queue is left: the run is unavoidable.
+            groups.entries.first { (_, queue) -> queue.isNotEmpty() }
+        } else {
+            // Most-frequent-first keeps the arrangement feasible whenever one exists;
+            // ties break at random so every reset lands on a different order.
+            val maxSize = candidates.maxOf { (_, queue) -> queue.size }
+            val top = candidates.filter { (_, queue) -> queue.size == maxSize }
+            top[random.nextInt(top.size)]
+        }
+        result += pick.value.removeFirst()
+        prev = pick.key
+    }
+    return result
 }
