@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.novel.setting
 
 import eu.kanade.tachiyomi.data.download.novel.NovelTranslatedDownloadFormat
+import eu.kanade.tachiyomi.ui.reader.novel.NovelQuoteCardStyle
 import eu.kanade.tachiyomi.ui.reader.novel.replace.ReplaceRule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -756,6 +757,9 @@ class NovelReaderPreferences(
     // Highlights
     fun novelHighlightLastColor() =
         preferenceStore.getLong("novel_highlight_last_color", DEFAULT_HIGHLIGHT_COLOR_ARGB)
+
+    fun quoteCardStyle() =
+        preferenceStore.getEnum("novel_quote_card_style", NovelQuoteCardStyle.CODEX_SACRA)
 
     fun novelDictionaryQuickAccess() =
         preferenceStore.getBoolean("novel_reader_dictionary_quick_access", false)

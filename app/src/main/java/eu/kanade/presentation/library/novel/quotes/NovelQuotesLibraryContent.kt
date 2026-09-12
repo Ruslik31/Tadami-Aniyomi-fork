@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -96,6 +97,7 @@ fun NovelQuotesLibraryContent(
     onEditQuote: (NovelHighlightWithChapter) -> Unit,
     onDeleteQuote: (NovelHighlightWithChapter) -> Unit,
     onCopyQuote: (String) -> Unit,
+    onShareQuoteAsImage: (NovelHighlightWithChapter) -> Unit,
 ) {
     val colors = AuroraTheme.colors
     val isDark = colors.isDark
@@ -229,6 +231,7 @@ fun NovelQuotesLibraryContent(
                                     onEdit = onEditQuote,
                                     onDelete = onDeleteQuote,
                                     onCopy = onCopyQuote,
+                                    onShareAsImage = onShareQuoteAsImage,
                                 )
                             }
                         }
@@ -241,6 +244,7 @@ fun NovelQuotesLibraryContent(
                                 onEdit = onEditQuote,
                                 onDelete = onDeleteQuote,
                                 onCopy = onCopyQuote,
+                                onShareAsImage = onShareQuoteAsImage,
                             )
                         }
                     }
@@ -653,6 +657,7 @@ private fun QuoteRow(
     onEdit: (NovelHighlightWithChapter) -> Unit,
     onDelete: (NovelHighlightWithChapter) -> Unit,
     onCopy: (String) -> Unit,
+    onShareAsImage: (NovelHighlightWithChapter) -> Unit,
 ) {
     val colors = AuroraTheme.colors
     val highlight = item.highlight
@@ -759,6 +764,12 @@ private fun QuoteRow(
                         description = stringResource(AYMR.strings.novel_highlight_action_delete),
                         tint = Color(0xFFEF4444),
                         onClick = { onDelete(item) },
+                    )
+                    MiniAction(
+                        icon = Icons.Outlined.Image,
+                        description = stringResource(AYMR.strings.novel_quotes_share_as_image),
+                        tint = colors.accent,
+                        onClick = { onShareAsImage(item) },
                     )
                 }
             }

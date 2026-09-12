@@ -880,6 +880,10 @@
     <string name="novel_quotes_delete_title">Delete quote?</string>
     <string name="novel_quotes_delete_message">The highlight will disappear from the book and this collection. This cannot be undone.</string>
     <string name="novel_quotes_sort_toggle_cd">Toggle sorting (date / by book)</string>
+    <string name="novel_quotes_share_as_image">Share as image</string>
+    <string name="novel_quotes_card_style_codex">Codex Sacra</string>
+    <string name="novel_quotes_card_style_glass">Aurora Glass</string>
+    <string name="novel_quotes_card_style_minimal">Minimal</string>
     <string name="novel_reader_selected_text_translation_action_retry">Retry</string>
     <string name="novel_reader_selected_text_translation_action_close">Close</string>
     <string name="novel_reader_selected_text_translation_loading">Translating selected text…</string>

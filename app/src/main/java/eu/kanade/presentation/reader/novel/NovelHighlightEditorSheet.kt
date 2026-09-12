@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -33,24 +34,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
-import tachiyomi.domain.book.novel.model.NovelHighlight
+import eu.kanade.tachiyomi.ui.reader.novel.NovelQuoteShareFormatter
+import tachiyomi.domain.book.novel.model.NovelHighlightWithChapter
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
  * Bottom sheet for one saved highlight: snippet preview, note field, color swatches with an
- * arbitrary-color picker, and copy/share/delete actions.
+ * arbitrary-color picker, and copy/share/share-as-card/delete actions.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NovelHighlightEditorSheet(
-    highlight: NovelHighlight,
+    item: NovelHighlightWithChapter,
     onDismiss: () -> Unit,
     onSave: (note: String, colorArgb: Long) -> Unit,
     onDelete: () -> Unit,
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
+    onShareCard: (note: String, colorArgb: Long) -> Unit,
 ) {
+    val highlight = item.highlight
     var note by remember(highlight.id) { mutableStateOf(highlight.note) }
     var colorArgb by remember(highlight.id) { mutableStateOf(highlight.colorArgb) }
     var showColorPicker by remember(highlight.id) { mutableStateOf(false) }
@@ -117,8 +121,25 @@ fun NovelHighlightEditorSheet(
                     IconButton(onClick = { onCopy(highlight.normalizedText) }) {
                         Icon(imageVector = Icons.Outlined.ContentCopy, contentDescription = null)
                     }
-                    IconButton(onClick = { onShare(highlight.normalizedText) }) {
+                    IconButton(
+                        onClick = {
+                            onShare(
+                                NovelQuoteShareFormatter.formatQuote(
+                                    quote = highlight.normalizedText,
+                                    novelTitle = item.novelTitle,
+                                    chapterName = item.chapterName.orEmpty(),
+                                    note = note,
+                                ),
+                            )
+                        },
+                    ) {
                         Icon(imageVector = Icons.Outlined.Share, contentDescription = null)
+                    }
+                    IconButton(onClick = { onShareCard(note, colorArgb) }) {
+                        Icon(
+                            imageVector = Icons.Outlined.Image,
+                            contentDescription = stringResource(AYMR.strings.novel_quotes_share_as_image),
+                        )
                     }
                     IconButton(onClick = onDelete) {
                         Icon(

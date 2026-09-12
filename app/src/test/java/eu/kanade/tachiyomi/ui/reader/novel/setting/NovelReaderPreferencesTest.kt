@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.novel.setting
 
 import eu.kanade.tachiyomi.data.download.novel.NovelTranslatedDownloadFormat
+import eu.kanade.tachiyomi.ui.reader.novel.NovelQuoteCardStyle
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -122,6 +123,17 @@ class NovelReaderPreferencesTest {
 
         prefs.translatedDownloadFormat(1L) shouldBe NovelTranslatedDownloadFormat.DOCX
         prefs.translatedDownloadFormat(2L) shouldBe NovelTranslatedDownloadFormat.TXT
+    }
+
+    @Test
+    fun `quote card style defaults to codex sacra and round trips persisted value`() {
+        val prefs = createPrefs()
+
+        prefs.quoteCardStyle().get() shouldBe NovelQuoteCardStyle.CODEX_SACRA
+
+        prefs.quoteCardStyle().set(NovelQuoteCardStyle.MINIMAL)
+
+        prefs.quoteCardStyle().get() shouldBe NovelQuoteCardStyle.MINIMAL
     }
 
     @Test

@@ -3144,6 +3144,10 @@
     <string name="novel_quotes_delete_title">Удалить цитату?</string>
     <string name="novel_quotes_delete_message">Выделение исчезнет из книги и из сборника. Это действие нельзя отменить.</string>
     <string name="novel_quotes_sort_toggle_cd">Переключить сортировку (дата / по тайтлу)</string>
+    <string name="novel_quotes_share_as_image">Поделиться карточкой</string>
+    <string name="novel_quotes_card_style_codex">Codex Sacra</string>
+    <string name="novel_quotes_card_style_glass">Aurora Glass</string>
+    <string name="novel_quotes_card_style_minimal">Минимал</string>
     <string name="novel_reader_selected_text_translation_action_retry">Повторить</string>
     <string name="novel_reader_selected_text_translation_action_close">Закрыть</string>
     <string name="novel_reader_selected_text_translation_loading">Перевод выделенного текста…</string>

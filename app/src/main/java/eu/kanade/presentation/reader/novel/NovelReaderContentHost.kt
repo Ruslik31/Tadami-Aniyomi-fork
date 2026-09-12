@@ -122,6 +122,7 @@ import eu.kanade.domain.easteregg.lattice.LatticeCarrier
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.easteregg.lattice.LatticeCarrierSlot
+import eu.kanade.presentation.library.novel.quotes.NovelQuoteCardShareSheet
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.components.AutoScrollActionFab
 import eu.kanade.presentation.theme.AuroraTheme
@@ -548,22 +549,23 @@ internal fun NovelReaderContentHost(
         },
     )
 
-    val editingHighlight = editingHighlightId?.let { id ->
-        highlightItemList.firstOrNull { it.highlight.id == id }?.highlight
+    val editingHighlightItem = editingHighlightId?.let { id ->
+        highlightItemList.firstOrNull { it.highlight.id == id }
     }
-    if (editingHighlight != null) {
+    var cardShareItem by remember { mutableStateOf<NovelHighlightWithChapter?>(null) }
+    if (editingHighlightItem != null) {
         val context = LocalContext.current
         NovelHighlightEditorSheet(
-            highlight = editingHighlight,
+            item = editingHighlightItem,
             onDismiss = { editingHighlightId = null },
             onSave = { note, colorArgb ->
-                actions.onUpdateHighlight(editingHighlight.id, note, colorArgb)
+                actions.onUpdateHighlight(editingHighlightItem.highlight.id, note, colorArgb)
                 // Выбранный цвет запоминается как последний использованный для новых выделений.
                 actions.onDefaultHighlightColorChanged(colorArgb)
                 editingHighlightId = null
             },
             onDelete = {
-                actions.onDeleteHighlight(editingHighlight.id)
+                actions.onDeleteHighlight(editingHighlightItem.highlight.id)
                 editingHighlightId = null
             },
             onCopy = { text ->
@@ -583,6 +585,18 @@ internal fun NovelReaderContentHost(
                 }
                 context.startActivity(android.content.Intent.createChooser(intent, null))
             },
+            onShareCard = { note, colorArgb ->
+                cardShareItem = editingHighlightItem.copy(
+                    highlight = editingHighlightItem.highlight.copy(note = note, colorArgb = colorArgb),
+                )
+                editingHighlightId = null
+            },
+        )
+    }
+    cardShareItem?.let { item ->
+        NovelQuoteCardShareSheet(
+            item = item,
+            onDismiss = { cardShareItem = null },
         )
     }
     var pendingProgrammaticTtsBlockIndex by remember(state.chapter.id) { mutableStateOf<Int?>(null) }
