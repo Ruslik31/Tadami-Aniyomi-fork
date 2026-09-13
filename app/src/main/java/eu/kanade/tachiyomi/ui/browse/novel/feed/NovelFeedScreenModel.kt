@@ -9,6 +9,7 @@ import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.novelsource.NovelCatalogueSource
 import eu.kanade.tachiyomi.ui.browse.feed.BaseFeedScreenModel
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenState
+import eu.kanade.tachiyomi.ui.browse.feed.feedErrorMessage
 import eu.kanade.tachiyomi.ui.browse.search.SavedSearchFilterSerializer
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import kotlinx.coroutines.async
@@ -142,7 +143,7 @@ class NovelFeedScreenModel(
                     pair.second.fold(
                         onSuccess = { item.copy(results = it, loadError = null) },
                         onFailure = {
-                            item.copy(results = emptyList(), loadError = it.message ?: it.javaClass.simpleName)
+                            item.copy(results = emptyList(), loadError = it.feedErrorMessage())
                         },
                     )
                 } else {

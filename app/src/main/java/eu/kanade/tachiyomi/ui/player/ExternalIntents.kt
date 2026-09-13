@@ -53,6 +53,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.util.Date
+import kotlin.coroutines.cancellation.CancellationException
 
 class ExternalIntents {
 
@@ -81,7 +82,15 @@ class ExternalIntents {
         chosenVideo: Video?,
     ): Intent? {
         if (!initAnime(animeId, episodeId)) return null
-        val hosters = EpisodeLoader.getHosters(episode, anime, source)
+        // Extension code may throw linkage Errors (e.g. NoSuchMethodError on ABI drift);
+        // an external-player hand-off degrades to "no intent" instead of crashing.
+        val hosters = try {
+            EpisodeLoader.getHosters(episode, anime, source)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            return null
+        }
 
         val video = chosenVideo
             ?: HosterLoader.getBestVideo(source, hosters)

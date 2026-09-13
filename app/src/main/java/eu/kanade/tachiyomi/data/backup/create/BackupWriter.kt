@@ -12,6 +12,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
@@ -21,8 +22,9 @@ import java.util.zip.GZIPOutputStream
  *
  * The bytes are compressed and fully verified in the cache directory first, and only a file that
  * decodes back into exactly the expected content is copied over the destination. The destination is
- * then read back and verified again, because a SAF provider is free to accept a write and store
- * something else (or nothing at all).
+ * then compared against the staged bytes with a streaming digest, because a SAF provider is free
+ * to accept a write and store something else (or nothing at all). Everything streams: no second
+ * compressed copy and no second full decode ever sit in RAM next to the payload.
  */
 class BackupWriter(
     private val context: Context,
@@ -43,48 +45,48 @@ class BackupWriter(
     ): BackupWriteReceipt {
         val staging = File.createTempFile("backup-staging", ".tachibk", context.cacheDir)
         try {
-            val compressed = BackupDiagnosticLog.measure(context, "stage_gzip") {
+            BackupDiagnosticLog.measure(context, "stage_gzip") {
                 FileOutputStream(staging).use { out ->
                     GZIPOutputStream(out).use { it.write(payload) }
                 }
-                staging.readBytes()
             }
 
             // Verify the staged bytes before touching the user's existing backup.
             BackupDiagnosticLog.measure(context, "verify_staged") {
-                verify(compressed, expected, expectedOrigin, stage = "staged file")
+                verify(staging, expected, expectedOrigin, stage = "staged file")
             }
 
             BackupDiagnosticLog.measure(context, "write_destination") {
-                replaceDestination(destination, compressed)
+                replaceDestination(destination, staging)
             }
 
-            val written = BackupDiagnosticLog.measure(context, "read_back") {
-                destination.openInputStream().use { it.readBytes() }
-            }
-
+            // A SAF provider is free to accept a write and store something else (or nothing at
+            // all). Byte equality is proven with streaming digests instead of reading the whole
+            // destination back into RAM: the staged content is already verified above, so a
+            // matching destination digest verifies the destination too.
+            val checksum = sha256(staging)
             BackupDiagnosticLog.measure(context, "verify_destination") {
-                if (!written.contentEquals(compressed)) {
+                val writtenDigest = destination.openInputStream().use { sha256(it) }
+                if (writtenDigest != checksum) {
                     throw IOException(
                         "Backup destination does not contain the bytes that were just written " +
-                            "(${written.size} of ${compressed.size} bytes)",
+                            "(sha256 $writtenDigest instead of $checksum)",
                     )
                 }
-                verify(written, expected, expectedOrigin, stage = "destination")
             }
 
-            val checksum = sha256(written)
+            val byteLength = staging.length()
             // Counts only: never titles, urls or any quest payload.
             BackupDiagnosticLog.log(
                 context,
                 "write_receipt",
-                "bytes=${written.size} sha256=$checksum origin=$expectedOrigin " +
+                "bytes=$byteLength sha256=$checksum origin=$expectedOrigin " +
                     "manga=${expected.mangaCount} anime=${expected.animeCount} " +
                     "novel=${expected.novelCount} categories=${expected.categoriesCount}",
             )
 
             return BackupWriteReceipt(
-                byteLength = written.size.toLong(),
+                byteLength = byteLength,
                 sha256 = checksum,
                 origin = expectedOrigin,
                 summary = expected,
@@ -101,21 +103,22 @@ class BackupWriter(
      * ignore the truncate flag, so the size is checked and, as a last resort, the document is
      * deleted and recreated rather than left with trailing bytes of an older backup.
      */
-    private fun replaceDestination(destination: UniFile, bytes: ByteArray) {
+    private fun replaceDestination(destination: UniFile, staged: File) {
         val uri = destination.uri
         val resolver = context.contentResolver
+        val size = staged.length()
 
         val wroteInPlace = try {
             resolver.openFileDescriptor(uri, "rwt")?.use { pfd ->
                 FileOutputStream(pfd.fileDescriptor).use { out ->
                     out.channel.truncate(0)
-                    out.write(bytes)
+                    FileInputStream(staged).use { it.copyTo(out) }
                     out.flush()
                     pfd.fileDescriptor.sync()
-                    if (out.channel.size() != bytes.size.toLong()) {
+                    if (out.channel.size() != size) {
                         throw IOException(
                             "Backup file could not be truncated to the new size " +
-                                "(${out.channel.size()} instead of ${bytes.size})",
+                                "(${out.channel.size()} instead of $size)",
                         )
                     }
                 }
@@ -139,20 +142,20 @@ class BackupWriter(
         }
         val recreated = parent.createFile(name)
             ?: throw IOException("Backup destination could not be recreated")
-        recreated.openOutputStream().use { it.write(bytes) }
-        if (recreated.length() != bytes.size.toLong()) {
+        recreated.openOutputStream().use { out -> FileInputStream(staged).use { it.copyTo(out) } }
+        if (recreated.length() != size) {
             throw IOException("Backup destination has an unexpected size after writing")
         }
     }
 
-    /** Decode [compressed] again and assert it still describes exactly what we meant to store. */
+    /** Decode the staged file again and assert it describes exactly what we meant to store. */
     private fun verify(
-        compressed: ByteArray,
+        staged: File,
         expected: BackupContentSummary,
         expectedOrigin: BackupOrigin,
         stage: String,
     ) {
-        val payload = GZIPInputStream(compressed.inputStream()).use { it.readBytes() }
+        val payload = GZIPInputStream(FileInputStream(staged)).use { it.readBytes() }
         val decoded = BackupDecoder(context).decodeBytes(payload)
 
         if (decoded.origin != expectedOrigin) {
@@ -168,18 +171,18 @@ class BackupWriter(
         }
     }
 
-    private fun sha256(bytes: ByteArray): String {
+    private fun sha256(file: File): String = FileInputStream(file).use { sha256(it) }
+
+    private fun sha256(input: InputStream): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        var offset = 0
-        while (offset < bytes.size) {
-            val length = minOf(DIGEST_CHUNK, bytes.size - offset)
-            digest.update(bytes, offset, length)
-            offset += length
+        val buffer = ByteArray(DIGEST_CHUNK)
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
-
-    private fun File.readBytes(): ByteArray = FileInputStream(this).use { it.readBytes() }
 
     companion object {
         private const val DIGEST_CHUNK = 64 * 1024

@@ -33,6 +33,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.tachiyomi.novelsource.NovelCatalogueSource
+import eu.kanade.tachiyomi.ui.browse.feed.FEED_ERROR_BROKEN_EXTENSION
 import eu.kanade.tachiyomi.ui.browse.novel.feed.NovelFeedItemUI
 import eu.kanade.tachiyomi.ui.browse.novel.feed.NovelFeedScreenState
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -155,7 +156,11 @@ private fun FeedSourceSection(
             // BFEED-5: show the source error instead of a misleading "no results".
             item.loadError != null -> {
                 Text(
-                    text = item.loadError,
+                    text = if (item.loadError == FEED_ERROR_BROKEN_EXTENSION) {
+                        stringResource(MR.strings.feed_error_broken_extension)
+                    } else {
+                        item.loadError
+                    },
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )

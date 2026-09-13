@@ -33,6 +33,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.ui.browse.feed.FEED_ERROR_BROKEN_EXTENSION
 import eu.kanade.tachiyomi.ui.browse.manga.feed.MangaFeedItemUI
 import eu.kanade.tachiyomi.ui.browse.manga.feed.MangaFeedScreenState
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -157,7 +158,11 @@ private fun FeedSourceSection(
             // show the source error (pull-to-refresh retries).
             item.loadError != null -> {
                 Text(
-                    text = item.loadError,
+                    text = if (item.loadError == FEED_ERROR_BROKEN_EXTENSION) {
+                        stringResource(MR.strings.feed_error_broken_extension)
+                    } else {
+                        item.loadError
+                    },
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )

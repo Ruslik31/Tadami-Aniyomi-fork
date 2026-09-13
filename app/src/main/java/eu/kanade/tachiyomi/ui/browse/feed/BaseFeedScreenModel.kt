@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.feed
 
+import android.os.NetworkOnMainThreadException
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
@@ -27,6 +28,24 @@ import tachiyomi.domain.source.model.SourceType
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.coroutines.cancellation.CancellationException
+
+/**
+ * Sentinel [BaseFeedScreenModel.FeedItemUi.loadError] value: the source's extension performed
+ * network I/O on the main thread (Android's default thread policy throws
+ * NetworkOnMainThreadException), which only an extension update can fix. The feed UI maps it
+ * to a human-readable hint instead of showing the raw exception name.
+ */
+const val FEED_ERROR_BROKEN_EXTENSION = "feed:error:broken-extension"
+
+/** BFEED-5 message, with main-thread extension failures replaced by the sentinel above. */
+internal fun Throwable.feedErrorMessage(): String {
+    var cause: Throwable? = this
+    while (cause != null) {
+        if (cause is NetworkOnMainThreadException) return FEED_ERROR_BROKEN_EXTENSION
+        cause = cause.cause
+    }
+    return message ?: javaClass.simpleName
+}
 
 /**
  * Shared state machine for the anime/manga/novel feed tabs.

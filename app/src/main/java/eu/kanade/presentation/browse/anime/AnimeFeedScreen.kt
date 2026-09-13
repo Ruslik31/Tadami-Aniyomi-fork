@@ -35,6 +35,7 @@ import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.ui.browse.anime.feed.AnimeFeedItemUI
 import eu.kanade.tachiyomi.ui.browse.anime.feed.AnimeFeedScreenState
+import eu.kanade.tachiyomi.ui.browse.feed.FEED_ERROR_BROKEN_EXTENSION
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.anime.model.asAnimeCover
 import tachiyomi.i18n.MR
@@ -158,7 +159,11 @@ private fun FeedSourceSection(
             // BFEED-5: show the source error instead of a misleading "no results".
             item.loadError != null -> {
                 Text(
-                    text = item.loadError,
+                    text = if (item.loadError == FEED_ERROR_BROKEN_EXTENSION) {
+                        stringResource(MR.strings.feed_error_broken_extension)
+                    } else {
+                        item.loadError
+                    },
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )

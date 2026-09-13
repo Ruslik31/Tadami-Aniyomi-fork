@@ -521,10 +521,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             val crossfadeMs = (300 * this@App.animatorDurationScale).toInt()
             // Long animations delay first paint of each cover; cap the scaled value.
             crossfade(crossfadeMs.coerceAtMost(MAX_CROSSFADE_MS))
-            allowRgb565(DeviceUtil.isLowRamDevice(this@App))
+            val isLowRam = DeviceUtil.isLowRamDevice(this@App)
+            // A 256 MB heap cap leaves little headroom next to a quarter-heap bitmap cache and
+            // 24 parallel cover decodes (OOM forensics 2026-09-13).
+            val isSmallHeap = Runtime.getRuntime().maxMemory() <= SMALL_HEAP_MAX_BYTES
+            allowRgb565(isLowRam)
             memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(this@App, 0.25)
+                    .maxSizePercent(this@App, if (isSmallHeap) 0.15 else 0.25)
                     .build()
             }
             diskCache {
@@ -536,13 +540,18 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             if (networkPreferences.verboseLogging().get()) logger(DebugLogger())
 
             // Coil spawns a new thread for every image load by default
-            val isLowRam = DeviceUtil.isLowRamDevice(this@App)
             fetcherCoroutineContext(
                 Dispatchers.IO.limitedParallelism(
-                    if (isLowRam) 8 else COVER_FETCH_PARALLELISM,
+                    when {
+                        isLowRam -> 8
+                        isSmallHeap -> 12
+                        else -> COVER_FETCH_PARALLELISM
+                    },
                 ),
             )
-            decoderCoroutineContext(Dispatchers.IO.limitedParallelism(if (isLowRam) 3 else 4))
+            decoderCoroutineContext(
+                Dispatchers.IO.limitedParallelism(if (isLowRam || isSmallHeap) 3 else 4),
+            )
         }
             .build()
     }
@@ -661,6 +670,9 @@ private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNIT
 
 /** Parallel cover fetches on non-low-RAM devices (was 16; grids of 30+ cells). */
 private const val COVER_FETCH_PARALLELISM = 24
+
+/** Heap growth limit at or below which the image pipeline scales down (256 MB class). */
+private const val SMALL_HEAP_MAX_BYTES = 256L * 1024 * 1024
 
 /** Coil disk cache for covers/posters on devices that can afford it. */
 private fun diskCacheSizeBytes(context: android.content.Context): Long {
