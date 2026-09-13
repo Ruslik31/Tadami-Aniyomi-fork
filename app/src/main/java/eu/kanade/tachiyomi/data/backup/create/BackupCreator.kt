@@ -47,6 +47,8 @@ import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.MihonBackup
 import eu.kanade.tachiyomi.data.backup.models.toMihonBackup
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
@@ -69,6 +71,11 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+
+// Backup creation materializes the whole library graph plus full serialized copies in RAM.
+// Two concurrent pipelines (e.g. a scheduled auto backup and a cloud-sync backup) exhausted
+// the heap on small-heap devices (OutOfMemoryError); serialize creation process-wide.
+private val backupCreationMutex = Mutex()
 
 class BackupCreator(
     private val context: Context,
@@ -109,7 +116,11 @@ class BackupCreator(
     private val achievementHandler: AchievementHandler = Injekt.get(),
 ) {
 
-    suspend fun backup(uri: Uri, options: BackupOptions): String {
+    suspend fun backup(uri: Uri, options: BackupOptions): String = backupCreationMutex.withLock {
+        backupLocked(uri, options)
+    }
+
+    private suspend fun backupLocked(uri: Uri, options: BackupOptions): String {
         var file: UniFile? = null
         // Only the file this run created may be deleted on failure; a file the user picked is not
         // ours to remove.

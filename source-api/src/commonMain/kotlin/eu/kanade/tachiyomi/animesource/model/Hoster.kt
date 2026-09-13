@@ -32,6 +32,26 @@ open class Hoster(
         ERROR,
     }
 
+    /**
+     * Binary-compatibility constructor for extensions compiled against an ext-lib
+     * revision where [Hoster] had no [lazy] parameter yet. Keeps the synthetic
+     * default-arguments constructor `(String, String, List, String, int,
+     * DefaultConstructorMarker)` resolvable at runtime; without it such extensions
+     * crash with NoSuchMethodError when building hoster lists.
+     */
+    constructor(
+        hosterUrl: String = "",
+        hosterName: String = "",
+        videoList: List<Video>? = null,
+        internalData: String = "",
+    ) : this(
+        hosterUrl = hosterUrl,
+        hosterName = hosterName,
+        videoList = videoList,
+        internalData = internalData,
+        lazy = false,
+    )
+
     constructor(
         hosterUrl: String = "",
         hosterName: String = "",

@@ -859,11 +859,14 @@ class ReelsFeedScreenModelTest {
             offlineFavorite("off-b"),
         )
 
+        val repository = FakeReelsFavoriteRepository()
+        favorites.forEach { repository.favorites[it.videoId to it.sourceId] = it }
         val screenModel = buildModel(
             sourceId = 301L,
             manager = sourceManagerOf(),
-            initialFavorites = favorites,
-            initialPage = 1,
+            repository = repository,
+            offlinePlaylist = true,
+            initialVideoId = "off-b",
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -952,8 +955,9 @@ class ReelsFeedScreenModelTest {
         repository: ReelsFavoriteRepository = FakeReelsFavoriteRepository(),
         followRepository: ReelsFollowRepository = FakeReelsFollowRepository(),
         incognito: Boolean = false,
-        initialFavorites: List<ReelsFavorite> = emptyList(),
-        initialPage: Int = 0,
+        offlinePlaylist: Boolean = false,
+        playlistSort: FavoritesSort = FavoritesSort.DateDesc,
+        initialVideoId: String? = null,
         creator: String? = null,
         followingFeed: Boolean = false,
         customFeedId: String? = null,
@@ -964,8 +968,9 @@ class ReelsFeedScreenModelTest {
         sessionSound: ReelsSessionSoundState = ReelsSessionSoundState(),
     ) = ReelsFeedScreenModel(
         initialSourceId = sourceId,
-        initialFavorites = initialFavorites,
-        initialPage = initialPage,
+        offlinePlaylist = offlinePlaylist,
+        playlistSort = playlistSort,
+        initialVideoId = initialVideoId,
         creator = creator,
         followingFeed = followingFeed,
         customFeedId = customFeedId,
@@ -1132,16 +1137,18 @@ class ReelsFeedScreenModelTest {
             override fun getStubSources(): List<StubAnimeSource> = emptyList()
         }
 
+        val repository = FakeReelsFavoriteRepository()
+        repository.favorites[favorite.videoId to favorite.sourceId] = favorite
         val screenModel = ReelsFeedScreenModel(
             initialSourceId = 301L,
-            initialFavorites = listOf(favorite),
-            initialPage = 0,
+            offlinePlaylist = true,
+            initialVideoId = favorite.videoId,
             sourceManager = emptySourceManager,
             sourcePreferences = SourcePreferences(MapPreferenceStore()),
             ioDispatcher = testDispatcher,
             isIncognito = { false },
             sourceIconProvider = { null },
-            reelsFavoriteRepository = FakeReelsFavoriteRepository(),
+            reelsFavoriteRepository = repository,
             reelsFollowRepository = FakeReelsFollowRepository(),
         )
         testDispatcher.scheduler.advanceUntilIdle()

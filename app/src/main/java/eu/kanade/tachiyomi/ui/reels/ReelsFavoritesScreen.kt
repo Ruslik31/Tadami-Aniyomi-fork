@@ -60,7 +60,7 @@ import tachiyomi.domain.reels.anime.model.ReelsFavorite
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
-private enum class FavoritesSort { DateDesc, DateAsc, Source }
+enum class FavoritesSort { DateDesc, DateAsc, Source }
 
 class ReelsFavoritesScreen : Screen {
 
@@ -178,8 +178,9 @@ class ReelsFavoritesScreen : Screen {
                                 navigator.push(
                                     ReelsFeedScreen(
                                         sourceId = fav.sourceId,
-                                        initialFavorites = sorted,
-                                        initialPage = sorted.indexOf(fav),
+                                        offlinePlaylist = true,
+                                        playlistSort = sort,
+                                        initialVideoId = fav.videoId,
                                     ),
                                 )
                             },

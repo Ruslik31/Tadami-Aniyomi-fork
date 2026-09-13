@@ -79,9 +79,12 @@ class ReelsSessionSoundState {
 
 class ReelsFeedScreenModel(
     val initialSourceId: Long,
-    // Non-empty when opened as an offline playlist (e.g. from the Favorites screen).
-    private val initialFavorites: List<ReelsFavorite> = emptyList(),
-    private val initialPage: Int = 0,
+    // Offline playlist mode (opened from the Favorites screen): the playlist is reloaded
+    // from the favorites DB; [playlistSort] mirrors the Favorites screen order and
+    // [initialVideoId] seeks to the tapped video.
+    private val offlinePlaylist: Boolean = false,
+    private val playlistSort: FavoritesSort = FavoritesSort.DateDesc,
+    private val initialVideoId: String? = null,
     // Contract v18 creator modes (mutually exclusive, never combined with offline playlists):
     // [creator] serves one creator's feed via AnimeCreatorFeedSource; [followingFeed] merges
     // the latest videos of every followed creator of [initialSourceId].
@@ -182,6 +185,8 @@ class ReelsFeedScreenModel(
     private var restorePositionPending = false
 
     // videoId -> sourceId for offline playlists, so likes persist against the right source.
+    // Written from the IO load job, read from main-thread like handlers.
+    @Volatile
     private var offlineSourceIds: Map<String, Long> = emptyMap()
 
     // videoIds the user liked/unliked this session (main-confined). Their DB state is already
@@ -214,19 +219,30 @@ class ReelsFeedScreenModel(
     private var followingStreams: List<FollowingStream> = emptyList()
 
     init {
-        if (initialFavorites.isNotEmpty()) {
-            offlineSourceIds = initialFavorites.associate { it.videoId to it.sourceId }
-            mutableState.update {
-                it.copy(
-                    isOffline = true,
-                    items = initialFavorites.map { fav -> fav.toShortVideoItem() }.toImmutableList(),
-                    seenIds = initialFavorites.map { it.videoId }.toImmutableSet(),
-                    likedIds = initialFavorites.map { it.videoId }.toImmutableSet(),
-                    isLoading = false,
-                    feedGeneration = 1,
-                    targetPageIndex = initialPage,
-                    canLoadMore = false,
-                )
+        if (offlinePlaylist) {
+            mutableState.update { it.copy(isOffline = true, isLoading = true) }
+            screenModelScope.launch(ioDispatcher) {
+                val all = reelsFavoriteRepository.getAll()
+                val favorites = when (playlistSort) {
+                    FavoritesSort.DateDesc -> all.sortedByDescending { it.addedAt }
+                    FavoritesSort.DateAsc -> all.sortedBy { it.addedAt }
+                    FavoritesSort.Source -> all.sortedBy { it.sourceId }
+                }
+                offlineSourceIds = favorites.associate { it.videoId to it.sourceId }
+                val startIndex = favorites.indexOfFirst { it.videoId == initialVideoId }
+                    .coerceAtLeast(0)
+                mutableState.update {
+                    it.copy(
+                        isOffline = true,
+                        items = favorites.map { fav -> fav.toShortVideoItem() }.toImmutableList(),
+                        seenIds = favorites.map { it.videoId }.toImmutableSet(),
+                        likedIds = favorites.map { it.videoId }.toImmutableSet(),
+                        isLoading = false,
+                        feedGeneration = 1,
+                        targetPageIndex = startIndex,
+                        canLoadMore = false,
+                    )
+                }
             }
         } else {
             mutableState.update { it.copy(mode = mode, creator = creator) }

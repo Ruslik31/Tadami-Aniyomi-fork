@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.util.lang.toLocalDate
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -73,7 +75,11 @@ class NovelUpdatesScreenModel(
                 }
                 .toPersistentList(),
         )
-    }.stateIn(screenModelScope, SharingStarted.WhileSubscribed(5000), State())
+    }
+        // The 500-row filter/map must not run on the Main.immediate stateIn collector;
+        // the manga/anime updates siblings keep this work off the UI thread too.
+        .flowOn(Dispatchers.Default)
+        .stateIn(screenModelScope, SharingStarted.WhileSubscribed(5000), State())
 
     fun toggleSelection(item: NovelUpdatesItem, selected: Boolean) {
         selectedChapterIds.update { ids ->

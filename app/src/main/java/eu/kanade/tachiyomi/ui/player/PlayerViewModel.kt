@@ -2166,7 +2166,10 @@ class PlayerViewModel @JvmOverloads constructor(
                 )
 
                 this@PlayerViewModel.episodeId = currentEpisode.id!!
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Extension code may throw linkage Errors (e.g. NoSuchMethodError on
+                // ABI drift); degrade to an empty episode load result, not a crash.
+                if (e is CancellationException) throw e
                 logcat(LogPriority.ERROR, e) { e.message ?: "Error getting links" }
             }
 

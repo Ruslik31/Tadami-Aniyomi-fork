@@ -90,7 +90,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.domain.reels.anime.model.ReelsFavorite
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
@@ -98,9 +97,13 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 
 data class ReelsFeedScreen(
     val sourceId: Long,
-    // Non-empty => offline playlist mode (opened from the Favorites screen).
-    val initialFavorites: List<ReelsFavorite> = emptyList(),
-    val initialPage: Int = 0,
+    // Offline playlist mode (opened from the Favorites screen). Only lightweight seek/sort
+    // hints are stored here: Voyager Java-serializes every stacked Screen into the saved
+    // state, and carrying the full favorites list blew the binder parcel
+    // (TransactionTooLargeException). The model reloads the playlist from the favorites DB.
+    val offlinePlaylist: Boolean = false,
+    val playlistSort: FavoritesSort = FavoritesSort.DateDesc,
+    val initialVideoId: String? = null,
     // Contract v18: one creator's page (creator != null) or the aggregated Following feed
     // (followingFeed = true). Mutually exclusive; never combined with offline playlists.
     val creator: String? = null,
@@ -121,7 +124,7 @@ data class ReelsFeedScreen(
     // (the saveable state would orphan models across recreation). Creator and Following pages
     // ride the same rule: their keys must include creator/followingFeed.
     override val key: String
-        get() = "ReelsFeedScreen:$sourceId:$initialPage:${initialFavorites.hashCode()}" +
+        get() = "ReelsFeedScreen:$sourceId:$offlinePlaylist:$playlistSort:$initialVideoId" +
             ":$creator:$followingFeed:$customFeedId:$nicheId"
 
     @Composable
@@ -146,8 +149,9 @@ data class ReelsFeedScreen(
         val screenModel = rememberScreenModel {
             ReelsFeedScreenModel(
                 initialSourceId = sourceId,
-                initialFavorites = initialFavorites,
-                initialPage = initialPage,
+                offlinePlaylist = offlinePlaylist,
+                playlistSort = playlistSort,
+                initialVideoId = initialVideoId,
                 creator = creator,
                 followingFeed = followingFeed,
                 customFeedId = customFeedId,
@@ -266,7 +270,10 @@ data class ReelsFeedScreen(
                 }
                 else -> {
                     val pagerState = rememberPagerState(
-                        initialPage = initialPage.coerceIn(0, (state.items.size - 1).coerceAtLeast(0)),
+                        initialPage = state.targetPageIndex.coerceIn(
+                            0,
+                            (state.items.size - 1).coerceAtLeast(0),
+                        ),
                         pageCount = { state.items.size },
                     )
 
