@@ -96,4 +96,34 @@ class CloudflareChallengeDetectorTest {
             CloudflareChallengeDetector.classify(403, "nginx", "challenge", body),
         )
     }
+
+    @Test
+    fun `managed challenge on 429 and 401 is classified (P2)`() {
+        assertEquals(
+            CloudflareChallengeType.MANAGED,
+            CloudflareChallengeDetector.classify(429, "cloudflare", "challenge", ""),
+        )
+        assertEquals(
+            CloudflareChallengeType.MANAGED,
+            CloudflareChallengeDetector.classify(401, "cloudflare", "challenge", ""),
+        )
+    }
+
+    @Test
+    fun `429 rate limit without challenge markers is not a challenge (P2)`() {
+        val body = "<html><body>error code: 1015</body></html>"
+        assertEquals(
+            CloudflareChallengeType.NONE,
+            CloudflareChallengeDetector.classify(429, "cloudflare", null, body),
+        )
+    }
+
+    @Test
+    fun `429 with interstitial markers is a challenge (P2)`() {
+        val body = "<script>window._cf_chl_opt={cvId:'3'};</script>"
+        assertEquals(
+            CloudflareChallengeType.INTERSTITIAL,
+            CloudflareChallengeDetector.classify(429, "cloudflare", null, body),
+        )
+    }
 }

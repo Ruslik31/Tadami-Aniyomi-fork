@@ -15,12 +15,16 @@ internal class CloudflareClearanceWaiter(
     val pollIntervalMs: Long = 750L,
     val softLimitMs: Long = 7_000L,
     private val maxWaitMs: Long = 30_000L,
+    // P5: real clock - the synthetic per-tick accumulation underestimated elapsed time when
+    // the main thread was congested, letting the poller outlive the resolve by minutes.
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     /** True once the clearance cookie has been observed. */
     var bypassed: Boolean = false
         private set
 
     private var elapsedMs = 0L
+    private var lastTickMs: Long = clock()
 
     /** True once the caller is allowed to stop waiting (cookie seen or timeout reached). */
     val shouldRelease: Boolean
@@ -57,7 +61,9 @@ internal class CloudflareClearanceWaiter(
             bypassed = true
             return true
         }
-        elapsedMs += pollIntervalMs
+        val now = clock()
+        elapsedMs += (now - lastTickMs).coerceAtLeast(0L)
+        lastTickMs = now
         return false
     }
 }

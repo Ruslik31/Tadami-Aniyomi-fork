@@ -19,6 +19,7 @@ import eu.kanade.domain.items.novelchapter.interactor.SyncNovelChaptersWithSourc
 import eu.kanade.domain.track.novel.MapNovelTrackStatusToLibrary
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.download.novel.NovelDownloadManager
+import eu.kanade.tachiyomi.data.download.novel.NovelDownloadQueueManager
 import eu.kanade.tachiyomi.data.library.LibraryUpdateFailure
 import eu.kanade.tachiyomi.data.library.LibraryUpdatePacingPolicy
 import eu.kanade.tachiyomi.data.library.processEntriesWithPacing
@@ -53,6 +54,7 @@ import tachiyomi.domain.entries.novel.interactor.GetNovel
 import tachiyomi.domain.entries.novel.model.Novel
 import tachiyomi.domain.items.novelchapter.model.NoChaptersException
 import tachiyomi.domain.items.novelchapter.model.NovelChapter
+import tachiyomi.domain.library.model.GroupLibraryMode
 import tachiyomi.domain.library.novel.LibraryNovel
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_HAS_UNVIEWED
@@ -80,9 +82,10 @@ class NovelLibraryUpdateJob(
     private val downloadPreferences: DownloadPreferences = Injekt.get()
     private val getLibraryNovel: GetLibraryNovel = Injekt.get()
     private val getNovel: GetNovel = Injekt.get()
+    private val getNovelCategories: tachiyomi.domain.category.novel.interactor.GetNovelCategories = Injekt.get()
     private val updateNovel: UpdateNovel = Injekt.get()
     private val syncNovelChaptersWithSource: SyncNovelChaptersWithSource = Injekt.get()
-    private val novelDownloadManager: NovelDownloadManager = NovelDownloadManager()
+    private val novelDownloadManager: NovelDownloadManager = Injekt.get() // F9: shared singleton (SAF caches)
     private val pacingPolicy = LibraryUpdatePacingPolicy(Injekt.get())
 
     private val notifier = NovelLibraryUpdateNotifier(context)
@@ -103,20 +106,23 @@ class NovelLibraryUpdateJob(
         }
 
         if (tags.contains(WORK_NAME_AUTO)) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                val restrictions = libraryPreferences.autoUpdateDeviceRestrictions().get()
-                if (
-                    shouldRetryLegacyAutoUpdateRun(
-                        restrictions = restrictions,
-                        isConnectedToWifi = context.isConnectedToWifi(),
-                        isCharging = context.isCharging(),
-                    )
-                ) {
-                    return Result.retry()
-                }
+            // I8: the runtime re-check used to run only below API 28 - but auto triggers are
+            // enqueued without WorkManager constraints, so a retried/deferred trigger could run
+            // the full update on metered data despite "Wi-Fi only" on ANY API level.
+            val restrictions = libraryPreferences.autoUpdateDeviceRestrictions().get()
+            if (
+                shouldRetryLegacyAutoUpdateRun(
+                    restrictions = restrictions,
+                    isConnectedToWifi = context.isConnectedToWifi(),
+                    isCharging = context.isCharging(),
+                )
+            ) {
+                return Result.retry()
             }
 
-            if (context.workManager.isRunning(WORK_NAME_MANUAL)) {
+            // I6: ENQUEUED too - a not-yet-running manual used to slip through and both ran
+            // duplicate passes.
+            if (context.workManager.isRunningOrEnqueued(WORK_NAME_MANUAL)) {
                 return Result.retry()
             }
         }
@@ -157,11 +163,17 @@ class NovelLibraryUpdateJob(
         )
     }
 
-    private suspend fun filterByCategoryId(libraryNovel: List<LibraryNovel>, categoryId: Long): List<LibraryNovel> {
+    private suspend fun filterByCategoryId(
+        libraryNovel: List<LibraryNovel>,
+        categoryId: Long,
+        fullCategoryIdsByNovelId: Map<Long, Set<Long>> = emptyMap(),
+    ): List<LibraryNovel> {
         return when {
             categoryId == -1L -> {
-                // Ungrouped
-                libraryNovel.filter { it.category == 0L }
+                // D-M1 (novel port of the manga fix): the UI's "Ungrouped" pseudo-group flattens
+                // ALL items, while this branch used to take only membership-0 rows - refreshing
+                // the visible group updated something else entirely. Match the UI semantics.
+                libraryNovel
             }
             categoryId == -2L -> {
                 // Untracked
@@ -216,13 +228,32 @@ class NovelLibraryUpdateJob(
                 libraryNovel.filter { it.novel.source == targetSourceId }
             }
             else -> {
-                libraryNovel.filter { it.category == categoryId }
+                filterLibraryNovelsByCategoryMembership(libraryNovel, categoryId, fullCategoryIdsByNovelId)
             }
         }
     }
 
     private suspend fun addNovelToQueue(categoryId: Long) {
         val libraryNovels = getLibraryNovel.await()
+        // The library view collapses categories to MIN(id) for stable UI rows; update and
+        // auto-download decisions need the real membership from the categories interactor (manga
+        // gets it from one library row per category). Novels without any category fall back to the
+        // default category (0) - the same value the collapsed view reports for them.
+        // I14: the membership map costs one query per novel - build it lazily, ONLY for the
+        // branches that consult it. It used to be built over the WHOLE library on every run,
+        // including single-entry retries and pseudo-group refreshes that never read it.
+        var fullCategoryIdsByNovelId: Map<Long, Set<Long>>? = null
+        suspend fun membershipMap(): Map<Long, Set<Long>> {
+            return fullCategoryIdsByNovelId ?: libraryNovels
+                .map { it.novel.id }
+                .distinct()
+                .associateWith { novelId ->
+                    getNovelCategories.await(novelId)
+                        .mapTo(HashSet()) { it.id }
+                        .ifEmpty { hashSetOf(0L) }
+                }
+                .also { fullCategoryIdsByNovelId = it }
+        }
         val targetEntryIds = inputData.getLongArray(KEY_ENTRY_IDS)
             ?.takeIf { it.isNotEmpty() }
             ?.toSet()
@@ -232,24 +263,54 @@ class NovelLibraryUpdateJob(
                 .filter { it.novel.id in targetEntryIds }
                 .distinctBy { it.novel.id }
         } else if (categoryId != -999L) {
-            filterByCategoryId(libraryNovels, categoryId)
+            val membership = if (categoryId >= 0L) membershipMap() else emptyMap()
+            filterByCategoryId(libraryNovels, categoryId, membership)
         } else {
-            val categoriesToUpdate = libraryPreferences.novelUpdateCategories().get().map { it.toLong() }
-            val includedNovels = if (categoriesToUpdate.isNotEmpty()) {
-                libraryNovels.filter { it.category in categoriesToUpdate }
-            } else {
-                libraryNovels
-            }
+            // РЕШ-15 revival (novel mirror of the manga job): novelGroupLibraryUpdateType was a
+            // dead setting. GLOBAL (default) keeps include/exclude; ALL updates every entry;
+            // ALL_BUT_UNGROUPED keeps only novels with at least one non-Default category (the
+            // Ungrouped bucket is category 0), using the real membership map.
+            when (libraryPreferences.novelGroupLibraryUpdateType().get()) {
+                GroupLibraryMode.ALL -> libraryNovels
+                GroupLibraryMode.ALL_BUT_UNGROUPED -> {
+                    val membership = membershipMap()
+                    libraryNovels.filter { novel ->
+                        membership
+                            .getOrDefault(novel.novel.id, setOf(novel.category))
+                            .any { it != 0L }
+                    }
+                }
+                GroupLibraryMode.GLOBAL -> {
+                    val categoriesToUpdate = libraryPreferences.novelUpdateCategories().get().map {
+                        it.toLong()
+                    }.toSet()
+                    val categoriesToExclude =
+                        libraryPreferences.novelUpdateCategoriesExclude().get().map { it.toLong() }.toSet()
+                    if (categoriesToUpdate.isEmpty() && categoriesToExclude.isEmpty()) {
+                        libraryNovels
+                    } else {
+                        val membership = membershipMap()
+                        val includedNovels = if (categoriesToUpdate.isNotEmpty()) {
+                            libraryNovels.filter {
+                                isLibraryNovelInAnyCategory(it, categoriesToUpdate, membership)
+                            }
+                        } else {
+                            libraryNovels
+                        }
 
-            val categoriesToExclude = libraryPreferences.novelUpdateCategoriesExclude().get().map { it.toLong() }
-            val excludedNovelIds = if (categoriesToExclude.isNotEmpty()) {
-                libraryNovels.filter { it.category in categoriesToExclude }.map { it.novel.id }
-            } else {
-                emptyList()
-            }
+                        val excludedNovelIds = if (categoriesToExclude.isNotEmpty()) {
+                            libraryNovels
+                                .filter { isLibraryNovelInAnyCategory(it, categoriesToExclude, membership) }
+                                .map { it.novel.id }
+                        } else {
+                            emptyList()
+                        }
 
-            includedNovels
-                .filterNot { it.novel.id in excludedNovelIds }
+                        includedNovels
+                            .filterNot { it.novel.id in excludedNovelIds }
+                    }
+                }
+            }
         }
 
         if (targetEntryIds != null) {
@@ -265,8 +326,17 @@ class NovelLibraryUpdateJob(
         }
 
         novelCategoryIdsByNovelId = listToUpdate
-            .groupBy { it.novel.id }
-            .mapValues { (_, entries) -> entries.map { it.category }.toSet() }
+            .distinctBy { it.novel.id }
+            .associate { item ->
+                // I14: reuse the lazily built map when a branch needed it; otherwise fetch
+                // membership per queued entry (scoped to the run list, not the whole library).
+                item.novel.id to (
+                    fullCategoryIdsByNovelId?.get(item.novel.id)
+                        ?: getNovelCategories.await(item.novel.id)
+                            .mapTo(HashSet()) { it.id }
+                            .ifEmpty { hashSetOf(0L) }
+                    )
+            }
 
         val restrictions = libraryPreferences.autoUpdateItemRestrictions().get().takeIf {
             targetEntryIds == null
@@ -319,6 +389,9 @@ class NovelLibraryUpdateJob(
         val progressCount = AtomicInteger(0)
         val updatedCount = AtomicInteger(0)
         val failedCount = AtomicInteger(0)
+        // I9: atomic accumulator - the per-entry preference getAndSet was a non-synchronized
+        // read-modify-write racing across the Semaphore(5) coroutines (lost badge increments).
+        val newChapterCountTotal = AtomicInteger(0)
         val currentlyUpdating = CopyOnWriteArrayList<Novel>()
         val newUpdates = CopyOnWriteArrayList<Pair<Novel, Int>>()
         val failedUpdates = CopyOnWriteArrayList<LibraryUpdateFailure>()
@@ -357,10 +430,18 @@ class NovelLibraryUpdateJob(
                                                 categoryIds = novelCategoryIdsByNovelId[novel.id].orEmpty(),
                                             )
                                             if (chaptersToDownload.isNotEmpty()) {
-                                                novelDownloadManager.downloadChapters(novel, chaptersToDownload)
+                                                // I10: enqueue instead of downloading INLINE -
+                                                // the old call fetched every chapter's text over
+                                                // the network (30 s timeout each) inside the
+                                                // update loop while holding the semaphore permit
+                                                // and hammering the same source being
+                                                // concurrently updated - exactly what the
+                                                // anime/manga jobs defer ("could ban the user").
+                                                // The queue manager adds scheduling, network-
+                                                // aware pausing, throttling and notifications.
+                                                NovelDownloadQueueManager.enqueueOriginal(novel, chaptersToDownload)
                                             }
-                                            libraryPreferences.newNovelUpdatesCount()
-                                                .getAndSet { it + newChapters.size }
+                                            newChapterCountTotal.addAndGet(newChapters.size)
                                             newUpdates.add(novel to newChapters.size)
                                             updatedCount.incrementAndGet()
                                         }
@@ -418,6 +499,9 @@ class NovelLibraryUpdateJob(
         notifier.cancelProgressNotification()
 
         if (newUpdates.isNotEmpty()) {
+            // I9: single preference write after the run (see newChapterCountTotal).
+            libraryPreferences.newNovelUpdatesCount()
+                .getAndSet { it + newChapterCountTotal.get() }
             notifier.showUpdateSummaryNotification(newUpdates)
         }
         if (failedUpdates.isNotEmpty()) {
@@ -447,7 +531,10 @@ class NovelLibraryUpdateJob(
             novel = dbNovel,
             source = source,
             manualFetch = false,
-            fetchWindow = Pair(0L, 0L),
+            // Manga parity: the real window lets a no-change sync refresh a stale next_update
+            // (the (0,0) sentinel made the `nextUpdate < fetchWindow.first` guard dead, so novels
+            // never rescheduled, dropped out of Upcoming and defeated ENTRY_OUTSIDE_RELEASE_PERIOD).
+            fetchWindow = getNovelFetchWindow(ZonedDateTime.now()),
         )
     }
 
@@ -555,21 +642,28 @@ class NovelLibraryUpdateJob(
             eu.kanade.tachiyomi.data.library.LibraryAutoUpdateSchedulerJob.setupTask(context, prefInterval)
         }
 
-        fun startNow(context: Context, categoryId: Long? = null): Boolean {
-            val inputData = categoryId
-                ?.let { workDataOf(KEY_CATEGORY to it) }
-                ?: workDataOf()
-            return enqueueManualUpdate(context, inputData)
-        }
+        // I15: the enqueue guard runs a blocking WorkManager query - never on the caller's
+        // thread (pull-to-refresh handlers live on MAIN).
+        suspend fun startNow(context: Context, categoryId: Long? = null): Boolean =
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val inputData = categoryId
+                    ?.let { workDataOf(KEY_CATEGORY to it) }
+                    ?: workDataOf()
+                enqueueManualUpdate(context, inputData)
+            }
 
-        fun startNow(context: Context, entryIds: LongArray): Boolean {
-            if (entryIds.isEmpty()) return false
-            return enqueueManualUpdate(context, workDataOf(KEY_ENTRY_IDS to entryIds))
-        }
+        suspend fun startNow(context: Context, entryIds: LongArray): Boolean =
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                if (entryIds.isEmpty()) return@withContext false
+                enqueueManualUpdate(context, workDataOf(KEY_ENTRY_IDS to entryIds))
+            }
 
         private fun enqueueManualUpdate(context: Context, inputData: Data): Boolean {
             val wm = context.workManager
-            if (wm.isRunning(TAG) || wm.isRunningOrEnqueued(WORK_NAME_MANUAL)) {
+            // I6: ENQUEUED-aware single TAG query - an enqueued-but-not-yet-running auto
+            // trigger used to slip through the isRunning(TAG) check, letting a manual refresh
+            // start a duplicate full pass (TAG is carried by both manual and auto workers).
+            if (wm.isRunningOrEnqueued(TAG)) {
                 return false
             }
 
@@ -585,8 +679,17 @@ class NovelLibraryUpdateJob(
 
         fun stop(context: Context) {
             val wm = context.workManager
+            // I5: cancel ENQUEUED/BLOCKED work too - a RUNNING-only query left an enqueued auto
+            // trigger (or a retry parked in backoff, or a constrained trigger waiting for Wi-Fi
+            // in BLOCKED) alive, resurrecting the update right after Cancel.
             val workQuery = WorkQuery.Builder.fromTags(listOf(TAG))
-                .addStates(listOf(WorkInfo.State.RUNNING))
+                .addStates(
+                    listOf(
+                        WorkInfo.State.RUNNING,
+                        WorkInfo.State.ENQUEUED,
+                        WorkInfo.State.BLOCKED,
+                    ),
+                )
                 .build()
             val future = wm.getWorkInfos(workQuery)
             future.addListener(
@@ -651,6 +754,31 @@ internal fun isNovelEligibleForAutoUpdate(
         restrictions = restrictions,
         fetchWindowUpperBound = fetchWindowUpperBound,
     ) == null
+}
+
+/**
+ * Category membership filter over the FULL category set of each novel (see
+ * [NovelLibraryUpdateJob.addNovelToQueue]): the collapsed `LibraryNovel.category` only names the
+ * lowest-id category, so filtering by it alone hides multi-category novels from every other
+ * category's updates. Falls back to the collapsed value for novels missing from the map.
+ */
+internal fun filterLibraryNovelsByCategoryMembership(
+    libraryNovels: List<LibraryNovel>,
+    categoryId: Long,
+    fullCategoryIdsByNovelId: Map<Long, Set<Long>>,
+): List<LibraryNovel> {
+    return libraryNovels.filter { item ->
+        categoryId in fullCategoryIdsByNovelId.getOrDefault(item.novel.id, setOf(item.category))
+    }
+}
+
+internal fun isLibraryNovelInAnyCategory(
+    item: LibraryNovel,
+    targetCategoryIds: Set<Long>,
+    fullCategoryIdsByNovelId: Map<Long, Set<Long>>,
+): Boolean {
+    val categories = fullCategoryIdsByNovelId.getOrDefault(item.novel.id, setOf(item.category))
+    return categories.any { it in targetCategoryIds }
 }
 
 /**

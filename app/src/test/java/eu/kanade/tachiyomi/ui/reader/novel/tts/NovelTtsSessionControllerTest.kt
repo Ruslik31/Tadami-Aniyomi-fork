@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.ui.reader.novel.tts
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
@@ -418,6 +420,279 @@ class NovelTtsSessionControllerTest {
         }
     }
 
+    @Test
+    fun `stop during chapter handoff load does not resurrect playback`() {
+        runBlocking {
+            val speaker = FakeSpeaker()
+            val loadEntered = CompletableDeferred<Unit>()
+            val loadGate = CompletableDeferred<Unit>()
+            val controller = NovelTtsSessionController(
+                chapterSource = GatedChapterSource(
+                    chapters = listOf(
+                        chapter(chapterId = 1L, nextChapterId = 2L),
+                        chapter(chapterId = 2L),
+                    ),
+                    gatedChapterId = 2L,
+                    loadEntered = loadEntered,
+                    loadGate = loadGate,
+                ),
+                speaker = speaker,
+                sessionStore = InMemoryNovelTtsSessionStore(),
+            )
+
+            controller.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-1",
+                preferTranslatedText = false,
+                autoAdvanceChapter = true,
+            )
+
+            val handoff = launch { controller.onUtteranceCompleted("chapter-1-utterance-1") }
+            loadEntered.await()
+            controller.stop()
+            loadGate.complete(Unit)
+            handoff.join()
+
+            controller.state.value.session shouldBe null
+            controller.state.value.playbackState shouldBe NovelTtsPlaybackState.IDLE
+            speaker.spokenUtteranceIds shouldContainExactly listOf("chapter-1-utterance-1")
+        }
+    }
+
+    @Test
+    fun `pause during chapter handoff load keeps playback paused`() {
+        runBlocking {
+            val speaker = FakeSpeaker()
+            val loadEntered = CompletableDeferred<Unit>()
+            val loadGate = CompletableDeferred<Unit>()
+            val controller = NovelTtsSessionController(
+                chapterSource = GatedChapterSource(
+                    chapters = listOf(
+                        chapter(chapterId = 1L, nextChapterId = 2L),
+                        chapter(chapterId = 2L),
+                    ),
+                    gatedChapterId = 2L,
+                    loadEntered = loadEntered,
+                    loadGate = loadGate,
+                ),
+                speaker = speaker,
+                sessionStore = InMemoryNovelTtsSessionStore(),
+            )
+
+            controller.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-1",
+                preferTranslatedText = false,
+                autoAdvanceChapter = true,
+            )
+
+            val handoff = launch { controller.onUtteranceCompleted("chapter-1-utterance-1") }
+            loadEntered.await()
+            controller.pause()
+            loadGate.complete(Unit)
+            handoff.join()
+
+            controller.state.value.playbackState shouldBe NovelTtsPlaybackState.PAUSED
+            controller.state.value.pendingChapterHandoffId shouldBe null
+            speaker.spokenUtteranceIds shouldContainExactly listOf("chapter-1-utterance-1")
+        }
+    }
+
+    @Test
+    fun `restore from a paused checkpoint resumes as paused without speaking`() {
+        runBlocking {
+            val store = InMemoryNovelTtsSessionStore()
+            val chapters = listOf(
+                chapter(chapterId = 1L, nextChapterId = 2L),
+                chapter(chapterId = 2L),
+            )
+            val first = NovelTtsSessionController(
+                chapterSource = FakeChapterSource(chapters),
+                speaker = FakeSpeaker(),
+                sessionStore = store,
+            )
+            first.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-0",
+                preferTranslatedText = false,
+                autoAdvanceChapter = true,
+            )
+            first.pause()
+
+            // A reader screen replace recreates the controller over the same shared store: the
+            // user's pause must survive the recreation instead of auto-resuming speech.
+            val secondSpeaker = FakeSpeaker()
+            val second = NovelTtsSessionController(
+                chapterSource = FakeChapterSource(chapters),
+                speaker = secondSpeaker,
+                sessionStore = store,
+            )
+            second.restoreFromCheckpoint()
+
+            second.state.value.playbackState shouldBe NovelTtsPlaybackState.PAUSED
+            secondSpeaker.spokenUtteranceIds shouldContainExactly emptyList()
+
+            // An explicit play still resumes from the paused position.
+            second.resume()
+            second.state.value.playbackState shouldBe NovelTtsPlaybackState.PLAYING
+            secondSpeaker.spokenUtteranceIds shouldContainExactly listOf("chapter-1-utterance-0")
+        }
+    }
+
+    @Test
+    fun `armed end-of-chapter sleep gate pauses at the chapter boundary instead of auto-advancing`() {
+        runBlocking {
+            val speaker = FakeSpeaker()
+            val store = InMemoryNovelTtsSessionStore()
+            val chapterSource = FakeChapterSource(
+                listOf(
+                    chapter(chapterId = 1L, nextChapterId = 2L),
+                    chapter(chapterId = 2L),
+                ),
+            )
+            val controller = NovelTtsSessionController(
+                chapterSource = chapterSource,
+                speaker = speaker,
+                sessionStore = store,
+            )
+            var gateCalls = 0
+            controller.endOfChapterSleepGate = {
+                gateCalls += 1
+                // Mirrors the production owner: consuming the armed timer pauses at the boundary.
+                controller.pause()
+                true
+            }
+
+            controller.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-1",
+                preferTranslatedText = false,
+                autoAdvanceChapter = true,
+            )
+            controller.onUtteranceCompleted("chapter-1-utterance-1")
+
+            gateCalls shouldBe 1
+            controller.state.value.playbackState shouldBe NovelTtsPlaybackState.PAUSED
+            controller.state.value.pendingChapterHandoffId shouldBe null
+            controller.state.value.session.shouldNotBeNull().chapterId shouldBe 1L
+            chapterSource.loadCallCount shouldBe 1
+            speaker.spokenUtteranceIds shouldContainExactly listOf("chapter-1-utterance-1")
+            store.loadCheckpoint().shouldNotBeNull().utteranceId shouldBe "chapter-1-utterance-1"
+            store.loadCheckpoint().shouldNotBeNull().paused shouldBe true
+        }
+    }
+
+    @Test
+    fun `armed end-of-chapter sleep gate pauses at chapter end even without auto-advance`() {
+        runBlocking {
+            val speaker = FakeSpeaker()
+            val chapterSource = FakeChapterSource(
+                listOf(
+                    chapter(chapterId = 1L, nextChapterId = 2L),
+                    chapter(chapterId = 2L),
+                ),
+            )
+            val controller = NovelTtsSessionController(
+                chapterSource = chapterSource,
+                speaker = speaker,
+                sessionStore = InMemoryNovelTtsSessionStore(),
+            )
+            controller.endOfChapterSleepGate = {
+                controller.pause()
+                true
+            }
+
+            controller.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-1",
+                preferTranslatedText = false,
+                autoAdvanceChapter = false,
+            )
+            controller.onUtteranceCompleted("chapter-1-utterance-1")
+
+            controller.state.value.playbackState shouldBe NovelTtsPlaybackState.PAUSED
+            controller.state.value.session.shouldNotBeNull().chapterId shouldBe 1L
+            chapterSource.loadCallCount shouldBe 1
+            speaker.spokenUtteranceIds shouldContainExactly listOf("chapter-1-utterance-1")
+        }
+    }
+
+    @Test
+    fun `disarmed end-of-chapter sleep gate keeps auto-advance intact`() {
+        runBlocking {
+            val speaker = FakeSpeaker()
+            val chapterSource = FakeChapterSource(
+                listOf(
+                    chapter(chapterId = 1L, nextChapterId = 2L),
+                    chapter(chapterId = 2L),
+                ),
+            )
+            val controller = NovelTtsSessionController(
+                chapterSource = chapterSource,
+                speaker = speaker,
+                sessionStore = InMemoryNovelTtsSessionStore(),
+            )
+            controller.endOfChapterSleepGate = { false }
+
+            controller.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-1",
+                preferTranslatedText = false,
+                autoAdvanceChapter = true,
+            )
+            controller.onUtteranceCompleted("chapter-1-utterance-1")
+
+            chapterSource.loadCallCount shouldBe 2
+            controller.state.value.session.shouldNotBeNull().chapterId shouldBe 2L
+            speaker.spokenUtteranceIds shouldContainExactly listOf(
+                "chapter-1-utterance-1",
+                "chapter-2-utterance-0",
+            )
+        }
+    }
+
+    @Test
+    fun `stop during the end-of-chapter sleep gate does not resurrect playback`() {
+        runBlocking {
+            val speaker = FakeSpeaker()
+            val gateEntered = CompletableDeferred<Unit>()
+            val gateRelease = CompletableDeferred<Unit>()
+            val controller = NovelTtsSessionController(
+                chapterSource = FakeChapterSource(
+                    listOf(
+                        chapter(chapterId = 1L, nextChapterId = 2L),
+                        chapter(chapterId = 2L),
+                    ),
+                ),
+                speaker = speaker,
+                sessionStore = InMemoryNovelTtsSessionStore(),
+            )
+            controller.endOfChapterSleepGate = {
+                gateEntered.complete(Unit)
+                gateRelease.await()
+                true
+            }
+
+            controller.startFromCurrentPosition(
+                chapterId = 1L,
+                utteranceId = "chapter-1-utterance-1",
+                preferTranslatedText = false,
+                autoAdvanceChapter = true,
+            )
+
+            val handoff = launch { controller.onUtteranceCompleted("chapter-1-utterance-1") }
+            gateEntered.await()
+            controller.stop()
+            gateRelease.complete(Unit)
+            handoff.join()
+
+            controller.state.value.session shouldBe null
+            controller.state.value.playbackState shouldBe NovelTtsPlaybackState.IDLE
+            controller.state.value.pendingChapterHandoffId shouldBe null
+            speaker.spokenUtteranceIds shouldContainExactly listOf("chapter-1-utterance-1")
+        }
+    }
+
     private fun chapter(
         chapterId: Long,
         nextChapterId: Long? = null,
@@ -483,6 +758,21 @@ class NovelTtsSessionControllerTest {
         override suspend fun loadChapter(chapterId: Long): NovelTtsResolvedChapter? {
             loadCallCount++
             return chaptersById[chapterId]
+        }
+    }
+
+    private class GatedChapterSource(
+        private val chapters: List<NovelTtsResolvedChapter>,
+        private val gatedChapterId: Long,
+        private val loadEntered: CompletableDeferred<Unit>,
+        private val loadGate: CompletableDeferred<Unit>,
+    ) : NovelTtsChapterSource {
+        override suspend fun loadChapter(chapterId: Long): NovelTtsResolvedChapter? {
+            if (chapterId == gatedChapterId) {
+                loadEntered.complete(Unit)
+                loadGate.await()
+            }
+            return chapters.firstOrNull { it.chapterId == chapterId }
         }
     }
 

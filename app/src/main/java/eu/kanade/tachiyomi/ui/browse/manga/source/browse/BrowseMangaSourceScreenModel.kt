@@ -48,8 +48,8 @@ import tachiyomi.domain.category.manga.interactor.GetMangaCategories
 import tachiyomi.domain.category.manga.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.entries.manga.interactor.GetDuplicateLibraryManga
-import tachiyomi.domain.entries.manga.interactor.GetLibraryManga
 import tachiyomi.domain.entries.manga.interactor.GetManga
+import tachiyomi.domain.entries.manga.interactor.GetMangaFavorites
 import tachiyomi.domain.entries.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.entries.manga.model.toMangaUpdate
@@ -93,13 +93,19 @@ class BrowseMangaSourceScreenModel(
     private val insertSavedSearch: InsertSavedSearch = Injekt.get(),
     private val deleteSavedSearchById: DeleteSavedSearchById = Injekt.get(),
     private val filterSerializer: FilterSerializer = Injekt.get(),
-    private val getLibraryManga: GetLibraryManga = Injekt.get(),
+    private val getMangaFavorites: GetMangaFavorites = Injekt.get(),
 ) : StateScreenModel<BrowseMangaSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
 
     var displayMode by sourcePreferences.sourceDisplayMode().asState(screenModelScope)
 
     val source = sourceManager.getOrStub(sourceId)
     private var defaultFiltersSerialized: String? = null
+
+    // BRM-18: set once the user runs their own search; a late loadFilters completion must no
+    // longer genre-match/overwrite the live listing (it used to convert the typed toolbar query
+    // into a filter search or blank it entirely when it resolved after the user searched).
+    @Volatile
+    private var userSearched = false
 
     init {
         if (source is CatalogueSource) {
@@ -123,7 +129,11 @@ class BrowseMangaSourceScreenModel(
                 val baseFilters = loadSourceFilters()
                 val filtersJson = savedSearch.filtersJson
                 if (filtersJson != null) {
-                    filterSerializer.deserialize(baseFilters, Json.parseToJsonElement(filtersJson).jsonArray)
+                    // BRM-7: a corrupted/foreign filtersJson used to crash this coroutine (and
+                    // the process - screenModelScope has no exception handler) through the
+                    // unguarded parse; degrade to the default filters instead.
+                    runCatching { Json.parseToJsonElement(filtersJson).jsonArray }
+                        .onSuccess { filterSerializer.deserialize(baseFilters, it) }
                 }
                 mutableState.update {
                     it.copy(
@@ -143,7 +153,8 @@ class BrowseMangaSourceScreenModel(
             mutableState.update { state ->
                 val currentListing = state.listing
                 val updatedListing = when {
-                    currentListing is Listing.Search && currentListing.filters.isEmpty() -> {
+                    // BRM-18: never genre-match a listing the user has since searched over.
+                    currentListing is Listing.Search && currentListing.filters.isEmpty() && !userSearched -> {
                         val q = currentListing.query
                         if (!q.isNullOrBlank()) {
                             var genreFound = false
@@ -227,13 +238,23 @@ class BrowseMangaSourceScreenModel(
     fun saveSearch(name: String) {
         screenModelScope.launch {
             val state = mutableState.value
-            val filtersJson = kotlinx.serialization.json.Json.encodeToString(filterSerializer.serialize(state.filters))
+            // BRM-6: use the runCatching-wrapped serializeFilters (the raw call threw
+            // IllegalArgumentException on filter subtypes the ts serializer doesn't cover,
+            // straight out of this coroutine).
+            val filtersJson = serializeFilters(state.filters)
+            // BRM-2: Popular/Latest listings carry SENTINEL query strings (QUERY_POPULAR/
+            // QUERY_LATEST); saving them verbatim made openSavedSearch run a literal search for
+            // the sentinel and show the magic string in the toolbar. Save null instead - the
+            // filters (the valuable part of such a saved search) still apply.
+            val listingQuery = state.listing.query?.takeUnless { q ->
+                q == GetRemoteManga.QUERY_POPULAR || q == GetRemoteManga.QUERY_LATEST
+            }
             val savedSearch = SavedSearch(
                 id = -1,
                 source = sourceId,
                 sourceType = SourceType.MANGA,
                 name = name,
-                query = state.listing.query,
+                query = listingQuery,
                 filtersJson = filtersJson,
             )
             insertSavedSearch.await(savedSearch)
@@ -254,18 +275,25 @@ class BrowseMangaSourceScreenModel(
         if (source !is CatalogueSource) return
         screenModelScope.launch {
             val filtersJsonStr = savedSearch.filtersJson
+            // BRM-7: guarded parse - corrupted JSON degrades to "no saved filters".
             val jsonArray = if (filtersJsonStr != null) {
-                Json.parseToJsonElement(filtersJsonStr).jsonArray
+                runCatching { Json.parseToJsonElement(filtersJsonStr).jsonArray }
+                    .getOrDefault(buildJsonArray { })
             } else {
                 buildJsonArray { }
             }
             val baseFilters = loadSourceFilters()
             filterSerializer.deserialize(baseFilters, jsonArray)
+            // BRM-2: legacy rows may still hold the sentinel strings - treat them as "no query"
+            // so filters apply without a literal sentinel search / magic toolbar text.
+            val query = savedSearch.query?.takeUnless { q ->
+                q == GetRemoteManga.QUERY_POPULAR || q == GetRemoteManga.QUERY_LATEST
+            }
             mutableState.update {
                 it.copy(
-                    listing = Listing.Search(savedSearch.query, baseFilters),
+                    listing = Listing.Search(query, baseFilters),
                     filters = baseFilters,
-                    toolbarQuery = savedSearch.query,
+                    toolbarQuery = query,
                     savedSearches = it.savedSearches.map { (s, _) -> s to (s.id == savedSearch.id) }.toImmutableList(),
                 )
             }
@@ -276,19 +304,16 @@ class BrowseMangaSourceScreenModel(
         setDialog(null)
     }
 
-    val favoriteMangaUrls = getLibraryManga.subscribe()
-        .map { libraryMangaList ->
-            libraryMangaList
-                .filter { it.manga.source == sourceId }
-                .map { it.manga.url }
-                .toSet()
-        }
+    // BRM-8: was subscribing to the WHOLE library and filtering in memory - every library
+    // change anywhere (any source, read/unread, tracking) re-emitted into the open browse
+    // screen. Source-scoped interactor instead (novel etalon :360-365).
+    val favoriteMangaUrls = getMangaFavorites.subscribe(sourceId)
+        .map { favorites -> favorites.map { it.url }.toSet() }
         .stateIn(screenModelScope, SharingStarted.Lazily, emptySet())
 
     /**
      * Flow of Pager flow tied to [State.listing]
      */
-    private val hideInLibraryItems = sourcePreferences.hideInMangaLibraryItems().get()
     val mangaPagerFlowFlow = state.map { it.listing }
         .distinctUntilChanged()
         .map { listing ->
@@ -307,7 +332,11 @@ class BrowseMangaSourceScreenModel(
                     }
                 }
                 .map { pagingData ->
-                    pagingData.filter { !hideInLibraryItems || !it.favorite }
+                    // РЕШ-10: the pref was snapshotted once in the constructor - toggling the
+                    // setting did not affect the open browse screen until it was recreated.
+                    // Read it live per emission (in-memory SharedPreferences read).
+                    val hideLibraryItems = sourcePreferences.hideInMangaLibraryItems().get()
+                    pagingData.filter { !hideLibraryItems || !it.favorite }
                 }
                 .cachedIn(ioCoroutineScope)
         }
@@ -345,15 +374,28 @@ class BrowseMangaSourceScreenModel(
         mutableState.update { it.copy(listing = listing, toolbarQuery = null) }
     }
 
+    // РЕШ-9: the filter sheet mutates the state's FilterList IN PLACE and hands back the same
+    // instance, so the old serialize(filters) vs serialize(state.value.filters) compared the
+    // object with itself - `changed` was always false and browse never tracked the FILTER
+    // achievement (symmetrically in all three media). Compare against a snapshot of the last
+    // applied serialization instead; the first apply in a session counts as a change (the sheet
+    // was used), identical re-applies do not.
+    private var appliedFiltersSnapshot: String? = null
+
+    private fun serializeFiltersSafely(filters: FilterList): String? {
+        return try {
+            kotlinx.serialization.json.Json.encodeToString(filterSerializer.serialize(filters))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun setFilters(filters: FilterList) {
         if (source !is CatalogueSource) return
 
-        val changed = try {
-            kotlinx.serialization.json.Json.encodeToString(filterSerializer.serialize(filters)) !=
-                kotlinx.serialization.json.Json.encodeToString(filterSerializer.serialize(state.value.filters))
-        } catch (e: Exception) {
-            true
-        }
+        val newSnapshot = serializeFiltersSafely(filters)
+        val changed = newSnapshot != appliedFiltersSnapshot
+        appliedFiltersSnapshot = newSnapshot
 
         mutableState.update {
             it.copy(
@@ -367,6 +409,7 @@ class BrowseMangaSourceScreenModel(
 
     fun search(query: String? = null, filters: FilterList? = null) {
         if (source !is CatalogueSource) return
+        userSearched = true
 
         val currentState = state.value
         val input = currentState.listing as? Listing.Search
@@ -478,7 +521,9 @@ class BrowseMangaSourceScreenModel(
                 val listing = if (anyExists) {
                     Listing.Search(query = null, filters = defaultFilters)
                 } else {
-                    Listing.Search(query = genres.firstOrNull(), filters = defaultFilters)
+                    // B4: when no genre matched a source filter, the fallback query used only
+                    // the FIRST genre, silently dropping the rest; search with all of them.
+                    Listing.Search(query = genres.joinToString(" "), filters = defaultFilters)
                 }
                 it.copy(
                     filters = defaultFilters,
@@ -632,6 +677,6 @@ class BrowseMangaSourceScreenModel(
         val savedSearches: ImmutableList<Pair<SavedSearch, Boolean>> = persistentListOf(),
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
-        val filterable get() = savedSearches.isNotEmpty()
+        // РЕШ-B5: `filterable` removed - zero production readers.
     }
 }

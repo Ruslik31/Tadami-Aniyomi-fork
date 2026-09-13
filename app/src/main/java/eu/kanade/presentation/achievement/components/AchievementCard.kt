@@ -45,6 +45,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import eu.kanade.domain.easteregg.aurora.AuroraHeartManager
 import eu.kanade.domain.easteregg.aurora.AuroraLocalization
+import eu.kanade.domain.easteregg.aurora.AuroraPayload
 import eu.kanade.domain.easteregg.lattice.LatticeProtocolManager
 import eu.kanade.presentation.achievement.utils.AchievementRevealHelper
 import eu.kanade.presentation.easteregg.aurora.AuroraCodexScreen
@@ -114,13 +115,24 @@ fun AchievementCard(
     val displayName = remember(achievement, progress, managerState, payload, auroraUnlocked) {
         if (isAuroraHeart) {
             val title = when {
-                // Unlocked: always show a real name. The payload only supplies a nicer themed
-                // title; without it (typical right after a restore) fall back to the achievement's
-                // own title rather than masking an earned achievement as "???".
+                // Unlocked: always show a real name. B3 (Task 9): auroraDisplayTitle replaces the
+                // old ifBlank/"???" chain — the achievements.json title is literally "???" (not
+                // blank), so ifBlank never fired and an earned, restored achievement stayed "???"
+                // forever. The payload still supplies the nicer themed title when present.
+                // Task 13: локаль-выбор заголовка payload — En-поле вместо ключа UI_KEYS.
                 auroraUnlocked ->
-                    payload?.achievementTitle
-                        ?: achievement.title.ifBlank { "Сердце Авроры" }
-                managerState.stageIndex > 0 || managerState.hintRevealed -> "Сердце Авроры"
+                    AuroraLocalization.auroraDisplayTitle(
+                        payloadTitle = AuroraLocalization.localized(
+                            payload?.achievementTitle,
+                            payload?.achievementTitleEn,
+                        ),
+                        achievementTitle = achievement.title,
+                        isEnglish = AuroraLocalization.isEnglish(),
+                    )
+                // Task 13: ключ «Сердце Авроры» удалён из UI_KEYS — локализованный
+                // display-фолбэк (Task 9) вместо литерала + translate.
+                managerState.stageIndex > 0 || managerState.hintRevealed ->
+                    AuroraLocalization.auroraDisplayTitle(null, null, AuroraLocalization.isEnglish())
                 else -> "???"
             }
             if (title == "???") title else AuroraLocalization.translate(title).orEmpty()
@@ -147,8 +159,9 @@ fun AchievementCard(
         ) {
             if (isAuroraHeart) {
                 val desc = when {
+                    // Task 13: локаль-выбор описания payload (En-пара descriptionEn)
                     auroraUnlocked ->
-                        payload?.achievementDescription
+                        AuroraLocalization.localized(payload?.achievementDescription, payload?.descriptionEn)
                             ?: achievement.description
                             ?: "Скрыто северным сиянием"
                     else -> "Скрыто северным сиянием"
@@ -320,9 +333,14 @@ fun AchievementCard(
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             AuroraCodexScreen(
-                firstRiddle = manager.firstRiddle(),
+                firstRiddle = manager.firstRiddle().display(),
                 entries = manager.codex(),
-                payload = manager.unlockedPayload(),
+                // Task 9 (B3): display-путь — при DB-unlocked без локального vault (restore)
+                // Кодекс рендерится с минимальным статическим payload. onReplay ниже остаётся
+                // на РЕАЛЬНОМ payload: шина/хуки/rewarder fallback() не получают.
+                payload = manager.unlockedPayload() ?: AuroraPayload.fallback(),
+                // Task 13 (§4b): replay-кнопка только при реальном payload (с fallback — no-op).
+                canReplay = payload != null,
                 onReplay = {
                     manager.unlockedPayload()?.let(eu.kanade.domain.easteregg.aurora.AuroraEchoBus::emitUnlocked)
                 },

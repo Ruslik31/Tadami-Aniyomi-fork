@@ -74,6 +74,7 @@ class NovelJsSource internal constructor(
     NovelImageRequestSource,
     NovelPluginCapabilitySource,
     NovelPluginSettingsSource,
+    NovelJaomixPagedSource,
     NovelPluginIdentitySource {
     override val id: Long = NovelPluginId.toSourceId(plugin.id)
     override val name: String = plugin.name
@@ -608,7 +609,7 @@ class NovelJsSource internal constructor(
         }
     }
 
-    suspend fun getChapterListPage(
+    override suspend fun getChapterListPage(
         novel: SNovel,
         page: Int,
     ): NovelPluginChapterListPage? {
@@ -1722,7 +1723,7 @@ class NovelJsSource internal constructor(
             plugin.name.contains("jaomix", ignoreCase = true)
     }
 
-    fun isJaomixPagedPlugin(): Boolean = isJaomixPlugin()
+    override fun isJaomixPagedPlugin(): Boolean = isJaomixPlugin()
 
     private suspend fun collectChaptersFromParsePage(
         runtime: NovelJsRuntime,
@@ -1999,16 +2000,13 @@ internal fun parseNovelUpdatesChaptersHtml(
     if (chapterRows.isEmpty()) return emptyList()
 
     return chapterRows.mapIndexedNotNull { index, row ->
-        val href = selectNovelUpdatesChapterHref(row) ?: return@mapIndexedNotNull null
+        val chapterAnchor = selectNovelUpdatesChapterAnchor(row)
+        val href = chapterAnchor?.let { anchor ->
+            anchor.attr("href").trim().ifBlank { anchor.attr("data-href").trim() }
+        } ?: selectNovelUpdatesChapterHref(row) ?: return@mapIndexedNotNull null
         val normalizedPath = normalizeNovelUpdatesChapterPath(href, siteUrl) ?: return@mapIndexedNotNull null
-        val chapterName = row.text()
-            .replace("v", "volume ")
-            .replace("c", " chapter ")
-            .replace("part", "part ")
-            .replace("ss", "SS")
-            .replace(Regex("\\b\\w")) { it.value.uppercase() }
-            .trim()
-            .ifBlank { "Chapter ${index + 1}" }
+        val rawText = chapterAnchor?.text()?.takeIf { it.isNotBlank() } ?: row.text()
+        val chapterName = formatNovelUpdatesChapterName(rawText, index)
 
         ParsedPluginChapter(
             name = chapterName,
@@ -2063,6 +2061,26 @@ internal fun normalizeNovelUpdatesChapterPath(
         value = "/$value"
     }
     return value
+}
+
+internal fun formatNovelUpdatesChapterName(rawText: String, index: Int): String {
+    val formatted = rawText
+        .replace(Regex("(?i)\\bv\\s*(\\d+)"), "Volume $1 ")
+        .replace(Regex("(?i)\\bc\\s*(\\d+)"), "Chapter $1 ")
+        .replace(Regex("(?i)\\bpart\\s*(\\d+)"), "Part $1")
+        .replace(Regex("(?i)\\bss\\b"), "SS")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    return formatted.ifBlank { "Chapter ${index + 1}" }
+}
+
+private fun selectNovelUpdatesChapterAnchor(row: Element): Element? {
+    val anchors = row.select("a[href], a[data-href]")
+    if (anchors.isEmpty()) return null
+    return anchors.firstOrNull { anchor ->
+        val href = anchor.attr("href").trim().ifBlank { anchor.attr("data-href").trim() }
+        isLikelyNovelUpdatesChapterHref(href)
+    } ?: anchors.lastOrNull()
 }
 
 private fun selectNovelUpdatesChapterHref(row: Element): String? {

@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.domain.extensionstore.model.repoDisplayNameFallback
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.extension.novel.model.NovelPlugin
@@ -52,14 +53,22 @@ class NovelExtensionsScreenModel(
     private val lastDiagnostics = MutableStateFlow<Map<String, ExtensionInstallDiagnostic>>(emptyMap())
     private val installedPluginsSnapshot = MutableStateFlow<List<NovelPlugin.Installed>>(emptyList())
     private val apkFileStore = ExtensionApkFileStore(basePreferences)
-    private val activeInstallJobs = mutableMapOf<String, Job>()
-    private val installStateObservers = mutableMapOf<String, Job>()
+
+    // BEXT-6: mutated from several IO coroutines (install tracking, observers) - synchronize;
+    // the check-then-act in launchInstall stays confined to its single-flight comment's scope.
+    private val activeInstallJobs: MutableMap<String, Job> =
+        java.util.Collections.synchronizedMap(mutableMapOf())
+    private val installStateObservers: MutableMap<String, Job> =
+        java.util.Collections.synchronizedMap(mutableMapOf())
 
     /**
      * Completed when a signature-mismatch event leaves the UI (resolved via reinstall or
      * dismissed). Starts completed so awaiters before any mismatch are released immediately;
      * consumed by the extension-lifecycle follow-up work.
      */
+    // BEXT-12: @Volatile - written by the Main-thread event collector (:244), awaited by the
+    // update-all queue on IO; without it the IO reader could observe a stale reference.
+    @Volatile
     private var signatureResolutionSignal = CompletableDeferred<Unit>().apply { complete(Unit) }
 
     /** Keys this observer itself put into [currentDownloads]; cleaned when their store step completes. */
@@ -236,6 +245,10 @@ class NovelExtensionsScreenModel(
             .onEach { event ->
                 // Fresh signal per event: queue workers awaiting resolution suspend until
                 // the dialog is dismissed or the reinstall finishes (see awaitSignatureResolution).
+                // BEXT-12: complete the PREVIOUS signal before swapping - an update-all already
+                // awaiting the old deferred would otherwise hang forever when a second
+                // signature-mismatch event replaced it with an unfinished one.
+                signatureResolutionSignal.complete(Unit)
                 signatureResolutionSignal = CompletableDeferred()
                 mutableState.update { state -> state.copy(signatureMismatchEvent = event) }
             }
@@ -500,7 +513,11 @@ class NovelExtensionsScreenModel(
 
     fun installFromRepo(plugin: NovelPlugin.Available) {
         dismissRepoPicker()
-        screenModelScope.launchIO { installExtensionNow(plugin) }
+        // BEXT-6: route through the single-flight tracked install - the direct
+        // screenModelScope.launchIO { installExtensionNow } bypassed activeInstallJobs, so
+        // cancelInstall could not stop it and a duplicate request raced the shared <pkg>.apk.part
+        // download file (the exact hazard launchInstall's comment warns about).
+        launchInstall(plugin)
     }
 
     fun dismissRepoPicker() {
@@ -728,8 +745,15 @@ private fun NovelPlugin.Installed.settingsSourceId(
 private fun NovelPlugin.Installed.fallbackRepoDisplayName(
     variants: List<NovelPlugin.Available>,
 ): String? {
+    // The name persisted at install time is a snapshot: it goes stale when the user renames the
+    // store. Prefer the label of the current store serving this exact repo URL, fall back to the
+    // snapshot, then to a human-readable form of the URL.
+    val freshName = repoUrl.takeIf { it.isNotBlank() }?.let { url ->
+        variants.firstOrNull { it.repoUrl == url }?.repoName?.takeIf { it.isNotBlank() }
+    }
+    freshName?.let { return it }
     repoName?.takeIf { it.isNotBlank() }?.let { return it }
-    repoUrl.takeIf { it.isNotBlank() }?.let { return it }
+    repoUrl.takeIf { it.isNotBlank() }?.let { return it.repoDisplayNameFallback() }
 
     val exactVersionMatches = variants.filter {
         it.versionCode == versionCode
@@ -737,5 +761,5 @@ private fun NovelPlugin.Installed.fallbackRepoDisplayName(
     val displayCandidate = exactVersionMatches.singleOrNull()
         ?: variants.singleOrNull()
 
-    return displayCandidate?.repoName?.ifBlank { displayCandidate.repoUrl }
+    return displayCandidate?.repoName?.ifBlank { displayCandidate.repoUrl.repoDisplayNameFallback() }
 }

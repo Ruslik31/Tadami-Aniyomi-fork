@@ -176,6 +176,8 @@
     <string name="action_webview_back">Back</string>
     <string name="action_webview_forward">Forward</string>
     <string name="action_webview_refresh">Refresh</string>
+    <string name="action_open_webview">Open WebView</string>
+    <string name="action_entry_refresh">Refresh</string>
     <string name="action_start_downloading_now">Start downloading now</string>
     <string name="action_not_now">Not now</string>
     <string name="action_add_anyway">Add anyway</string>
@@ -308,6 +310,20 @@
     <string name="pref_reader_summary">Reading mode, display, navigation</string>
     <string name="pref_downloads_summary">Automatic download, download ahead</string>
     <string name="pref_tracking_summary">One-way progress sync, enhanced sync</string>
+    <!-- Discord Rich Presence -->
+    <string name="pref_discord_rpc">Discord Rich Presence</string>
+    <string name="pref_discord_rpc_enabled">Show reading and watching activity in Discord</string>
+    <string name="pref_discord_rpc_token">Discord account token</string>
+    <string name="pref_discord_rpc_token_dialog">Paste your Discord account token. It is stored only on this device and is never logged.</string>
+    <string name="pref_discord_rpc_status">Connection status</string>
+    <string name="pref_discord_rpc_status_connected">Connected</string>
+    <string name="pref_discord_rpc_status_connecting">Connecting…</string>
+    <string name="pref_discord_rpc_status_disconnected">Disconnected (no active session)</string>
+    <string name="pref_discord_rpc_status_invalid_token">Invalid token</string>
+    <string name="pref_discord_rpc_warning_title">Unofficial integration</string>
+    <string name="pref_discord_rpc_warning">Discord does not officially support Rich Presence on mobile. This feature connects to Discord with your account token, which violates Discord Terms of Service and may put your account at risk. Use at your own risk.</string>
+    <string name="pref_discord_rpc_warning_confirm">I understand the risks</string>
+
     <string name="pref_browse_summary">Sources, extensions, global search</string>
     <string name="pref_backup_summary">Manual &amp; automatic backups, storage space</string>
     <string name="pref_security_summary">App lock, secure screen</string>
@@ -927,6 +943,7 @@
     <!-- missing prompt after Compose rewrite #7901 -->
     <string name="no_more_results">No more results</string>
     <string name="no_results_found">No results found</string>
+    <string name="feed_error_broken_extension">This extension is broken: it performs network requests on the main thread. Update or disable it.</string>
     <string name="local_source">Local source</string>
     <string name="other_source">Other</string>
     <string name="last_used_source">Last used</string>
@@ -1022,6 +1039,7 @@
     <string name="on_hold">On hold</string>
     <string name="paused">Paused</string>
     <string name="plan_to_read">Plan to read</string>
+    <string name="considering">Considering</string>
     <string name="repeating">Rereading</string>
     <string name="reading_list">Reading List</string>
     <string name="wish_list">Wish List</string>
@@ -1090,6 +1108,13 @@
     <string name="transition_no_previous">There\'s no previous chapter</string>
     <string name="transition_pages_loading">Loading pages…</string>
     <string name="transition_pages_error">Failed to load pages: %1$s</string>
+    <string name="reader_finale_title">THE END</string>
+    <string name="reader_finale_subtitle">You\'ve read every chapter here</string>
+    <string name="reader_finale_back_to_manga">Back to manga</string>
+    <string name="reader_finale_back_to_novel">Back to novel</string>
+    <string name="reader_finale_stay">Stay</string>
+    <string name="reader_finale_stamp_label">Finished</string>
+    <string name="pref_reader_finale_card">Celebrate finishing a series</string>
     <string name="page_list_empty_error">No pages found</string>
     <string name="loader_not_implemented_error">Source not found</string>
 
@@ -1155,6 +1180,7 @@
     <string name="migration_exit_body_migrating">Current migration will be cancelled and this screen will close.</string>
     <string name="migration_progress_title">Migrating entries</string>
     <string name="migration_progress_body">Progress: %1$d%%</string>
+    <string name="migration_checking_sources_count">Checking %1$d sources</string>
     <string name="migrate">Migrate</string>
     <!-- Make a copy (noun) when migrating. Don't use for copying to clipboard. -->
     <string name="copy">Copy</string>
@@ -1313,20 +1339,19 @@
     <string name="achievement_stat_unlocked">Achievements unlocked</string>
     <string name="achievement_vs_last_month">vs last month</string>
     <string name="achievement_no_data">No data</string>
-    <string name="achievement_year_activity_title">Activity for the year</string>
-    <string name="achievement_period_jan_jun">Jan–Jun</string>
-    <string name="achievement_period_jul_dec">Jul–Dec</string>
-    <string name="achievement_stat_total">Total: %d</string>
-    <string name="achievement_stat_chapters">Chapters: %d</string>
-    <string name="achievement_stat_episodes">Episodes: %d</string>
-    <string name="achievement_stat_time">Time: %s</string>
-    <string name="achievement_stat_achievements">Achievements: %d</string>
     <string name="achievement_no_activity">No activity</string>
     <string name="achievement_hours_minutes">%1$dh %2$dm</string>
     <string name="achievement_hours">%1$dh</string>
     <string name="achievement_minutes">%1$dm</string>
     <string name="achievement_hours_minutes_alt">%1$dh %2$dm</string>
     <string name="achievement_minutes_alt">%1$dm</string>
+    <string name="achievement_heatmap_title">Activity</string>
+    <string name="achievement_heatmap_period">365 days</string>
+    <string name="achievement_heatmap_less">Less</string>
+    <string name="achievement_heatmap_more">More</string>
+    <string name="achievement_summary_active_days">Active days</string>
+    <string name="achievement_summary_current_streak">Current streak</string>
+    <string name="achievement_summary_best_streak">Best streak</string>
 
     <!-- External metadata status labels -->
     <string name="status_finished">Finished</string>
@@ -1875,6 +1900,8 @@
     <string name="reels_preload_wifi_only">Wi-Fi only preload</string>
     <string name="reels_unmute_hint">Tap to unmute</string>
     <string name="reels_data_saver_metered">SD on metered networks</string>
+    <string name="reels_clear_video_cache">Clear video cache</string>
+    <string name="reels_video_cache_cleared">Cleared %1$s of video cache</string>
     <string name="reels_favorites_removed_snackbar">Video removed from favorites</string>
     <string name="reels_unknown_source">Unknown source</string>
     <string name="reels_follow">Follow</string>
@@ -1884,4 +1911,35 @@
     <string name="reels_follows_empty_hint">Tap the person icon on a creator\'s video to follow them</string>
     <string name="reels_follow_cap_reached">Follow limit reached — 100 creators per source</string>
     <string name="reels_follows_removed_snackbar">Creator unfollowed</string>
+    <string name="reels_login">Log in</string>
+    <string name="reels_account">Account</string>
+    <string name="reels_logged_in_as">Logged in as %1$s</string>
+    <string name="reels_logout">Log out</string>
+    <string name="reels_login_email">Email</string>
+    <string name="reels_login_password">Password</string>
+    <string name="reels_login_button">Log in</string>
+    <string name="reels_custom_feeds">Custom feeds</string>
+    <string name="reels_custom_feeds_empty">No custom feeds yet</string>
+    <string name="reels_web_login_title">Sign in on the site page</string>
+    <string name="reels_web_login_done">Done</string>
+    <string name="reels_web_login_not_yet">Session not detected yet — finish signing in, then press Done</string>
+    <string name="reels_niches">Niches</string>
+    <string name="reels_niches_empty">No niches</string>
+    <string name="reels_search_tab_niches">Niches</string>
+    <string name="reels_search_tab_creators">Creators</string>
+    <string name="reels_search_tab_tags">Tags</string>
+    <string name="reels_search_tab_all">All</string>
+    <string name="reels_content_prefs">Content preferences</string>
+    <string name="reels_content_prefs_empty">No content preferences</string>
+    <string name="reels_blocked_tags">Blocked tags</string>
+    <string name="reels_blocked_tags_add">Add tag</string>
+    <string name="reels_blocked_tags_empty">No blocked tags</string>
+    <string name="reels_custom_feed_new">New feed</string>
+    <string name="reels_custom_feed_edit">Edit feed</string>
+    <string name="reels_custom_feed_delete">Delete feed</string>
+    <string name="reels_custom_feed_delete_confirm">Delete this custom feed? This cannot be undone.</string>
+    <string name="reels_custom_feed_name">Name</string>
+    <string name="reels_custom_feed_search_tags">Search tags</string>
+    <string name="reels_custom_feed_save">Save</string>
+    <string name="reels_custom_feed_save_failed">Save failed</string>
 </resources>

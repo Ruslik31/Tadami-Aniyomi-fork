@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderPreloadManager
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
+import eu.kanade.tachiyomi.ui.reader.model.JoinedReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
@@ -97,7 +98,12 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 private var dragStartedAtLastPage = false
 
                 override fun onPageSelected(position: Int) {
-                    if (!activity.isScrollingThroughPages) {
+                    // B-H2: consume the slider mark instead of leaving it set forever - before
+                    // the fix the pager stopped hiding the menu on swipes after the first
+                    // navigator-slider use (the flag had no reset anywhere).
+                    if (activity.isScrollingThroughPages) {
+                        activity.consumeScrollingThroughPages()
+                    } else {
                         activity.hideMenu()
                     }
                     onPageChange(position)
@@ -172,6 +178,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
 
         config.transitionPropertyChangedListener = {
+            activity.viewModel.state.value.viewerChapters?.let(::setChapters)
+        }
+
+        config.spreadPropertyChangedListener = {
+            // Live regroup on join/shift toggles: grouping happens only in setChapters, while
+            // refreshAdapter recreated views over the OLD groups - the spread toggle took effect
+            // only on the next chapter. User-initiated change, so the position re-anchor is
+            // expected. Wide-page auto-detection deliberately keeps refreshAdapter: re-pairing
+            // mid-chapter on an automatic detection would make the visible page jump.
             activity.viewModel.state.value.viewerChapters?.let(::setChapters)
         }
 
@@ -337,9 +352,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             logcat { "Request preload destination chapter because we're on the transition" }
             activity.requestPreloadChapter(toChapter)
         } else if (transition is ChapterTransition.Next) {
-            // No more chapters, show menu because the user is probably going to close the reader.
+            // No more chapters: reveal the pending finale plate (if any) and show the menu
+            // because the user is probably going to close the reader.
             // The meltdown easter egg starts only on an explicit swipe into the void (see
             // onPageScrollStateChanged), not when merely landing on this page.
+            activity.viewModel.revealPendingFinale()
             activity.showMenu()
         }
     }
@@ -387,7 +404,15 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
      * Tells this viewer to move to the given [page].
      */
     override fun moveToPage(page: ReaderPage) {
-        val position = adapter.items.indexOf(page)
+        // A-M2: a page paired into a JoinedReaderPage (landscape spread) is not identity-equal to
+        // any adapter item; indexOf returned -1, silently breaking progress restore on chapter
+        // open and the navigator slider for every paired page. Find the item CONTAINING it.
+        val position = adapter.items.indexOfFirst { item ->
+            when (item) {
+                is JoinedReaderPage -> item.firstPage === page || item.secondPage === page
+                else -> item === page
+            }
+        }
         if (position != -1) {
             val currentPosition = pager.currentItem
             pager.setCurrentItem(position, true)

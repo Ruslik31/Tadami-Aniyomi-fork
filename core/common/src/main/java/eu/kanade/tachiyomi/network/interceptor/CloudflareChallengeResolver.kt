@@ -15,7 +15,7 @@ import eu.kanade.tachiyomi.network.AndroidCookieJar
 import eu.kanade.tachiyomi.util.system.toast
 import okhttp3.Cookie
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.HttpUrl
 import okhttp3.Request
 import tachiyomi.i18n.MR
 import java.util.concurrent.CountDownLatch
@@ -47,7 +47,6 @@ internal class WebViewCloudflareChallengeResolver(
         var hasInteractiveWidget = false
         var isWebViewOutdatedNow = false
         var released = false
-        var lastUrl: String? = null
         var pollingScheduled = false
 
         val origRequestUrl = originalRequest.url.toString()
@@ -61,8 +60,7 @@ internal class WebViewCloudflareChallengeResolver(
         }
 
         fun cookiePresent(): Boolean {
-            val url = lastUrl ?: return false
-            return hasNewCloudflareClearance(originalRequest, url, oldCookie)
+            return hasNewCloudflareClearance(originalRequest, oldCookie)
         }
 
         // Poll for the cf_clearance cookie. Cloudflare solves the challenge asynchronously
@@ -96,7 +94,6 @@ internal class WebViewCloudflareChallengeResolver(
 
             createdWebView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
-                    lastUrl = url
                     // Success is signaled only by the presence of the cf_clearance cookie, not by
                     // the page finishing loading. The challenge JS runs after this callback, so
                     // releasing here (the old behaviour) killed the WebView mid-solve and the
@@ -117,7 +114,6 @@ internal class WebViewCloudflareChallengeResolver(
 
                 override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                     if (request.isForMainFrame) {
-                        lastUrl = request.url?.toString()
                         // A main-frame load failure means the challenge cannot complete.
                         release()
                     }
@@ -129,7 +125,6 @@ internal class WebViewCloudflareChallengeResolver(
                     errorResponse: WebResourceResponse,
                 ) {
                     if (request.isForMainFrame) {
-                        lastUrl = request.url?.toString()
                         // Don't release on HTTP errors: CF error codes mark a challenge (keep
                         // polling for the cookie) and other status codes (429/502 "page expired"
                         // mid-challenge) are expected, so releasing here would abort a solve.
@@ -159,6 +154,10 @@ internal class WebViewCloudflareChallengeResolver(
                 latch.await(CHALLENGE_RESOLVE_TIMEOUT_MS - waiter.softLimitMs, TimeUnit.MILLISECONDS)
             }
         } finally {
+            // P5: stop the poller the moment the wait ends - with a congested main thread the
+            // poller used to outlive the resolve (running sync cookie probes on main) long
+            // after the WebView was destroyed.
+            release()
             // Guaranteed teardown: an interrupted worker thread used to unwind before this
             // block ran, leaking the created WebView (an OOM driver on low-heap devices).
             mainExecutor.execute {
@@ -185,13 +184,12 @@ internal class WebViewCloudflareChallengeResolver(
         }
     }
 
-    private fun hasNewCloudflareClearance(originalRequest: Request, currentUrl: String, oldCookie: Cookie?): Boolean {
-        return listOfNotNull(originalRequest.url, currentUrl.toHttpUrlOrNull())
-            .distinctBy { it.host }
-            .any { url ->
-                val cookie = cookieManager.get(url).firstOrNull { it.name == "cf_clearance" }
-                cookie != null && (url.host != originalRequest.url.host || cookie != oldCookie)
-            }
+    private fun hasNewCloudflareClearance(originalRequest: Request, oldCookie: Cookie?): Boolean {
+        return hasNewCloudflareClearance(
+            originalUrl = originalRequest.url,
+            oldCookie = oldCookie,
+            cookieLookup = { url -> cookieManager.get(url) },
+        )
     }
 
     private fun detectInteractiveWidgetSync(webview: WebView?): Boolean {
@@ -213,15 +211,22 @@ internal class WebViewCloudflareChallengeResolver(
     }
 }
 
-internal val INTERACTIVE_WIDGET_PROBE = """
-    (function() {
-        try {
-            return document.querySelector('.cf-turnstile, [data-sitekey], iframe[src*="challenges.cloudflare.com"]') != null;
-        } catch (_) {
-            return false;
-        }
-    })();
-""".trimIndent()
+// P7: single source of the widget probe - shared with the manual WebView screen.
+internal val INTERACTIVE_WIDGET_PROBE = CloudflareChallengeDetector.interactiveWidgetProbeJs
+
+// P4: a clearance counts as new only when it differs from the cookie we entered the solve
+// with, and only on the ORIGINAL host. The previous cross-host OR-branch accepted any
+// cf_clearance sitting on a different domain (which cannot clear the original host),
+// releasing the solve early into a guaranteed failure. CF sets the clearance on the
+// registrable domain, so a redirect mid-challenge still lands in the original-host lookup.
+internal fun hasNewCloudflareClearance(
+    originalUrl: HttpUrl,
+    oldCookie: Cookie?,
+    cookieLookup: (HttpUrl) -> List<Cookie>,
+): Boolean {
+    val cookie = cookieLookup(originalUrl).firstOrNull { it.name == "cf_clearance" }
+    return cookie != null && cookie != oldCookie
+}
 
 private const val CHALLENGE_RESOLVE_TIMEOUT_MS = 30_000L
 

@@ -79,6 +79,7 @@ import eu.kanade.tachiyomi.extension.novel.kotlin.sweepOrphanedNovelPluginDownlo
 import eu.kanade.tachiyomi.extension.novel.runtime.NovelRuntimeCacheTrimCallbacks
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.NetworkPreferences
+import eu.kanade.tachiyomi.network.interceptor.CoverRequestPolicy
 import eu.kanade.tachiyomi.ui.base.delegate.SecureActivityDelegate
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.GLUtil
@@ -185,36 +186,26 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         // ContentProvider before onCreate ran.
 
         if (isMainProcess) {
+            // K1/Q8-фикс: награды пасхальных яиц выдаются через идемпотентный
+            // AuroraUnlockRewarder (wasUnlocked-гейт по DB): реплей финала больше не
+            // реплеит XP/счётчики. Зависимости резолвятся в момент события (внутри
+            // achievementScope), как и в прежних хуках.
+            fun newEggRewarder() = eu.kanade.domain.easteregg.aurora.AuroraUnlockRewarder(
+                achievementRepository = Injekt.get(),
+                pointsManager = Injekt.get(),
+                unlockableManager = Injekt.get(),
+                userProfileManager = Injekt.get(),
+                activityDataRepository = Injekt.get(),
+            )
+
             // Setup Aurora easter egg unlock hook
             eu.kanade.domain.easteregg.aurora.AuroraEchoBus.onUnlocked = { payload ->
                 achievementScope.launch {
-                    val repo = Injekt
-                        .get<tachiyomi.domain.achievement.repository.AchievementRepository>()
-                    val pointsManager = Injekt
-                        .get<tachiyomi.data.achievement.handler.PointsManager>()
-                    val userProfileManager = Injekt
-                        .get<tachiyomi.data.achievement.UserProfileManager>()
-                    val activityDataRepository = Injekt
-                        .get<tachiyomi.domain.achievement.repository.ActivityDataRepository>()
-
-                    repo.insertOrUpdateProgress(
-                        tachiyomi.domain.achievement.model.AchievementProgress.createStandard(
-                            achievementId = "aurora_heart",
-                            progress = 1,
-                            maxProgress = 1,
-                            isUnlocked = true,
-                            unlockedAt = System.currentTimeMillis(),
+                    newEggRewarder().grant(
+                        eu.kanade.domain.easteregg.aurora.AuroraUnlockRewarder.aurora(
+                            payload.bonusPoints ?: 0,
                         ),
                     )
-                    pointsManager.addPoints(payload.bonusPoints ?: 0)
-                    pointsManager.incrementUnlocked()
-                    activityDataRepository.recordAchievementUnlock()
-
-                    userProfileManager.unlockTheme("AURORA_PRIME")
-
-                    val unlockableManager = Injekt.get<tachiyomi.data.achievement.UnlockableManager>()
-                    unlockableManager.setUnlockableUnlocked("theme_AURORA_PRIME")
-                    unlockableManager.setUnlockableUnlocked("special_navbar_aurora_celestial")
                 }
             }
 
@@ -222,32 +213,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             eu.kanade.domain.easteregg.lattice.LatticeProtocolManager.get(this).onAppStart()
             eu.kanade.domain.easteregg.lattice.LatticeSignalBus.onUnlocked = { payload ->
                 achievementScope.launch {
-                    val repo = Injekt
-                        .get<tachiyomi.domain.achievement.repository.AchievementRepository>()
-                    val pointsManager = Injekt
-                        .get<tachiyomi.data.achievement.handler.PointsManager>()
-                    val userProfileManager = Injekt
-                        .get<tachiyomi.data.achievement.UserProfileManager>()
-                    val activityDataRepository = Injekt
-                        .get<tachiyomi.domain.achievement.repository.ActivityDataRepository>()
-
-                    repo.insertOrUpdateProgress(
-                        tachiyomi.domain.achievement.model.AchievementProgress.createStandard(
-                            achievementId = payload.achievementId ?: "lattice_resonance",
-                            progress = 1,
-                            maxProgress = 1,
-                            isUnlocked = true,
-                            unlockedAt = System.currentTimeMillis(),
+                    newEggRewarder().grant(
+                        eu.kanade.domain.easteregg.aurora.AuroraUnlockRewarder.lattice(
+                            achievementId = payload.achievementId,
+                            points = payload.bonusPoints,
+                            themeId = payload.themeId,
+                            unlockableIds = payload.unlockables,
                         ),
                     )
-                    pointsManager.addPoints(payload.bonusPoints ?: 0)
-                    pointsManager.incrementUnlocked()
-                    activityDataRepository.recordAchievementUnlock()
-
-                    payload.themeId?.let { userProfileManager.unlockTheme(it) }
-
-                    val unlockableManager = Injekt.get<tachiyomi.data.achievement.UnlockableManager>()
-                    payload.unlockables.forEach { unlockableManager.setUnlockableUnlocked(it) }
                 }
             }
         }
@@ -262,6 +235,11 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                         .distinctUntilChanged()
                         .collect { online ->
                             if (online && !wasOnline) {
+                                // Clear the cover-host blacklist BEFORE the reload tick:
+                                // hosts poisoned by the broken network (bad VPN exit,
+                                // captive portal) must be retryable when the tick
+                                // re-requests the placeholders.
+                                CoverRequestPolicy.clearAll()
                                 CoverReloadSignal.bump()
                             }
                             wasOnline = online
@@ -543,10 +521,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             val crossfadeMs = (300 * this@App.animatorDurationScale).toInt()
             // Long animations delay first paint of each cover; cap the scaled value.
             crossfade(crossfadeMs.coerceAtMost(MAX_CROSSFADE_MS))
-            allowRgb565(DeviceUtil.isLowRamDevice(this@App))
+            val isLowRam = DeviceUtil.isLowRamDevice(this@App)
+            // A 256 MB heap cap leaves little headroom next to a quarter-heap bitmap cache and
+            // 24 parallel cover decodes (OOM forensics 2026-09-13).
+            val isSmallHeap = Runtime.getRuntime().maxMemory() <= SMALL_HEAP_MAX_BYTES
+            allowRgb565(isLowRam)
             memoryCache {
                 MemoryCache.Builder()
-                    .maxSizePercent(this@App, 0.25)
+                    .maxSizePercent(this@App, if (isSmallHeap) 0.15 else 0.25)
                     .build()
             }
             diskCache {
@@ -558,13 +540,18 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             if (networkPreferences.verboseLogging().get()) logger(DebugLogger())
 
             // Coil spawns a new thread for every image load by default
-            val isLowRam = DeviceUtil.isLowRamDevice(this@App)
             fetcherCoroutineContext(
                 Dispatchers.IO.limitedParallelism(
-                    if (isLowRam) 8 else COVER_FETCH_PARALLELISM,
+                    when {
+                        isLowRam -> 8
+                        isSmallHeap -> 12
+                        else -> COVER_FETCH_PARALLELISM
+                    },
                 ),
             )
-            decoderCoroutineContext(Dispatchers.IO.limitedParallelism(if (isLowRam) 3 else 4))
+            decoderCoroutineContext(
+                Dispatchers.IO.limitedParallelism(if (isLowRam || isSmallHeap) 3 else 4),
+            )
         }
             .build()
     }
@@ -593,12 +580,29 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                     }
                 }
             }
-            val libraryPreferences = Injekt.get<tachiyomi.domain.library.service.LibraryPreferences>()
-            val autoUpdateInterval = libraryPreferences.autoUpdateInterval().get()
-            if (autoUpdateInterval == -1) {
-                MangaLibraryUpdateJob.startNow(this)
-                AnimeLibraryUpdateJob.startNow(this)
-                NovelLibraryUpdateJob.startNow(this)
+            // I15: startNow is suspend (blocking WM guard) - run the app-start triggers on the
+            // application scope instead of the lifecycle callback thread.
+            applicationScope.launch {
+                val libraryPreferences = Injekt.get<tachiyomi.domain.library.service.LibraryPreferences>()
+                val autoUpdateInterval = libraryPreferences.autoUpdateInterval().get()
+                if (autoUpdateInterval == -1) {
+                    // I7 (Q9): per-media "Never" (0) and per-media intervals override the global
+                    // "At app start" - the scheduler honored them, this foreground path started
+                    // all three sections unconditionally.
+                    fun runsAtAppStart(mediaPref: Int): Boolean {
+                        val effective = if (mediaPref == -2) autoUpdateInterval else mediaPref
+                        return effective == -1
+                    }
+                    if (runsAtAppStart(libraryPreferences.mangaUpdateInterval().get())) {
+                        MangaLibraryUpdateJob.startNow(this@App)
+                    }
+                    if (runsAtAppStart(libraryPreferences.animeUpdateInterval().get())) {
+                        AnimeLibraryUpdateJob.startNow(this@App)
+                    }
+                    if (runsAtAppStart(libraryPreferences.novelUpdateInterval().get())) {
+                        NovelLibraryUpdateJob.startNow(this@App)
+                    }
+                }
             }
         }
     }
@@ -666,6 +670,9 @@ private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNIT
 
 /** Parallel cover fetches on non-low-RAM devices (was 16; grids of 30+ cells). */
 private const val COVER_FETCH_PARALLELISM = 24
+
+/** Heap growth limit at or below which the image pipeline scales down (256 MB class). */
+private const val SMALL_HEAP_MAX_BYTES = 256L * 1024 * 1024
 
 /** Coil disk cache for covers/posters on devices that can afford it. */
 private fun diskCacheSizeBytes(context: android.content.Context): Long {

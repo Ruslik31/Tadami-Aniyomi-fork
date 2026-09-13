@@ -65,7 +65,9 @@ fun Screen.mangaHistoryTab(
     val navigateUp: (() -> Unit)? = if (fromMore) {
         {
             if (navigator.lastItem == HomeScreen) {
-                scope.launch { HomeScreen.openTab(HomeScreen.Tab.AnimeLib()) }
+                // E-M5: was Tab.AnimeLib() - a copy-paste from AnimeHistoryTab; the manga
+                // history "up" must open the MANGA library (novel side is correct).
+                scope.launch { HomeScreen.openTab(HomeScreen.Tab.Library()) }
             } else {
                 navigator.pop()
             }
@@ -139,7 +141,9 @@ fun Screen.mangaHistoryTab(
                     MigrateMangaDialog(
                         oldManga = dialog.oldManga,
                         newManga = dialog.newManga,
-                        screenModel = MigrateMangaDialogScreenModel(),
+                        // BRM-1: inline construction - the migration upserts history, which
+                        // re-emits the list and recreated the SM mid-migration.
+                        screenModel = rememberScreenModel { MigrateMangaDialogScreenModel() },
                         onDismissRequest = onDismissRequest,
                         onClickTitle = { navigator.push(MangaScreen(dialog.oldManga.id)) },
                         onPopScreen = { navigator.replace(MangaScreen(dialog.newManga.id)) },

@@ -252,7 +252,10 @@ class EpisodeOptionsDialogScreenModel(
             val hosterListResult = withIOContext {
                 try {
                     Result.success(EpisodeLoader.getHosters(episode, anime, source))
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Extension code may throw linkage Errors (e.g. NoSuchMethodError on
+                    // ABI drift); surface them as dialog error state instead of crashing.
+                    if (e is CancellationException) throw e
                     Result.failure(e)
                 }
             }

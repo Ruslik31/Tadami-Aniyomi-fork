@@ -87,6 +87,10 @@ data object BrowseTab : Tab {
             BrowseSection.Novel -> GlobalNovelSearchScreen()
             BrowseSection.Anime -> GlobalAnimeSearchScreen()
         }
+        // BGS-12: re-tapping Browse while the matching global search is already on top used to
+        // push another copy (identical screens stacked, each running a full fan-out search on
+        // reveal).
+        if (navigator.lastItem::class == screen::class) return
         navigator.push(screen)
     }
 
@@ -106,6 +110,10 @@ data object BrowseTab : Tab {
             ?: BrowseSection.Anime
     }
 
+    // BFEED-25 (residual, accepted-mitigated): buffered capacity 1 + DROP_OLDEST, consumed
+    // once by the tab's LaunchedEffect collector; senders are HomeScreen's deep-link routing
+    // (which since BFEED-23/24 only fires for VISIBLE sections) - an event sent while the tab
+    // is not composed is consumed on its next composition (intended for the deep-link jump).
     private val switchToTabNumberChannel = Channel<Int>(1, BufferOverflow.DROP_OLDEST)
 
     internal enum class BrowseSection {
@@ -331,7 +339,10 @@ data object BrowseTab : Tab {
                     if (targetIndex == TAB_MANGA_EXTENSIONS && showMangaSection) {
                         currentSection = BrowseSection.Manga
                         state.scrollToPage(extensionTabIndex(hideFeedTab))
-                    } else if (targetIndex == TAB_ANIME_EXTENSIONS) {
+                    } else if (targetIndex == TAB_ANIME_EXTENSIONS && showAnimeSection) {
+                        // BFEED-23: the anime branch had no showAnimeSection guard (manga/novel
+                        // do) - with the anime section disabled it switched currentSection to
+                        // Anime and scrolled to a page index that no longer matched the tabs.
                         currentSection = BrowseSection.Anime
                         state.scrollToPage(extensionTabIndex(hideFeedTab))
                     } else if (targetIndex == TAB_NOVEL_EXTENSIONS && showNovelSection) {

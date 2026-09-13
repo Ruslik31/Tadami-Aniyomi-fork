@@ -25,6 +25,10 @@ data class NovelReaderTtsUiState(
     val errorMessage: String? = null,
     /** Voice id currently being previewed in settings; empty string means system default. Null = idle. */
     val previewingVoiceId: String? = null,
+    /** Remaining seconds of an armed sleep-timer countdown; 0 when no countdown is running. */
+    val sleepTimerRemainingSeconds: Int = 0,
+    /** True while the "until end of chapter" sleep timer is armed. */
+    val sleepTimerEndOfChapter: Boolean = false,
 ) {
     val isPlaying: Boolean
         get() = playbackState == NovelTtsPlaybackState.PLAYING
@@ -34,4 +38,7 @@ data class NovelReaderTtsUiState(
 
     val isPreviewingVoice: Boolean
         get() = previewingVoiceId != null
+
+    val isSleepTimerActive: Boolean
+        get() = sleepTimerEndOfChapter || sleepTimerRemainingSeconds > 0
 }

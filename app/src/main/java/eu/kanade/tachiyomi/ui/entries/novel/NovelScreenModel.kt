@@ -63,7 +63,7 @@ import eu.kanade.tachiyomi.data.translation.TranslationJob
 import eu.kanade.tachiyomi.data.translation.TranslationQueueManager
 import eu.kanade.tachiyomi.data.translation.TranslationStatus
 import eu.kanade.tachiyomi.data.translation.toTranslationQueueProfileSnapshot
-import eu.kanade.tachiyomi.extension.novel.runtime.NovelJsSource
+import eu.kanade.tachiyomi.extension.novel.runtime.NovelJaomixPagedSource
 import eu.kanade.tachiyomi.extension.novel.runtime.hasVisiblePluginSettings
 import eu.kanade.tachiyomi.extension.novel.runtime.hasVisiblePluginSettingsByDiscovery
 import eu.kanade.tachiyomi.novelsource.NovelCatalogueSource
@@ -75,6 +75,7 @@ import eu.kanade.tachiyomi.ui.entries.novel.NovelChapterActionStateResolver
 import eu.kanade.tachiyomi.ui.entries.novel.NovelChapterActionUiState
 import eu.kanade.tachiyomi.ui.novel.resolveNovelResumeChapter
 import eu.kanade.tachiyomi.ui.novel.sortedByNovelReadingOrder
+import eu.kanade.tachiyomi.ui.reader.novel.replace.replaceRulesFingerprint
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderSettings
 import eu.kanade.tachiyomi.ui.reader.novel.translation.NovelReaderTranslationDiskCacheStore
@@ -1157,7 +1158,9 @@ class NovelScreenModel(
                 // the synced chapter flow is awaited here instead of busy-polling the UI state.
                 val chapters = withTimeoutOrNull(LOCAL_BOOK_CHAPTERS_TIMEOUT_MS) {
                     getNovelWithChapters.subscribe(novelId)
-                        .map { (_, chapters) -> chapters.sortedBy { it.sourceOrder } }
+                        // Reading order (chapterNumber first): raw sourceOrder is newest-first on
+                        // sources with "0 = newest" numbering and compiled the book backwards.
+                        .map { (_, chapters) -> chapters.sortedByNovelReadingOrder() }
                         .first { it.isNotEmpty() }
                 }
                 if (chapters == null || chapters.isEmpty()) return@launchIO
@@ -1197,7 +1200,8 @@ class NovelScreenModel(
     ) {
         val state = successState ?: return
         if (bookBuildJob?.isActive == true) return
-        val sortedChapters = state.chapters.sortedBy { it.sourceOrder }
+        // Reading order, matching the reader and the exporters (see sortChaptersForExport).
+        val sortedChapters = state.chapters.sortedByNovelReadingOrder()
         val chapters = if (buildPartial) {
             sortedChapters.takeWhile { it.id in state.downloadedChapterIds }
         } else {
@@ -1260,7 +1264,7 @@ class NovelScreenModel(
     ) {
         val state = successState ?: return
         if (bookBuildJob?.isActive == true) return
-        val chapters = state.chapters.sortedBy { it.sourceOrder }
+        val chapters = state.chapters.sortedByNovelReadingOrder()
         if (chapters.isEmpty()) return
         updateSuccessState {
             it.copy(
@@ -2235,7 +2239,9 @@ class NovelScreenModel(
     }
 
     private fun NovelSource.isJaomixPagedSource(): Boolean {
-        return (this as? NovelJsSource)?.isJaomixPagedPlugin() == true
+        // Capability interface: sources are registered wrapped in NovelConfigurableJsSource, so a
+        // cast to the concrete NovelJsSource never succeeded here.
+        return (this as? NovelJaomixPagedSource)?.isJaomixPagedPlugin() == true
     }
 
     /**
@@ -2272,10 +2278,11 @@ class NovelScreenModel(
                 updateNewChapterIds(clearedIds = listOf(chapterId))
             }
             if (shouldEmitReadEvent) {
-                if (eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin()) {
-                    val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
-                    manager.registerNightAction()
-                    manager.revealHint()
+                runCatching {
+                    if (eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin()) {
+                        val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
+                        manager.registerNightAction()
+                    }
                 }
                 eventBus?.tryEmit(
                     AchievementEvent.NovelChapterRead(
@@ -2363,15 +2370,42 @@ class NovelScreenModel(
         }
     }
 
-    fun toggleSelection(chapterId: Long) {
-        val state = successState ?: return
-        val selected = state.selectedChapterIds.contains(chapterId)
-        updateSuccessState {
-            if (selected) {
-                it.copy(selectedChapterIds = it.selectedChapterIds - chapterId)
+    fun toggleSelection(
+        chapterId: Long,
+        userSelected: Boolean = false,
+        fromLongPress: Boolean = false,
+    ) {
+        if (successState == null) return
+        updateSuccessState { state ->
+            val visible = state.processedChapters
+            val selectedIndex = visible.indexOfFirst { it.id == chapterId }
+            // Only chapters currently rendered in the list are selectable.
+            if (selectedIndex < 0) return@updateSuccessState state
+
+            val wasSelected = state.selectedChapterIds.contains(chapterId)
+            val result = state.selectedChapterIds.toMutableSet()
+            if (wasSelected) {
+                result -= chapterId
             } else {
-                it.copy(selectedChapterIds = it.selectedChapterIds + chapterId)
+                result += chapterId
+                // Long-press selection fills the gap between the tapped chapter and the
+                // existing selection range, mirroring the manga/anime chapter lists. The
+                // anchors are derived from the current visible selection on every press so
+                // filtering and chapter paging can never leave a stale index behind.
+                if (userSelected && fromLongPress) {
+                    val anchorFirst = visible.indexOfFirst { it.id in state.selectedChapterIds }
+                    val anchorLast = visible.indexOfLast { it.id in state.selectedChapterIds }
+                    if (anchorFirst >= 0 && anchorLast >= 0) {
+                        val range = when {
+                            selectedIndex < anchorFirst -> (selectedIndex + 1)..<anchorFirst
+                            selectedIndex > anchorLast -> (anchorLast + 1)..<selectedIndex
+                            else -> null
+                        }
+                        range?.forEach { index -> result += visible[index].id }
+                    }
+                }
             }
+            state.copy(selectedChapterIds = result)
         }
     }
 
@@ -3277,11 +3311,19 @@ class NovelScreenModel(
              * even when none of the inputs changed. The memo below caches the result across copies
              * keyed by the actual inputs, so recomputation happens only when an input really changes.
              */
-            private companion object {
+            companion object {
                 private val processedMemoLock = Any()
                 private var processedMemoKey: ProcessedChaptersKey? = null
                 private var processedMemoProcessed: List<NovelChapter> = emptyList()
                 private var processedMemoTargetIndex: Int? = null
+
+                fun clearProcessedMemo() {
+                    synchronized(processedMemoLock) {
+                        processedMemoKey = null
+                        processedMemoProcessed = emptyList()
+                        processedMemoTargetIndex = null
+                    }
+                }
             }
 
             private class ProcessedChaptersKey(
@@ -3355,7 +3397,12 @@ class NovelScreenModel(
                     return@launchIO
                 }
 
-                val translationCacheRequirements = readerSettings.toTranslationCacheRequirements()
+                val batchReplaceRulesFingerprint = replaceRulesFingerprint(
+                    novelReaderPreferences.enabledReplaceRules(),
+                )
+                val translationCacheRequirements = readerSettings.toTranslationCacheRequirements(
+                    replaceRulesFingerprint = batchReplaceRulesFingerprint,
+                )
                 val alreadyTranslatedChapterIds = resolvedChapterIds.filterTo(mutableSetOf()) { chapterId ->
                     NovelReaderTranslationDiskCacheStore.has(
                         chapterId = chapterId,
@@ -3379,7 +3426,9 @@ class NovelScreenModel(
                         novelId = state.novel.id,
                         batchToken = "",
                         chapterIds = filteredSelection.chapterIdsToEnqueue,
-                        profileSnapshot = readerSettings.toTranslationQueueProfileSnapshot(),
+                        profileSnapshot = readerSettings.toTranslationQueueProfileSnapshot(
+                            replaceRulesFingerprint = batchReplaceRulesFingerprint,
+                        ),
                         forceRetranslate = forceRetranslate,
                     ),
                 )
@@ -3513,6 +3562,11 @@ class NovelScreenModel(
                     hasTranslationCache(chapter)
             }
         }
+    }
+
+    override fun onDispose() {
+        super.onDispose()
+        State.Success.clearProcessedMemo()
     }
 }
 

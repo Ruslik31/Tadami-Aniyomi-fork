@@ -509,6 +509,7 @@ private fun List<SuggestionItem>.groupForFullScreen(
                 eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_MAL,
                 eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_MU,
                 eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_NU,
+                eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_SHIKIMORI,
             )
     }
     val databaseIds = databases.map { it.providerId ?: it.providerUrl }.toSet()
@@ -659,6 +660,7 @@ private fun SuggestionItem.reasonBadgeLabel(): String = when (reason) {
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_MAL,
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_MU,
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_NU,
+    eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_SHIKIMORI,
     -> "Recommended"
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.SEARCH_TITLE -> "Title match"
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.SEARCH_AUTHOR -> "Same author"
@@ -672,6 +674,7 @@ private fun SuggestionItem.reasonAccentColor(): Color = when (reason) {
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_MAL,
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_MU,
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_NU,
+    eu.kanade.tachiyomi.data.suggestions.SuggestionReason.EXTERNAL_SHIKIMORI,
     -> Color(0xFF1976D2)
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.SEARCH_TITLE -> Color(0xFF00897B)
     eu.kanade.tachiyomi.data.suggestions.SuggestionReason.SEARCH_AUTHOR -> Color(0xFF5E35B1)

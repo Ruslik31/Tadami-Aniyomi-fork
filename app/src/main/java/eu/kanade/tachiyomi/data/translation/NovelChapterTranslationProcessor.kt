@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.translation
 
 import android.app.Application
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.ui.reader.novel.setting.GeminiPromptMode
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderSettings
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelTranslationProvider
 import eu.kanade.tachiyomi.ui.reader.novel.translation.DeepSeekPromptResolver
@@ -16,12 +17,14 @@ import eu.kanade.tachiyomi.ui.reader.novel.translation.OpenRouterTranslationServ
 import eu.kanade.tachiyomi.ui.reader.novel.translation.effectiveTranslationBatchSize
 import eu.kanade.tachiyomi.ui.reader.novel.translation.hasConfiguredTranslationProvider
 import eu.kanade.tachiyomi.ui.reader.novel.translation.shouldUseSinglePrivateChapterRequestMode
+import eu.kanade.tachiyomi.ui.reader.novel.translation.supportsAdultPromptMode
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toDeepSeekTranslationParams
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toGeminiTranslationParams
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toMistralTranslationParams
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toNvidiaTranslationParams
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toOllamaCloudTranslationParams
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toOpenRouterTranslationParams
+import eu.kanade.tachiyomi.ui.reader.novel.translation.translationCacheNamespace
 import eu.kanade.tachiyomi.ui.reader.novel.translation.translationConcurrencyLimit
 import eu.kanade.tachiyomi.ui.reader.novel.translation.translationRequestConfigLog
 import kotlinx.coroutines.async
@@ -129,13 +132,25 @@ class NovelChapterTranslationProcessor(
 
         onLog?.invoke(settings.translationRequestConfigLog())
 
-        val targetLang = settings.geminiTargetLang
+        // Every prompt-shaping setting is part of the cache identity: the old (text, targetLang)
+        // key kept serving (and re-stamping into the disk cache) translations produced by a
+        // different provider/model/prompt/style after the user switched settings.
+        val cacheNamespace = settings.translationCacheNamespace()
+        if (settings.geminiPromptMode == GeminiPromptMode.ADULT_18 &&
+            !settings.translationProvider.supportsAdultPromptMode()
+        ) {
+            // Honest fallback: the provider has no 18+ prompt asset and translates with CLASSIC.
+            onLog?.invoke(
+                "Prompt mode ADULT_18 is not supported by ${settings.translationProvider.name}; " +
+                    "the CLASSIC system prompt is used instead.",
+            )
+        }
         val translated = mutableMapOf<Int, String>()
         val indexedBlocks = segments.mapIndexed { index, text -> index to text }
         val nonCachedSegments = mutableListOf<Pair<Int, String>>()
 
         indexedBlocks.forEach { (index, text) ->
-            val cachedTranslation = segmentTranslationCache[text to targetLang]
+            val cachedTranslation = segmentTranslationCache[SegmentCacheKey(cacheNamespace, text)]
             if (!cachedTranslation.isNullOrBlank()) {
                 translated[index] = cachedTranslation
             } else {
@@ -200,7 +215,8 @@ class NovelChapterTranslationProcessor(
                                         val originalText = pair.second
                                         if (!text.isNullOrBlank()) {
                                             translated[originalIndex] = text
-                                            segmentTranslationCache[originalText to targetLang] = text
+                                            segmentTranslationCache[SegmentCacheKey(cacheNamespace, originalText)] =
+                                                text
                                         }
                                     }
                                 }
@@ -232,7 +248,7 @@ class NovelChapterTranslationProcessor(
                             val originalIndex = pair.first
                             val originalText = pair.second
                             translated[originalIndex] = text
-                            segmentTranslationCache[originalText to targetLang] = text
+                            segmentTranslationCache[SegmentCacheKey(cacheNamespace, originalText)] = text
                         }
                     }
                     onProgress?.invoke(100)
@@ -375,12 +391,18 @@ class NovelChapterTranslationProcessor(
     }
 
     companion object {
-        private val segmentTranslationCache = ConcurrentHashMap<Pair<String, String>, String>()
+        private val segmentTranslationCache = ConcurrentHashMap<SegmentCacheKey, String>()
 
         fun clearCache() {
             segmentTranslationCache.clear()
         }
     }
+
+    /** In-memory segment cache key: the settings namespace plus the source text. */
+    private data class SegmentCacheKey(
+        val namespace: String,
+        val text: String,
+    )
 }
 
 private fun NovelTranslationProvider.supportsGranularFallback(): Boolean {

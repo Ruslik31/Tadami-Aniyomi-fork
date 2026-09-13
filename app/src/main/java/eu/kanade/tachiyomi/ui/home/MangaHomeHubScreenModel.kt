@@ -94,6 +94,8 @@ internal class MangaHomeHubScreenModel(
     private val getEnabledMangaSources: GetEnabledMangaSources by injectLazy()
     private val sourcePreferences: SourcePreferences by injectLazy()
     private val sourceManager: MangaSourceManager by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
 
     override val avatarFileName: String = "user_avatar_manga.jpg"
 
@@ -144,6 +146,76 @@ internal class MangaHomeHubScreenModel(
                         },
                     )
                 }
+            }
+        }
+
+        // Тизер ленты «Для тебя» — чтение только из БД (ноль сети на рендер Home).
+        screenModelScope.launchIO {
+            combine(
+                discoveryRepository.subscribe(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+                discoveryPreferences.discoveryEnabled().changes(),
+                discoveryPreferences.teaserCount().changes(),
+                discoveryRepository.subscribeHidden(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+                discoveryRepository.subscribeBlacklist(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+            ) { items, enabled, count, hidden, blacklist ->
+                items.filterNot { it.cleanTitle in hidden } to Triple(
+                    enabled,
+                    count,
+                    eu.kanade.tachiyomi.data.discovery.expandGenreSet(blacklist.toList()),
+                )
+            }
+                .collectLatest { (visible, prefs) ->
+                    val (enabled, count, expandedBlacklist) = prefs
+                    val filtered = visible.filterNot {
+                        eu.kanade.tachiyomi.data.discovery.isBlacklisted(it, expandedBlacklist)
+                    }
+                    cachedDiscoveryPool = eu.kanade.tachiyomi.data.discovery.dedupeCrossRow(filtered)
+                    val teaser = if (enabled) {
+                        composeTeaserItems(
+                            cachedDiscoveryPool,
+                            count,
+                            offset = discoveryOffset,
+                        )
+                    } else {
+                        emptyList()
+                    }
+                    mutableState.update { it.copy(discovery = teaser, discoveryEnabled = enabled) }
+                }
+        }
+    }
+
+    private var cachedDiscoveryPool: List<tachiyomi.domain.discovery.model.DiscoverySuggestion> = emptyList()
+    private var discoveryOffset: Int = 0
+
+    override fun rotateOrRefreshDiscovery() {
+        if (!discoveryPreferences.discoveryEnabled().get()) return
+        val count = discoveryPreferences.teaserCount().get().coerceIn(3, 20)
+        val pool = cachedDiscoveryPool
+        if (pool.size > count) {
+            val nextOffset = discoveryOffset + count
+            if (nextOffset < pool.size) {
+                discoveryOffset = nextOffset
+                val teaser = composeTeaserItems(pool, count, offset = discoveryOffset)
+                mutableState.update { it.copy(discovery = teaser) }
+                return
+            }
+        }
+        discoveryOffset = 0
+        if (state.value.isDiscoveryRefreshing) return
+        // Ручной рефреш делит общий cooldown с feed-экраном (5 мин от нажатия).
+        val now = System.currentTimeMillis()
+        val lastManual = discoveryPreferences.manualRefreshAt().get().takeIf { it > 0L }
+        if (eu.kanade.tachiyomi.ui.discovery.remainingCooldownSeconds(lastManual, now) > 0L) return
+        discoveryPreferences.manualRefreshAt().set(now)
+        mutableState.update { it.copy(isDiscoveryRefreshing = true) }
+        screenModelScope.launchIO {
+            try {
+                Injekt.get<eu.kanade.tachiyomi.data.discovery.DiscoveryRunner>().run(
+                    listOf(tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA),
+                    isManualRefresh = true,
+                )
+            } finally {
+                mutableState.update { it.copy(isDiscoveryRefreshing = false) }
             }
         }
     }

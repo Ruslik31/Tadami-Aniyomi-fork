@@ -108,6 +108,9 @@ data class Backup(
     @ProtoNumber(622) var backupFeeds: List<BackupFeed> = emptyList(),
     // Reels favorites
     @ProtoNumber(623) var backupReelsFavorites: List<BackupReelsFavorite> = emptyList(),
+    // Discovery «Для тебя»: скрытые тайтлы и теговый блэклист (кэш подборок не бэкапится)
+    @ProtoNumber(624) var backupDiscoveryHidden: List<BackupDiscoveryHidden> = emptyList(),
+    @ProtoNumber(625) var backupDiscoveryBlacklistTags: List<BackupDiscoveryTag> = emptyList(),
 )
 
 /**

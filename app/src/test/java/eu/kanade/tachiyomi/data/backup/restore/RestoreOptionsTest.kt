@@ -33,6 +33,14 @@ class RestoreOptionsTest {
         options.restoreManga shouldBe true
         options.restoreAnime shouldBe true
         options.restoreNovel shouldBe true
+        options.discoveryData shouldBe true
+    }
+
+    @Test
+    fun `discoveryData flag round-trips through boolean array`() {
+        val options = RestoreOptions(discoveryData = false)
+        RestoreOptions.fromBooleanArray(options.asBooleanArray()).discoveryData shouldBe false
+        RestoreOptions.fromBooleanArray(RestoreOptions().asBooleanArray()).discoveryData shouldBe true
     }
 
     @Test

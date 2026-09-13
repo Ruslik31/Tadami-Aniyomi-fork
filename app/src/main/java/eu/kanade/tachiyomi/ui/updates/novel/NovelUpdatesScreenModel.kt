@@ -2,8 +2,10 @@ package eu.kanade.tachiyomi.ui.updates.novel
 
 import android.app.Application
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import cafe.adriel.voyager.core.model.ScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.core.preference.asState
 import eu.kanade.core.util.addOrRemove
 import eu.kanade.core.util.insertSeparators
 import eu.kanade.presentation.updates.novel.NovelUpdatesUiModel
@@ -12,12 +14,17 @@ import eu.kanade.tachiyomi.util.lang.toLocalDate
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
@@ -41,9 +48,14 @@ class NovelUpdatesScreenModel(
     private val eventBus: AchievementEventBus? = runCatching { Injekt.get<AchievementEventBus>() }.getOrNull(),
 ) : ScreenModel {
 
-    val lastUpdated = libraryPreferences.lastUpdatedTimestamp().get()
+    val lastUpdated by libraryPreferences.lastUpdatedTimestamp().asState(screenModelScope)
     private val limit = ZonedDateTime.now().minusMonths(3).toInstant()
     private val selectedChapterIds = MutableStateFlow<Set<Long>>(emptySet())
+
+    // Mini-fix: parity with manga/anime updates SMs - the toolbar/swipe refresh used to be
+    // silent when the update job was already running.
+    private val _events: Channel<Event> = Channel(Int.MAX_VALUE)
+    val events: Flow<Event> = _events.receiveAsFlow()
 
     val state: StateFlow<State> = combine(
         getUpdates.subscribe(limit)
@@ -63,7 +75,11 @@ class NovelUpdatesScreenModel(
                 }
                 .toPersistentList(),
         )
-    }.stateIn(screenModelScope, SharingStarted.WhileSubscribed(5000), State())
+    }
+        // The 500-row filter/map must not run on the Main.immediate stateIn collector;
+        // the manga/anime updates siblings keep this work off the UI thread too.
+        .flowOn(Dispatchers.Default)
+        .stateIn(screenModelScope, SharingStarted.WhileSubscribed(5000), State())
 
     fun toggleSelection(item: NovelUpdatesItem, selected: Boolean) {
         selectedChapterIds.update { ids ->
@@ -123,8 +139,17 @@ class NovelUpdatesScreenModel(
         }
     }
 
-    fun updateLibrary(): Boolean {
-        return NovelLibraryUpdateJob.startNow(Injekt.get<Application>())
+    // I15: startNow is suspend (blocking WM guard) - keep the public API fire-and-forget and
+    // hop to IO inside instead of pushing suspend onto every toolbar caller.
+    fun updateLibrary() {
+        screenModelScope.launchIO {
+            val started = NovelLibraryUpdateJob.startNow(Injekt.get<Application>())
+            _events.send(Event.LibraryUpdateTriggered(started))
+        }
+    }
+
+    sealed interface Event {
+        data class LibraryUpdateTriggered(val started: Boolean) : Event
     }
 
     @Immutable

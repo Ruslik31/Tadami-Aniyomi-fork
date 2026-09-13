@@ -48,8 +48,8 @@ import tachiyomi.domain.category.anime.interactor.GetAnimeCategories
 import tachiyomi.domain.category.anime.interactor.SetAnimeCategories
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.entries.anime.interactor.GetAnime
+import tachiyomi.domain.entries.anime.interactor.GetAnimeFavorites
 import tachiyomi.domain.entries.anime.interactor.GetDuplicateLibraryAnime
-import tachiyomi.domain.entries.anime.interactor.GetLibraryAnime
 import tachiyomi.domain.entries.anime.interactor.NetworkToLocalAnime
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.anime.model.toAnimeUpdate
@@ -92,7 +92,7 @@ class BrowseAnimeSourceScreenModel(
     private val getSavedSearchBySourceId: GetSavedSearchBySourceId = Injekt.get(),
     private val insertSavedSearch: InsertSavedSearch = Injekt.get(),
     private val deleteSavedSearchById: DeleteSavedSearchById = Injekt.get(),
-    private val getLibraryAnime: GetLibraryAnime = Injekt.get(),
+    private val getAnimeFavorites: GetAnimeFavorites = Injekt.get(),
 ) : StateScreenModel<BrowseAnimeSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
 
     var displayMode by sourcePreferences.sourceDisplayMode().asState(screenModelScope)
@@ -126,9 +126,9 @@ class BrowseAnimeSourceScreenModel(
                 }
                 mutableState.update {
                     it.copy(
-                        listing = Listing.Search(savedSearch.query, baseFilters),
+                        listing = Listing.Search(savedSearch.sanitizedQuery(), baseFilters),
                         filters = baseFilters,
-                        toolbarQuery = savedSearch.query,
+                        toolbarQuery = savedSearch.sanitizedQuery(),
                     )
                 }
             }
@@ -230,13 +230,22 @@ class BrowseAnimeSourceScreenModel(
                 source = sourceId,
                 sourceType = SourceType.ANIME,
                 name = name,
-                query = state.listing.query,
+                // BRA-3: never persist the Popular/Latest SENTINEL query strings (see the
+                // manga SM comment) - null keeps the filters-only semantics.
+                query = state.listing.query?.takeUnless { q ->
+                    q == GetRemoteAnime.QUERY_POPULAR || q == GetRemoteAnime.QUERY_LATEST
+                },
                 filtersJson = filtersJson,
             )
             insertSavedSearch.await(savedSearch)
             dismissDialog()
             loadSavedSearches()
         }
+    }
+
+    /** BRA-3: legacy rows may still hold sentinel strings - map them to "no query". */
+    private fun SavedSearch.sanitizedQuery(): String? = query?.takeUnless { q ->
+        q == GetRemoteAnime.QUERY_POPULAR || q == GetRemoteAnime.QUERY_LATEST
     }
 
     fun deleteSearch(savedSearch: SavedSearch) {
@@ -257,9 +266,9 @@ class BrowseAnimeSourceScreenModel(
             }
             mutableState.update {
                 it.copy(
-                    listing = Listing.Search(savedSearch.query, baseFilters),
+                    listing = Listing.Search(savedSearch.sanitizedQuery(), baseFilters),
                     filters = baseFilters,
-                    toolbarQuery = savedSearch.query,
+                    toolbarQuery = savedSearch.sanitizedQuery(),
                     savedSearches = it.savedSearches.map { (s, _) -> s to (s.id == savedSearch.id) }.toImmutableList(),
                 )
             }
@@ -270,19 +279,15 @@ class BrowseAnimeSourceScreenModel(
         setDialog(null)
     }
 
-    val favoriteAnimeUrls = getLibraryAnime.subscribe()
-        .map { libraryAnimeList ->
-            libraryAnimeList
-                .filter { it.anime.source == sourceId }
-                .map { it.anime.url }
-                .toSet()
-        }
+    // BRM-8: was subscribing to the WHOLE library and filtering in memory (manga etalon) -
+    // source-scoped interactor instead.
+    val favoriteAnimeUrls = getAnimeFavorites.subscribe(sourceId)
+        .map { favorites -> favorites.map { it.url }.toSet() }
         .stateIn(screenModelScope, SharingStarted.Lazily, emptySet())
 
     /**
      * Flow of Pager flow tied to [State.listing]
      */
-    private val hideInLibraryItems = sourcePreferences.hideInAnimeLibraryItems().get()
     val animePagerFlowFlow = state.map { it.listing }
         .distinctUntilChanged()
         .map { listing ->
@@ -301,7 +306,11 @@ class BrowseAnimeSourceScreenModel(
                     }
                 }
                 .map { pagingData ->
-                    pagingData.filter { !hideInLibraryItems || !it.favorite }
+                    // BRA-4 (РЕШ-10 port): the pref was snapshotted once in the constructor -
+                    // toggling the setting did not affect the open browse screen. Read it live
+                    // per emission (manga etalon).
+                    val hideLibraryItems = sourcePreferences.hideInAnimeLibraryItems().get()
+                    pagingData.filter { !hideLibraryItems || !it.favorite }
                 }
                 .cachedIn(ioCoroutineScope)
         }
@@ -339,14 +348,16 @@ class BrowseAnimeSourceScreenModel(
         mutableState.update { it.copy(listing = listing, toolbarQuery = null) }
     }
 
+    // РЕШ-9 (anime mirror): the filter sheet mutates the same FilterList instance the state
+    // holds, so the self-comparison was always equal and browse never tracked FILTER.
+    private var appliedFiltersSnapshot: String? = null
+
     fun setFilters(filters: AnimeFilterList) {
         if (source !is AnimeCatalogueSource) return
 
-        val changed = try {
-            SavedSearchFilterSerializer.serialize(filters) != SavedSearchFilterSerializer.serialize(state.value.filters)
-        } catch (e: Exception) {
-            true
-        }
+        val newSnapshot = runCatching { SavedSearchFilterSerializer.serialize(filters) }.getOrNull()
+        val changed = newSnapshot != appliedFiltersSnapshot
+        appliedFiltersSnapshot = newSnapshot
 
         mutableState.update {
             it.copy(
@@ -630,6 +641,6 @@ class BrowseAnimeSourceScreenModel(
         val savedSearches: ImmutableList<Pair<SavedSearch, Boolean>> = persistentListOf(),
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
-        val filterable get() = savedSearches.isNotEmpty()
+        // РЕШ-B5: `filterable` removed - zero production readers.
     }
 }

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.library
 
 import android.content.Context
+import eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob
 import eu.kanade.tachiyomi.data.library.anime.AnimeLibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.novel.NovelLibraryUpdateJob
@@ -15,7 +16,7 @@ object LibraryUpdateCoordinator {
      * media that is already running or enqueued, so this returns true when at least one
      * media actually started.
      */
-    fun startAll(
+    suspend fun startAll(
         context: Context,
         updateAnime: Boolean,
         updateManga: Boolean,
@@ -30,6 +31,10 @@ object LibraryUpdateCoordinator {
         }
         if (updateNovel) {
             started = NovelLibraryUpdateJob.startNow(context) || started
+        }
+        if (started) {
+            // Лента «Для тебя» догоняет обновившуюся библиотеку (debounce = REPLACE, задержка 30 мин).
+            DiscoveryUpdateJob.scheduleAfterLibraryUpdate(context)
         }
         return started
     }

@@ -25,6 +25,13 @@ abstract class ViewerConfig(
 
     var transitionPropertyChangedListener: (() -> Unit)? = null
 
+    /**
+     * Notified when the double-page spread grouping changes (join/shift). Unlike image property
+     * changes (view recreation over the same items), regrouping requires rebuilding the adapter
+     * items, which only setChapters does.
+     */
+    var spreadPropertyChangedListener: (() -> Unit)? = null
+
     var tappingInverted = ReaderPreferences.TappingInvertMode.NONE
     var longTapEnabled = true
     var usePageTransitions = false
@@ -65,7 +72,10 @@ abstract class ViewerConfig(
             .changes()
             .onEach {
                 isEInkMode = it.isEnabled
-                usePageTransitions = readerPreferences.pageTransitions().get() || !isEInkMode
+                // РЕШ-2 revival: was `pageTransitions || !isEInkMode` - inverted. On regular
+                // devices the toggle was dead (always true), and e-ink got pref-dependent motion
+                // although reduce-motion is meant to be forced there.
+                usePageTransitions = readerPreferences.pageTransitions().get() && !isEInkMode
             }
             .launchIn(scope)
 
@@ -73,7 +83,7 @@ abstract class ViewerConfig(
             .register({ longTapEnabled = it })
 
         readerPreferences.pageTransitions()
-            .register({ usePageTransitions = it || !isEInkMode })
+            .register({ usePageTransitions = it && !isEInkMode })
 
         readerPreferences.doubleTapAnimSpeed()
             .register({ doubleTapAnimDuration = it })

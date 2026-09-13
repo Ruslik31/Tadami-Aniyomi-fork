@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupHistory
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.backupChapterMapper
 import eu.kanade.tachiyomi.data.backup.models.backupMangaTrackMapper
+import eu.kanade.tachiyomi.data.backup.models.toBackupMemoJson
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import tachiyomi.data.handlers.manga.MangaDatabaseHandler
 import tachiyomi.domain.category.manga.interactor.GetMangaCategories
@@ -109,4 +110,6 @@ private fun Manga.toBackupManga() =
         customDescription = this.customDescription,
         customGenre = this.customGenre,
         customStatus = this.customStatus,
+        completedAt = this.completedAt,
+        memoJson = toBackupMemoJson(this.memo),
     )

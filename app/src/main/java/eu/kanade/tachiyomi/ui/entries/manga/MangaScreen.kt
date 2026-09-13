@@ -58,7 +58,6 @@ import eu.kanade.tachiyomi.ui.entries.manga.track.MangaTrackInfoDialogHomeScreen
 import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
 import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
-import eu.kanade.tachiyomi.ui.library.manga.MangaLibraryTab
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -312,7 +311,10 @@ class MangaScreen(
                 MigrateMangaDialog(
                     oldManga = dialog.oldManga,
                     newManga = dialog.newManga,
-                    screenModel = MigrateMangaDialogScreenModel(),
+                    // BRM-1: inline construction was recreated on every successState emission -
+                    // and the migration itself writes this entry's DB row, making the recreation
+                    // (isMigrating reset -> second tap -> parallel migration) near-deterministic.
+                    screenModel = rememberScreenModel { MigrateMangaDialogScreenModel() },
                     onDismissRequest = onDismissRequest,
                     onClickTitle = { navigator.push(MangaScreen(dialog.oldManga.id)) },
                     onPopScreen = { navigator.replace(MangaScreen(dialog.newManga.id)) },
@@ -508,12 +510,19 @@ class MangaScreen(
 
         when (val previousController = navigator.items[navigator.size - 2]) {
             is HomeScreen -> {
+                // C2: route through HomeScreen - it lands on the library tab hosting manga for
+                // the active theme. The old direct MangaLibraryTab.search sent into a rendezvous
+                // channel with no receiver whenever that legacy tab was not composed (the
+                // RESH-B1 failure mode), dropping the query silently.
                 navigator.pop()
-                MangaLibraryTab.search(query)
+                HomeScreen.searchLibrary(HomeScreen.LibrarySearchMedia.Manga, query)
             }
             is BrowseMangaSourceScreen -> {
+                // RESH-B1: replace with a fresh instance carrying the query (constructor arg,
+                // the novel-screen pattern) - the removed static channel's send() could suspend
+                // with no receiver and raced duplicate collectors.
                 navigator.pop()
-                previousController.search(query)
+                navigator.replace(BrowseMangaSourceScreen(previousController.sourceId, query))
             }
         }
     }
@@ -533,12 +542,15 @@ class MangaScreen(
         } as? BrowseMangaSourceScreen
 
         if (existing != null) {
+            // RESH-B1: pop to the existing browse screen and REPLACE it with a fresh instance
+            // carrying the genre as a constructor arg (its SM applies searchGenre once) -
+            // replaces the static queryEvent channel signal.
             navigator.popUntil { it == existing }
-            existing.searchGenre(genreName)
+            navigator.replace(BrowseMangaSourceScreen(sourceId, null, genreQuery = genreName))
             return
         }
 
-        navigator.push(BrowseMangaSourceScreen(sourceId, genreName))
+        navigator.push(BrowseMangaSourceScreen(sourceId, null, genreQuery = genreName))
     }
 
     private suspend fun performGenresSearch(
@@ -552,14 +564,13 @@ class MangaScreen(
             screen is BrowseMangaSourceScreen && screen.sourceId == sourceId
         } as? BrowseMangaSourceScreen
         if (existing != null) {
+            // RESH-B1: see performGenreSearch - constructor args instead of the static channel.
             navigator.popUntil { it == existing }
-            existing.searchGenres(genres)
+            navigator.replace(BrowseMangaSourceScreen(sourceId, null, genresQuery = genres))
             return
         }
 
-        val newScreen = BrowseMangaSourceScreen(sourceId, null)
-        navigator.push(newScreen)
-        newScreen.searchGenres(genres)
+        navigator.push(BrowseMangaSourceScreen(sourceId, null, genresQuery = genres))
     }
 
     /**

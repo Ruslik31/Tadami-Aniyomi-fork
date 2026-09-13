@@ -33,7 +33,15 @@ internal class NovelReaderTranslationDiskCache(
         val promptMode: GeminiPromptMode,
         val stylePreset: NovelTranslationStylePreset,
         val hasTranslatedContent: Boolean,
-    )
+        val extractorVersion: Int = 0,
+        val promptModifiersFingerprint: String = "",
+        val replaceRulesFingerprint: String = "",
+        val sourceSegmentCount: Int = 0,
+        val translatedCount: Int = 0,
+    ) {
+        val isComplete: Boolean
+            get() = sourceSegmentCount <= 0 || translatedCount >= sourceSegmentCount
+    }
 
     private val index = ConcurrentHashMap<Long, IndexEntry>()
 
@@ -52,6 +60,13 @@ internal class NovelReaderTranslationDiskCache(
         val promptMode: GeminiPromptMode,
         val stylePreset: NovelTranslationStylePreset,
         val hasTranslatedContent: Boolean,
+        // Legacy .meta files predate these fields and decode to the "legacy/unknown" defaults,
+        // which never match current requirements - exactly the intended invalidation.
+        val extractorVersion: Int = 0,
+        val promptModifiersFingerprint: String = "",
+        val replaceRulesFingerprint: String = "",
+        val sourceSegmentCount: Int = 0,
+        val translatedCount: Int = 0,
     )
 
     private fun getOrLoadEntry(chapterId: Long): IndexEntry? {
@@ -71,6 +86,11 @@ internal class NovelReaderTranslationDiskCache(
                     promptMode = model.promptMode,
                     stylePreset = model.stylePreset,
                     hasTranslatedContent = model.hasTranslatedContent,
+                    extractorVersion = model.extractorVersion,
+                    promptModifiersFingerprint = model.promptModifiersFingerprint,
+                    replaceRulesFingerprint = model.replaceRulesFingerprint,
+                    sourceSegmentCount = model.sourceSegmentCount,
+                    translatedCount = model.translatedCount,
                 )
             }.getOrNull()
             if (loaded != null) {
@@ -93,6 +113,11 @@ internal class NovelReaderTranslationDiskCache(
             promptMode = diskModel.promptMode,
             stylePreset = diskModel.stylePreset,
             hasTranslatedContent = diskModel.translatedByIndex.isNotEmpty(),
+            extractorVersion = diskModel.extractorVersion,
+            promptModifiersFingerprint = diskModel.promptModifiersFingerprint,
+            replaceRulesFingerprint = diskModel.replaceRulesFingerprint,
+            sourceSegmentCount = diskModel.sourceSegmentCount,
+            translatedCount = diskModel.translatedByIndex.size,
         )
 
         // Write the meta companion file so future reads are fast
@@ -105,6 +130,11 @@ internal class NovelReaderTranslationDiskCache(
                 promptMode = loaded.promptMode,
                 stylePreset = loaded.stylePreset,
                 hasTranslatedContent = loaded.hasTranslatedContent,
+                extractorVersion = loaded.extractorVersion,
+                promptModifiersFingerprint = loaded.promptModifiersFingerprint,
+                replaceRulesFingerprint = loaded.replaceRulesFingerprint,
+                sourceSegmentCount = loaded.sourceSegmentCount,
+                translatedCount = loaded.translatedCount,
             )
             metaFile.writeText(json.encodeToString(metaModel), Charsets.UTF_8)
         }
@@ -152,8 +182,13 @@ internal class NovelReaderTranslationDiskCache(
                 )
             }
         }
-        index.clear()
-        index.putAll(rebuilt)
+        // Merge placeholders per key instead of clear()+putAll(): a put() landing while the file
+        // scan runs would otherwise be wiped from the in-memory index even though its file exists
+        // on disk, giving has()/chapterIds() false negatives until the next rebuild. Stale ids
+        // (files deleted externally) self-heal in getOrLoadEntry's disk fallback.
+        rebuilt.forEach { (chapterId, placeholder) ->
+            index.putIfAbsent(chapterId, placeholder)
+        }
     }
 
     private fun readEntryDiskModel(chapterId: Long): GeminiTranslationCacheDiskModel? {
@@ -190,6 +225,11 @@ internal class NovelReaderTranslationDiskCache(
                     promptMode = entry.promptMode,
                     stylePreset = entry.stylePreset,
                     hasTranslatedContent = entry.translatedByIndex.isNotEmpty(),
+                    extractorVersion = entry.extractorVersion,
+                    promptModifiersFingerprint = entry.promptModifiersFingerprint,
+                    replaceRulesFingerprint = entry.replaceRulesFingerprint,
+                    sourceSegmentCount = entry.sourceSegmentCount,
+                    translatedCount = entry.translatedByIndex.size,
                 )
                 metaFile.writeText(json.encodeToString(metaModel), Charsets.UTF_8)
 
@@ -202,6 +242,11 @@ internal class NovelReaderTranslationDiskCache(
                     promptMode = entry.promptMode,
                     stylePreset = entry.stylePreset,
                     hasTranslatedContent = entry.translatedByIndex.isNotEmpty(),
+                    extractorVersion = entry.extractorVersion,
+                    promptModifiersFingerprint = entry.promptModifiersFingerprint,
+                    replaceRulesFingerprint = entry.replaceRulesFingerprint,
+                    sourceSegmentCount = entry.sourceSegmentCount,
+                    translatedCount = entry.translatedByIndex.size,
                 )
             }.onFailure { error ->
                 logcat(LogPriority.WARN, error) {
@@ -235,12 +280,20 @@ internal class NovelReaderTranslationDiskCache(
         if (!indexReady()) return hasFallback(chapterId, requirements)
         val entry = getOrLoadEntry(chapterId) ?: return false
         if (!entry.hasTranslatedContent) return false
-        return entry.provider == requirements.translationProvider &&
-            entry.model == requirements.modelId &&
-            entry.sourceLang == requirements.sourceLang &&
-            entry.targetLang == requirements.targetLang &&
-            entry.promptMode == requirements.promptMode &&
-            entry.stylePreset == requirements.stylePreset
+        // Skip-checks must also see partial (relaxed-mode) entries as not-cached so a later batch
+        // heals them instead of skipping the chapter forever.
+        if (!entry.isComplete) return false
+        return requirements.matchesEntryMetadata(
+            entryProvider = entry.provider,
+            entryModel = entry.model,
+            entrySourceLang = entry.sourceLang,
+            entryTargetLang = entry.targetLang,
+            entryPromptMode = entry.promptMode,
+            entryStylePreset = entry.stylePreset,
+            entryExtractorVersion = entry.extractorVersion,
+            entryPromptModifiersFingerprint = entry.promptModifiersFingerprint,
+            entryReplaceRulesFingerprint = entry.replaceRulesFingerprint,
+        )
     }
 
     fun has(
@@ -259,10 +312,11 @@ internal class NovelReaderTranslationDiskCache(
     }
 
     private fun hasFallback(chapterId: Long, requirements: NovelReaderTranslationCacheRequirements): Boolean {
+        val cached = readEntryLocked(chapterId) ?: return false
         return NovelReaderTranslationCacheResolver.matches(
-            cached = readEntryLocked(chapterId),
+            cached = cached,
             requirements = requirements,
-        )
+        ) && cached.isTranslationComplete
     }
 
     private fun hasFallback(chapterId: Long, targetLang: String): Boolean {
@@ -303,7 +357,10 @@ internal class NovelReaderTranslationDiskCache(
         if (!directory.exists() || chapterIds.isEmpty()) return emptySet()
         return chapterIds.filter { chapterId ->
             val file = fileFor(chapterId)
-            file.isFile && readEntryLocked(chapterId)?.targetLang == targetLang
+            // Content check mirrors the index path: an entry whose translations were all blank
+            // must not light up badges during the first-rebuild fallback window.
+            file.isFile && readEntryLocked(chapterId)
+                ?.takeIf { it.targetLang == targetLang && it.translatedByIndex.isNotEmpty() } != null
         }.toSet()
     }
 
@@ -357,12 +414,17 @@ internal class NovelReaderTranslationDiskCache(
             .filter { (chapterId, _) ->
                 val entry = getOrLoadEntry(chapterId) ?: return@filter false
                 entry.hasTranslatedContent &&
-                    entry.provider == requirements.translationProvider &&
-                    entry.model == requirements.modelId &&
-                    entry.sourceLang == requirements.sourceLang &&
-                    entry.targetLang == requirements.targetLang &&
-                    entry.promptMode == requirements.promptMode &&
-                    entry.stylePreset == requirements.stylePreset
+                    requirements.matchesEntryMetadata(
+                        entryProvider = entry.provider,
+                        entryModel = entry.model,
+                        entrySourceLang = entry.sourceLang,
+                        entryTargetLang = entry.targetLang,
+                        entryPromptMode = entry.promptMode,
+                        entryStylePreset = entry.stylePreset,
+                        entryExtractorVersion = entry.extractorVersion,
+                        entryPromptModifiersFingerprint = entry.promptModifiersFingerprint,
+                        entryReplaceRulesFingerprint = entry.replaceRulesFingerprint,
+                    )
             }
             .map { it.key }
             .toSet()
@@ -403,6 +465,12 @@ private data class GeminiTranslationCacheDiskModel(
     val targetLang: String,
     val promptMode: GeminiPromptMode,
     val stylePreset: NovelTranslationStylePreset = NovelTranslationStylePreset.PROFESSIONAL,
+    // Legacy cache files predate extractor versioning and decode to 0, which never matches the
+    // current requirements - they are retranslated instead of overlaid onto shifted blocks.
+    val extractorVersion: Int = 0,
+    val promptModifiersFingerprint: String = "",
+    val replaceRulesFingerprint: String = "",
+    val sourceSegmentCount: Int = 0,
 ) {
     fun toDomain(): GeminiTranslationCacheEntry {
         return GeminiTranslationCacheEntry(
@@ -414,6 +482,10 @@ private data class GeminiTranslationCacheDiskModel(
             targetLang = targetLang,
             promptMode = promptMode,
             stylePreset = stylePreset,
+            extractorVersion = extractorVersion,
+            promptModifiersFingerprint = promptModifiersFingerprint,
+            replaceRulesFingerprint = replaceRulesFingerprint,
+            sourceSegmentCount = sourceSegmentCount,
         )
     }
 
@@ -428,6 +500,10 @@ private data class GeminiTranslationCacheDiskModel(
                 targetLang = entry.targetLang,
                 promptMode = entry.promptMode,
                 stylePreset = entry.stylePreset,
+                extractorVersion = entry.extractorVersion,
+                promptModifiersFingerprint = entry.promptModifiersFingerprint,
+                replaceRulesFingerprint = entry.replaceRulesFingerprint,
+                sourceSegmentCount = entry.sourceSegmentCount,
             )
         }
     }

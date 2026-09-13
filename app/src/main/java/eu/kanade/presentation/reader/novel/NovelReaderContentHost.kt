@@ -122,6 +122,7 @@ import eu.kanade.domain.easteregg.lattice.LatticeCarrier
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.easteregg.lattice.LatticeCarrierSlot
+import eu.kanade.presentation.library.novel.quotes.NovelQuoteCardShareSheet
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.components.AutoScrollActionFab
 import eu.kanade.presentation.theme.AuroraTheme
@@ -176,6 +177,7 @@ import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -224,11 +226,13 @@ internal fun NovelReaderContentHost(
     val onStopGeminiTranslation = actions.onStopGeminiTranslation
     val onToggleGeminiTranslationVisibility = actions.onToggleGeminiTranslationVisibility
     val onClearGeminiTranslation = actions.onClearGeminiTranslation
+    val onClearGeminiTranslationForSwitch = actions.onClearGeminiTranslationForSwitch
     val onClearAllGeminiTranslationCache = actions.onClearAllGeminiTranslationCache
     val onAddAiTranslationLog = actions.onAddAiTranslationLog
     val onClearGeminiLogs = actions.onClearGeminiLogs
     val onSetGeminiApiKey = actions.onSetGeminiApiKey
     val onSetGeminiModel = actions.onSetGeminiModel
+    val onRefreshGeminiModels = actions.onRefreshGeminiModels
     val onSetGeminiBatchSize = actions.onSetGeminiBatchSize
     val onSetGeminiConcurrency = actions.onSetGeminiConcurrency
     val onSetGeminiRelaxedMode = actions.onSetGeminiRelaxedMode
@@ -296,6 +300,8 @@ internal fun NovelReaderContentHost(
     val onDisableTts = actions.onDisableTts
     val onPreviewTtsVoice = actions.onPreviewTtsVoice
     val onStopTtsVoicePreview = actions.onStopTtsVoicePreview
+    val onSetTtsSleepTimer = actions.onSetTtsSleepTimer
+    val onSetTtsSleepTimerEndOfChapter = actions.onSetTtsSleepTimerEndOfChapter
     val onOpenPreviousChapter = actions.onOpenPreviousChapter
     val onOpenNextChapter = actions.onOpenNextChapter
     val onPrepareAutoScrollHandoff = actions.onPrepareAutoScrollHandoff
@@ -393,7 +399,7 @@ internal fun NovelReaderContentHost(
     val mountedRendererSwitchToken = remember { longArrayOf(state.seamlessSwitchToken) }
     val seamlessRendererSwap = mountedReaderRenderer[0] != null &&
         state.seamlessSwitchToken != mountedRendererSwitchToken[0]
-    var showWebView by remember(
+    var requestedShowWebView by remember(
         state.chapter.id,
         state.readerSettings.preferWebViewRenderer,
         state.contentBlocks.size,
@@ -415,8 +421,6 @@ internal fun NovelReaderContentHost(
             },
         )
     }
-    mountedReaderRenderer[0] = showWebView
-    mountedRendererSwitchToken[0] = state.seamlessSwitchToken
     val nextSelectedTextSelectionSessionId = remember(state.chapter.id) {
         {
             selectedTextSelectionSessionId += 1
@@ -434,8 +438,8 @@ internal fun NovelReaderContentHost(
     ) {
         // Never flip the mounted renderer as part of a seamless chapter swap (see comment above).
         if (seamlessRendererSwap) return@LaunchedEffect
-        showWebView = syncShowWebViewWithReaderSettings(
-            currentShowWebView = showWebView,
+        requestedShowWebView = syncShowWebViewWithReaderSettings(
+            currentShowWebView = requestedShowWebView,
             preferWebViewRenderer = state.readerSettings.preferWebViewRenderer,
             richNativeRendererExperimentalEnabled = state.readerSettings.richNativeRendererExperimental,
             pageReaderEnabled = state.readerSettings.pageReader,
@@ -454,7 +458,16 @@ internal fun NovelReaderContentHost(
     val eInkProfile by uiPreferences.eInkProfile().collectAsState()
     val displayRefreshHost = remember { DisplayRefreshHost() }
     val sourceId = state.novel.source
-    val hasSourceOverride = remember(sourceId) { readerPreferences.getSourceOverride(sourceId) != null }
+    // Reactive on purpose: toggling "For this source" in the settings dialog must immediately
+    // redirect the auto-scroll preference writer below. A remember(sourceId) snapshot went stale
+    // for the whole session, writing per-source changes into the global prefs (and recreating a
+    // just-deleted override through updateSourceOverride's empty-default branch).
+    val hasSourceOverrideFlow = remember(sourceId) {
+        readerPreferences.sourceOverrides().changes().map { it.containsKey(sourceId) }
+    }
+    val hasSourceOverride by hasSourceOverrideFlow.androidxCollectAsState(
+        initial = readerPreferences.getSourceOverride(sourceId) != null,
+    )
     var pageViewportSize by remember(state.chapter.id) { mutableStateOf(IntSize.Zero) }
     var hasCompletedInitialReaderLayout by remember(state.chapter.id) { mutableStateOf(false) }
     val autoScrollHandoff = remember(state.chapter.id) {
@@ -488,6 +501,17 @@ internal fun NovelReaderContentHost(
     }
     var requestedTtsChapterSyncTarget by remember(state.chapter.id) { mutableStateOf<Long?>(null) }
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+    // The chapter WebView must not leave the composition in the same frame the renderer decision
+    // flips: removing the focused WebView re-focuses the window root, and that cascade re-enters
+    // Compose layout inside applyChanges ("Cannot start a writer when another writer is pending").
+    // The unmount lags one focus-safe frame; the mount direction stays immediate.
+    val showWebView = rememberFocusSafeInteropUnmount(
+        unmountRequested = !requestedShowWebView,
+        prepareUnmount = { webViewInstance?.prepareForFocusSafeUnmount() },
+        cancelPrepare = { webViewInstance?.cancelFocusSafeUnmount() },
+    ).not()
+    mountedReaderRenderer[0] = showWebView
+    mountedRendererSwitchToken[0] = state.seamlessSwitchToken
 
     // Paint saved highlights into whichever WebView is mounted: re-applied when the WebView
     // becomes ready, when the highlight list changes, and after each document load from
@@ -525,22 +549,23 @@ internal fun NovelReaderContentHost(
         },
     )
 
-    val editingHighlight = editingHighlightId?.let { id ->
-        highlightItemList.firstOrNull { it.highlight.id == id }?.highlight
+    val editingHighlightItem = editingHighlightId?.let { id ->
+        highlightItemList.firstOrNull { it.highlight.id == id }
     }
-    if (editingHighlight != null) {
+    var cardShareItem by remember { mutableStateOf<NovelHighlightWithChapter?>(null) }
+    if (editingHighlightItem != null) {
         val context = LocalContext.current
         NovelHighlightEditorSheet(
-            highlight = editingHighlight,
+            item = editingHighlightItem,
             onDismiss = { editingHighlightId = null },
             onSave = { note, colorArgb ->
-                actions.onUpdateHighlight(editingHighlight.id, note, colorArgb)
+                actions.onUpdateHighlight(editingHighlightItem.highlight.id, note, colorArgb)
                 // Выбранный цвет запоминается как последний использованный для новых выделений.
                 actions.onDefaultHighlightColorChanged(colorArgb)
                 editingHighlightId = null
             },
             onDelete = {
-                actions.onDeleteHighlight(editingHighlight.id)
+                actions.onDeleteHighlight(editingHighlightItem.highlight.id)
                 editingHighlightId = null
             },
             onCopy = { text ->
@@ -560,6 +585,18 @@ internal fun NovelReaderContentHost(
                 }
                 context.startActivity(android.content.Intent.createChooser(intent, null))
             },
+            onShareCard = { note, colorArgb ->
+                cardShareItem = editingHighlightItem.copy(
+                    highlight = editingHighlightItem.highlight.copy(note = note, colorArgb = colorArgb),
+                )
+                editingHighlightId = null
+            },
+        )
+    }
+    cardShareItem?.let { item ->
+        NovelQuoteCardShareSheet(
+            item = item,
+            onDismiss = { cardShareItem = null },
         )
     }
     var pendingProgrammaticTtsBlockIndex by remember(state.chapter.id) { mutableStateOf<Int?>(null) }
@@ -1310,8 +1347,7 @@ internal fun NovelReaderContentHost(
         else -> nativeScrollItemsCount > 0
     }
     val initialContentPage = resolveInitialPageReaderPage(
-        savedPageReaderProgress = state.lastSavedPageReaderProgress,
-        legacyLastSavedIndex = state.lastSavedIndex,
+        savedRawProgress = state.lastSavedRawProgress,
         pageCount = pageReaderItemsCount.coerceAtLeast(1),
         chapterHandoffTarget = pageReaderChapterHandoffTarget,
     )
@@ -1399,6 +1435,15 @@ internal fun NovelReaderContentHost(
         )
     }
     val useNativeBookScroll = isBookMode && !bookRendererDecision.renderer.usesWebView
+    // Theme-derived TTS highlight palette (approved V4 auto-contrast): the accent adapts to the
+    // luminance of the reader background, so the spoken paragraph stays visible on every
+    // paper/parchment/dark surface. One source for the native span color, the chapter WebView
+    // script and the book engine CSS override.
+    val ttsHighlightPalette = resolveNovelTtsHighlightPalette(
+        accent = MaterialTheme.colorScheme.primary,
+        backgroundColor = textBackground,
+    )
+    val latestTtsHighlightPalette by rememberUpdatedState(ttsHighlightPalette)
     val webViewTtsNavigationAdapter = remember(state.chapter.id, scrollContentBlocks.size) {
         WebViewTtsNavigationAdapter(
             navigator = object : WebViewTtsNavigator {
@@ -1417,6 +1462,7 @@ internal fun NovelReaderContentHost(
                 }
             },
             totalBlocks = scrollContentBlocks.size.coerceAtLeast(1),
+            highlightCss = { latestTtsHighlightPalette.toChapterWebViewCss() },
         )
     }
     // Book TTS state is owned by NovelBookContentHost and published through the handle.
@@ -1665,13 +1711,12 @@ internal fun NovelReaderContentHost(
         state.ttsUiState.pendingChapterHandoffId,
         state.ttsUiState.activeSession?.chapterId,
     ) {
-        val targetChapterId = state.ttsUiState.pendingChapterHandoffId
-            ?: resolveTtsAutoAdvancedChapterNavigationTarget(
-                currentChapterId = state.chapter.id,
-                activeTtsChapterId = state.ttsUiState.activeSession?.chapterId,
-                nextChapterId = state.nextChapterId,
-            )
-            ?: return@LaunchedEffect
+        val targetChapterId = resolveTtsChapterNavigationTarget(
+            pendingChapterHandoffId = state.ttsUiState.pendingChapterHandoffId,
+            currentChapterId = state.chapter.id,
+            activeTtsChapterId = state.ttsUiState.activeSession?.chapterId,
+            nextChapterId = state.nextChapterId,
+        ) ?: return@LaunchedEffect
         if (requestedTtsChapterSyncTarget == targetChapterId) return@LaunchedEffect
         requestedTtsChapterSyncTarget = targetChapterId
         // The book already holds the next chapter. Opening it here reloaded the whole reader in the
@@ -1756,27 +1801,24 @@ internal fun NovelReaderContentHost(
         state.ttsUiState.activeWordRange,
         state.ttsUiState.activeHighlightMode,
         bookTtsBlockAnchor,
+        isBookMode,
+        richScrollBlocks,
     ) {
-        val activeUtterance = state.ttsUiState.activeSession?.utterance
-        val activePageAnchor = if (usePageReader) {
-            activeUtterance?.id?.let(activePageReaderTtsAnchors::get)
-        } else {
-            null
-        }
-        NovelReaderTtsHighlightState(
-            sourceBlockIndex = state.ttsUiState.activeSourceBlockIndex,
-            utteranceText = state.ttsUiState.activeUtteranceText,
-            wordRange = state.ttsUiState.activeWordRange,
-            pageIndex = activePageAnchor?.pageCandidates
-                ?.firstOrNull { it == pageReaderProgressPageIndex }
-                ?: activePageAnchor?.pageIndex,
-            blockTextStart = activePageAnchor?.blockTextStart ?: activeUtterance?.blockTextStart,
-            blockTextEndExclusive = activePageAnchor?.blockTextEndExclusive ?: activeUtterance?.blockTextEndExclusive,
-            mode = state.ttsUiState.activeHighlightMode,
-            blockAnchor = bookTtsBlockAnchor,
+        buildNovelReaderTtsHighlightState(
+            activeUtterance = state.ttsUiState.activeSession?.utterance,
+            activeSourceBlockIndex = state.ttsUiState.activeSourceBlockIndex,
+            activeUtteranceText = state.ttsUiState.activeUtteranceText,
+            activeWordRange = state.ttsUiState.activeWordRange,
+            activeHighlightMode = state.ttsUiState.activeHighlightMode,
+            isBookMode = isBookMode,
+            usePageReader = usePageReader,
+            pageReaderProgressPageIndex = pageReaderProgressPageIndex,
+            activePageReaderTtsAnchors = activePageReaderTtsAnchors,
+            bookTtsBlockAnchor = bookTtsBlockAnchor,
+            richScrollBlocks = richScrollBlocks,
         )
     }
-    val ttsHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f)
+    val ttsHighlightColor = ttsHighlightPalette.paragraphBackground
     val readingProgressPercent by remember(
         showWebView,
         webProgressPercent,
@@ -2535,8 +2577,9 @@ internal fun NovelReaderContentHost(
                         forceBoldText = state.readerSettings.forceBoldText,
                         forceItalicText = state.readerSettings.forceItalicText,
                     )
-                    val bookReaderCss = remember(bookReaderBaseCss) {
-                        withNovelBookReaderContentOverrides(bookReaderBaseCss)
+                    val bookReaderCss = remember(bookReaderBaseCss, ttsHighlightPalette) {
+                        withNovelBookReaderContentOverrides(bookReaderBaseCss) +
+                            "\n" + ttsHighlightPalette.bookEngineOverrideCss()
                     }
 
                     if (isBookMode) {
@@ -3195,7 +3238,12 @@ internal fun NovelReaderContentHost(
                         bottomBarHeightPx = bottomBarHeight,
                         basePaddingPx = initialWebReaderPaddingPx,
                     )
-                    val initialPaddingHorizontal = with(density) { state.readerSettings.margin.dp.roundToPx() }
+                    // Canonical CSS unit for the chapter WebView is the density-independent px
+                    // (CSS px == dp under the WebView viewport), the same unit fontSize is passed
+                    // in on every path. Passing density-multiplied physical px here made the
+                    // horizontal margin ~density-times too wide and, for paragraph spacing,
+                    // visibly jump when onPageFinished re-applied the raw-dp value.
+                    val initialPaddingHorizontal = state.readerSettings.margin
                     val initialCssTextAlign = resolveWebViewTextAlignCss(state.readerSettings.textAlign)
                     val initialCssFirstLineIndent = resolveWebViewFirstLineIndentCss(
                         forceParagraphIndent = state.readerSettings.forceParagraphIndent,
@@ -3225,9 +3273,7 @@ internal fun NovelReaderContentHost(
                                     paddingHorizontal = initialPaddingHorizontal,
                                     fontSizePx = state.readerSettings.fontSize,
                                     lineHeightMultiplier = state.readerSettings.lineHeight,
-                                    paragraphSpacingPx = with(density) {
-                                        state.readerSettings.paragraphSpacing.dp.roundToPx()
-                                    },
+                                    paragraphSpacingPx = state.readerSettings.paragraphSpacing,
                                     textAlignCss = initialCssTextAlign,
                                     firstLineIndentCss = initialCssFirstLineIndent,
                                     textColorHex = colorToCssHex(textColor),
@@ -3617,7 +3663,9 @@ internal fun NovelReaderContentHost(
                                 bottomBarHeightPx = bottomBarHeight,
                                 basePaddingPx = webReaderPaddingPx,
                             )
-                            val paddingHorizontal = with(density) { state.readerSettings.margin.dp.roundToPx() }
+                            // Raw dp: the canonical CSS unit of the chapter WebView (see
+                            // initialPaddingHorizontal).
+                            val paddingHorizontal = state.readerSettings.margin
                             val cssTextAlign = resolveWebViewTextAlignCss(state.readerSettings.textAlign)
                             val cssFirstLineIndent = resolveWebViewFirstLineIndentCss(
                                 forceParagraphIndent = state.readerSettings.forceParagraphIndent,
@@ -3639,8 +3687,10 @@ internal fun NovelReaderContentHost(
                                 textColor = textColor,
                                 backgroundColor = textBackground,
                             )
-                            val paragraphSpacingPx =
-                                with(density) { state.readerSettings.paragraphSpacing.dp.roundToPx() }
+                            // Raw dp, matching what applyReaderCss below receives: the fingerprint
+                            // must describe the styles that are actually applied or it never
+                            // compares equal and the CSS gets re-applied on every pass.
+                            val paragraphSpacingCssUnits = state.readerSettings.paragraphSpacing
                             val styleFingerprint = buildWebReaderCssFingerprint(
                                 chapterId = state.chapter.id,
                                 paddingTop = paddingTop,
@@ -3648,7 +3698,7 @@ internal fun NovelReaderContentHost(
                                 paddingHorizontal = paddingHorizontal,
                                 fontSizePx = state.readerSettings.fontSize,
                                 lineHeightMultiplier = state.readerSettings.lineHeight,
-                                paragraphSpacingPx = paragraphSpacingPx,
+                                paragraphSpacingPx = paragraphSpacingCssUnits,
                                 textAlignCss = cssTextAlign,
                                 firstLineIndentCss = cssFirstLineIndent,
                                 textColorHex = colorToCssHex(textColor),
@@ -3846,7 +3896,7 @@ internal fun NovelReaderContentHost(
                                     paddingHorizontal = paddingHorizontal,
                                     fontSizePx = state.readerSettings.fontSize,
                                     lineHeightMultiplier = state.readerSettings.lineHeight,
-                                    paragraphSpacingPx = paragraphSpacingPx,
+                                    paragraphSpacingPx = paragraphSpacingCssUnits,
                                     textAlignCss = cssTextAlign,
                                     firstLineIndentCss = cssFirstLineIndent,
                                     textColorHex = colorToCssHex(textColor),
@@ -4068,7 +4118,7 @@ internal fun NovelReaderContentHost(
                     autoScrollExpanded = nextState.autoScrollExpanded
                 },
                 onShowFloatingButtonChange = {
-                    readerPreferences.showAutoScrollFloatingButton().set(it)
+                    autoScrollPreferenceWriter.persistShowFloatingButtonPreference(it)
                 },
                 onToggleExpanded = { autoScrollExpanded = !autoScrollExpanded },
             )
@@ -4141,6 +4191,8 @@ internal fun NovelReaderContentHost(
                 onDisableTts = onDisableTts,
                 onPreviewTtsVoice = onPreviewTtsVoice,
                 onStopTtsVoicePreview = onStopTtsVoicePreview,
+                onSetTtsSleepTimer = onSetTtsSleepTimer,
+                onSetTtsSleepTimerEndOfChapter = onSetTtsSleepTimerEndOfChapter,
                 onOpenPreviousChapterFromReader = { openPreviousChapterFromReader() },
                 onOpenNextChapterFromReader = { openNextChapterFromReader() },
                 navigationBarHeightPx = navigationBarHeight,
@@ -4251,11 +4303,13 @@ internal fun NovelReaderContentHost(
                     onStopGeminiTranslation = onStopGeminiTranslation,
                     onToggleGeminiTranslationVisibility = onToggleGeminiTranslationVisibility,
                     onClearGeminiTranslation = onClearGeminiTranslation,
+                    onClearGeminiTranslationForSwitch = onClearGeminiTranslationForSwitch,
                     onClearAllGeminiTranslationCache = onClearAllGeminiTranslationCache,
                     onAddAiTranslationLog = onAddAiTranslationLog,
                     onClearGeminiLogs = onClearGeminiLogs,
                     onSetGeminiApiKey = onSetGeminiApiKey,
                     onSetGeminiModel = onSetGeminiModel,
+                    onRefreshGeminiModels = onRefreshGeminiModels,
                     onSetGeminiBatchSize = onSetGeminiBatchSize,
                     onSetGeminiConcurrency = onSetGeminiConcurrency,
                     onSetGeminiRelaxedMode = onSetGeminiRelaxedMode,

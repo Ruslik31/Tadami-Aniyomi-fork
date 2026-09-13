@@ -1,5 +1,7 @@
 package eu.kanade.presentation.reader.novel
 
+import android.text.format.DateUtils
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +23,7 @@ import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -28,6 +31,7 @@ import androidx.compose.material.icons.outlined.SettingsVoice
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -65,6 +70,9 @@ internal data class NovelReaderTtsControlSnapshot(
     val primaryActionIsPause: Boolean,
     val hasVoiceSettingsAccess: Boolean,
     val highlightEnabled: Boolean,
+    val sleepTimerActive: Boolean,
+    val sleepTimerEndOfChapter: Boolean,
+    val sleepTimerRemainingSeconds: Int,
 )
 
 internal fun resolveNovelReaderTtsControlSnapshot(
@@ -75,8 +83,13 @@ internal fun resolveNovelReaderTtsControlSnapshot(
         primaryActionIsPause = uiState.isPlaying,
         hasVoiceSettingsAccess = uiState.enabled,
         highlightEnabled = uiState.activeHighlightMode != NovelTtsHighlightMode.OFF,
+        sleepTimerActive = uiState.isSleepTimerActive,
+        sleepTimerEndOfChapter = uiState.sleepTimerEndOfChapter,
+        sleepTimerRemainingSeconds = uiState.sleepTimerRemainingSeconds,
     )
 }
+
+private val novelReaderTtsSleepTimerPresetsMinutes = listOf(15, 30, 60, 90)
 
 internal data class NovelReaderTtsOptionsSnapshot(
     val selectedEngine: NovelTtsEngineDescriptor?,
@@ -340,6 +353,8 @@ internal fun NovelReaderTtsControls(
     onDisableTts: () -> Unit,
     onPreviewVoice: (String) -> Unit = {},
     onStopVoicePreview: () -> Unit = {},
+    onSetSleepTimer: (Int) -> Unit = {},
+    onSetSleepTimerEndOfChapter: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val snapshot = resolveNovelReaderTtsControlSnapshot(uiState)
@@ -348,6 +363,7 @@ internal fun NovelReaderTtsControls(
     if (!snapshot.showControls) return
 
     var showOptions by remember { mutableStateOf(false) }
+    var timerExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -449,12 +465,78 @@ internal fun NovelReaderTtsControls(
                 )
             }
 
+            IconButton(onClick = { timerExpanded = !timerExpanded }) {
+                Icon(
+                    imageVector = Icons.Outlined.Timer,
+                    contentDescription = stringResource(AYMR.strings.timer_title),
+                    tint = if (snapshot.sleepTimerActive) glassColors.accent else glassColors.textSecondary,
+                )
+            }
+
             IconButton(onClick = { showOptions = true }) {
                 Icon(
                     imageVector = Icons.Outlined.SettingsVoice,
                     contentDescription = stringResource(AYMR.strings.novel_reader_tts_voice_settings),
                     tint = glassColors.textSecondary,
                 )
+            }
+        }
+
+        if (snapshot.sleepTimerActive) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Timer,
+                    contentDescription = null,
+                    tint = glassColors.accent,
+                    modifier = Modifier.size(13.dp),
+                )
+                Text(
+                    text = novelReaderTtsSleepTimerCaption(snapshot),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = glassColors.accent,
+                )
+            }
+        }
+
+        AnimatedVisibility(visible = timerExpanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    novelReaderTtsSleepTimerPresetsMinutes.forEach { minutes ->
+                        NovelReaderTtsSleepChip(
+                            label = minutes.toString(),
+                            selected = false,
+                            onClick = { onSetSleepTimer(minutes * 60) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                NovelReaderTtsSleepChip(
+                    label = stringResource(AYMR.strings.novel_tts_sleep_end_of_chapter),
+                    selected = snapshot.sleepTimerEndOfChapter,
+                    onClick = onSetSleepTimerEndOfChapter,
+                    icon = Icons.Outlined.Bedtime,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (snapshot.sleepTimerActive) {
+                    NovelReaderTtsSleepChip(
+                        label = stringResource(AYMR.strings.timer_cancel_timer),
+                        selected = false,
+                        onClick = { onSetSleepTimer(0) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
 
@@ -487,6 +569,60 @@ internal fun NovelReaderTtsControls(
             },
             onPreviewVoice = onPreviewVoice,
             onStopVoicePreview = onStopVoicePreview,
+        )
+    }
+}
+
+@Composable
+private fun novelReaderTtsSleepTimerCaption(snapshot: NovelReaderTtsControlSnapshot): String {
+    return if (snapshot.sleepTimerEndOfChapter) {
+        stringResource(AYMR.strings.novel_tts_sleep_end_of_chapter)
+    } else {
+        stringResource(
+            AYMR.strings.timer_remaining,
+            DateUtils.formatElapsedTime(snapshot.sleepTimerRemainingSeconds.toLong()),
+        )
+    }
+}
+
+@Composable
+private fun NovelReaderTtsSleepChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+) {
+    val colors = AuroraTheme.colors
+    val shape = RoundedCornerShape(999.dp)
+    Row(
+        modifier = modifier
+            .clip(shape)
+            .background(
+                when {
+                    selected -> colors.accent.copy(alpha = 0.18f)
+                    colors.isDark -> Color.White.copy(alpha = 0.06f)
+                    else -> Color.Black.copy(alpha = 0.05f)
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+    ) {
+        icon?.let { chipIcon ->
+            Icon(
+                imageVector = chipIcon,
+                contentDescription = null,
+                tint = if (selected) colors.accent else colors.textSecondary,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) colors.accent else colors.textSecondary,
         )
     }
 }

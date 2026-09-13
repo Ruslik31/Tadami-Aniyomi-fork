@@ -52,7 +52,7 @@ internal object AnimeExtensionLoader {
     private const val METADATA_TORRENT = "tachiyomi.animeextension.torrent"
     private const val METADATA_EXTENSION_LIB = "tachiyomix.extensionLib"
     const val LIB_VERSION_MIN = 12.0
-    const val LIB_VERSION_MAX = 18.0
+    const val LIB_VERSION_MAX = 21.0
 
     val SUPPORTED_LIB_VERSIONS: ClosedFloatingPointRange<Double> = LIB_VERSION_MIN..LIB_VERSION_MAX
 
@@ -483,7 +483,9 @@ internal object AnimeExtensionLoader {
             isTorrent = isTorrent,
             sources = sources,
             pkgFactory = appInfo.metaData.getString(METADATA_SOURCE_FACTORY),
-            icon = appInfo.loadIcon(pkgManager),
+            // OEM theme frameworks (vivo's VivoTheme) can NPE inside loadIcon when it runs on a
+            // background thread; the icon is decorative, so a failure must not kill the load.
+            icon = runCatching { appInfo.loadIcon(pkgManager) }.getOrNull(),
             isShared = extensionInfo.isShared,
         )
         return AnimeLoadResult.Success(extension)

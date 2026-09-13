@@ -113,6 +113,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.tachiyomi.data.download.novel.NovelTranslatedDownloadFormat
 import eu.kanade.tachiyomi.data.export.novel.NovelEpubExportProgress
 import eu.kanade.tachiyomi.data.export.novel.NovelEpubExportResult
+import eu.kanade.tachiyomi.data.export.novel.NovelEpubExporter
 import eu.kanade.tachiyomi.extension.novel.runtime.resolveUrl
 import eu.kanade.tachiyomi.novelsource.NovelSource
 import eu.kanade.tachiyomi.source.novel.NovelSiteSource
@@ -126,7 +127,6 @@ import eu.kanade.tachiyomi.ui.entries.manga.track.MangaTrackInfoDialogHomeScreen
 import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
 import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
-import eu.kanade.tachiyomi.ui.library.novel.NovelLibraryTab
 import eu.kanade.tachiyomi.ui.reader.novel.NovelReaderScreen
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderPreferences
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
@@ -485,7 +485,7 @@ class NovelScreen(
             onOpenEpubExportDialog = { showEpubExportDialog = true },
             onChapterClick = { chapterId ->
                 if (screenModel.isAnyChapterSelected) {
-                    screenModel.toggleSelection(chapterId)
+                    screenModel.toggleSelection(chapterId, userSelected = true)
                 } else {
                     val srcId = successState.source.id
                     coroutineScope.launch {
@@ -554,7 +554,9 @@ class NovelScreen(
             chapterPageTotal = successState.chapterPageTotal,
             chapterPageLoading = successState.chapterPageLoading,
             onChapterPageChange = screenModel::selectChapterPage,
-            onChapterLongClick = screenModel::toggleSelection,
+            onChapterLongClick = { chapterId ->
+                screenModel.toggleSelection(chapterId, userSelected = true, fromLongPress = true)
+            },
             onAllChapterSelected = screenModel::toggleAllSelection,
             onInvertSelection = screenModel::invertSelection,
             onMultiBookmarkClicked = screenModel::bookmarkChapters,
@@ -1021,8 +1023,11 @@ class NovelScreen(
 
         when (val previousController = navigator.items[navigator.size - 2]) {
             is HomeScreen -> {
+                // C3: route through HomeScreen - the old NovelLibraryTab.search sent into a
+                // rendezvous channel of a tab that is never composed (dead shadow implementation),
+                // so the query was always silently lost.
                 navigator.pop()
-                NovelLibraryTab.search(query)
+                HomeScreen.searchLibrary(HomeScreen.LibrarySearchMedia.Novel, query)
             }
             is BrowseNovelSourceScreen -> {
                 navigator.pop()
@@ -1046,12 +1051,15 @@ class NovelScreen(
         } as? BrowseNovelSourceScreen
 
         if (existing != null) {
+            // RESH-B1: pop to the existing browse screen and REPLACE it with a fresh instance
+            // carrying the genre as a constructor arg (its SM applies searchGenre once) -
+            // replaces the static queryEvent channel signal.
             navigator.popUntil { it == existing }
-            existing.searchGenre(genreName)
+            navigator.replace(BrowseNovelSourceScreen(sourceId, null, genreQuery = genreName))
             return
         }
 
-        navigator.push(BrowseNovelSourceScreen(sourceId, genreName))
+        navigator.push(BrowseNovelSourceScreen(sourceId, null, genreQuery = genreName))
     }
 
     private suspend fun performGenresSearch(
@@ -1066,14 +1074,13 @@ class NovelScreen(
         } as? BrowseNovelSourceScreen
 
         if (existing != null) {
+            // RESH-B1: see performGenreSearch - constructor args instead of the static channel.
             navigator.popUntil { it == existing }
-            existing.searchGenres(genres)
+            navigator.replace(BrowseNovelSourceScreen(sourceId, null, genresQuery = genres))
             return
         }
 
-        val newScreen = BrowseNovelSourceScreen(sourceId, null)
-        navigator.push(newScreen)
-        newScreen.searchGenres(genres)
+        navigator.push(BrowseNovelSourceScreen(sourceId, null, genresQuery = genres))
     }
 
     private fun openNovelInWebView(
@@ -2199,7 +2206,9 @@ private fun calculateEpubSelectedChapterCount(
     downloadedOnly: Boolean,
 ): Int {
     if (chapters.isEmpty()) return 0
-    val ordered = chapters.sortedBy { it.sourceOrder }
+    // The exporter slices the range from ITS sorted list; counting positions in any other order
+    // (raw sourceOrder used to) made the preview count and the exported range disagree.
+    val ordered = NovelEpubExporter.sortChaptersForExport(chapters)
     val scoped = if (exportAll) {
         ordered
     } else if (rangeSelection.isValid && rangeSelection.startChapter != null && rangeSelection.endChapter != null) {

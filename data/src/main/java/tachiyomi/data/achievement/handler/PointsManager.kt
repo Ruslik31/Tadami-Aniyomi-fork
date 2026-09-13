@@ -58,10 +58,42 @@ class PointsManager(
         }
     }
 
+    /**
+     * Откат начисления (Task 10, Q6): атомарное вычитание XP с гардом
+     * MAX(0, total-x) в SQL — total_xp никогда не уходит ниже нуля.
+     * Как и addPoints, игнорирует points <= 0 и пересчитывает уровень.
+     */
+    suspend fun subtractPoints(points: Int) {
+        if (points > 0) {
+            mutationMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    database.userProfileQueries.subtractXPAtomic(
+                        user_id = "default",
+                        xp_delta = points.toLong(),
+                        last_updated = System.currentTimeMillis(),
+                    )
+                    recalculateLevel()
+                }
+            }
+        }
+    }
+
     suspend fun incrementUnlocked() {
         mutationMutex.withLock {
             withContext(Dispatchers.IO) {
                 database.userProfileQueries.incrementAchievementUnlocked(
+                    user_id = "default",
+                    last_updated = System.currentTimeMillis(),
+                )
+            }
+        }
+    }
+
+    /** Откат счётчика разблокированных достижений (Task 10); гард ≥0 в SQL. */
+    suspend fun decrementAchievementUnlocked() {
+        mutationMutex.withLock {
+            withContext(Dispatchers.IO) {
+                database.userProfileQueries.decrementAchievementUnlocked(
                     user_id = "default",
                     last_updated = System.currentTimeMillis(),
                 )

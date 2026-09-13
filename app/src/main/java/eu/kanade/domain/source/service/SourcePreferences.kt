@@ -86,9 +86,8 @@ class SourcePreferences(
         legacyDefaultValue = false,
     )
 
-    fun migrationHideUnmatched() = migrationHideNotFound()
-
-    fun migrationHideWithoutUpdates() = migrationOnlyNewChapters()
+    // РЕШ-B5: dead aliases migrationHideUnmatched()/migrationHideWithoutUpdates() removed -
+    // zero callers, they only obscured which preference a screen actually reads.
 
     fun migrationDeepSearchMode() = migrationSearchKeywords()
 
@@ -281,22 +280,31 @@ class SourcePreferences(
     fun entrySuggestionsEnabled() = preferenceStore.getBoolean("entry_suggestions_enabled", true)
 
     /**
-     * F3.2 — Suggestion source toggles for NOVEL catalogues.
+     * F3.2 — Suggestion source toggles for the "Similar works" pipeline.
      *
      * Each flag independently controls whether the corresponding source
-     * participates in the "Similar works" pipeline for novels. The defaults
-     * preserve the previous behaviour (everything on); turning a flag off
-     * excludes that source from the candidate set, which is the standard
-     * user-facing escape hatch for noisy recommendations.
+     * participates in recommendation fetching. Turning a flag off excludes
+     * that source from the candidate set — the standard user-facing escape
+     * hatch for noisy recommendations.
+     *
+     * NovelUpdates defaults to OFF: the site has no public API, is
+     * Cloudflare-protected (live 403 on direct requests) and client-side
+     * scraping is a ToS/ban risk. Shikimori covers ranobe similarity via the
+     * official /api/ranobe/:id/similar endpoint instead.
      */
     fun suggestionsUseMangaUpdatesNovel() = preferenceStore.getBoolean(
         "suggestions_use_mangaupdates_novel",
         true,
     )
 
+    fun suggestionsUseShikimori() = preferenceStore.getBoolean(
+        "suggestions_use_shikimori",
+        true,
+    )
+
     fun suggestionsUseNovelUpdates() = preferenceStore.getBoolean(
         "suggestions_use_novelupdates",
-        true,
+        false,
     )
 
     fun suggestionsPopularBackfillEnabled() = preferenceStore.getBoolean(

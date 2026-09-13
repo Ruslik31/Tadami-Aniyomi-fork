@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.novelsource.model.NovelFilter
 import eu.kanade.tachiyomi.novelsource.model.NovelFilterList
 import eu.kanade.tachiyomi.novelsource.model.SNovel
 import eu.kanade.tachiyomi.ui.browse.search.SavedSearchFilterSerializer
+import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -43,6 +44,7 @@ import tachiyomi.domain.achievement.model.AchievementEvent
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.category.novel.interactor.GetNovelCategories
 import tachiyomi.domain.category.novel.interactor.SetNovelCategories
+import tachiyomi.domain.entries.novel.interactor.GetDuplicateLibraryNovel
 import tachiyomi.domain.entries.novel.interactor.GetNovel
 import tachiyomi.domain.entries.novel.interactor.GetNovelByUrlAndSourceId
 import tachiyomi.domain.entries.novel.interactor.GetNovelFavorites
@@ -150,6 +152,9 @@ class BrowseNovelSourceScreenModel(
 ) : StateScreenModel<BrowseNovelSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
 
     var displayMode by sourcePreferences.sourceDisplayMode().asState(screenModelScope)
+
+    // BRN-2: written from IO (loadSourceFilters), read on main (search heuristic).
+    @Volatile
     private var defaultFiltersSerialized: String? = null
 
     val source = sourceManager.getOrStub(sourceId)
@@ -246,9 +251,9 @@ class BrowseNovelSourceScreenModel(
                 }
                 mutableState.update {
                     it.copy(
-                        listing = Listing.Search(savedSearch.query, baseFilters),
+                        listing = Listing.Search(savedSearch.sanitizedQuery(), baseFilters),
                         filters = baseFilters,
-                        toolbarQuery = savedSearch.query,
+                        toolbarQuery = savedSearch.sanitizedQuery(),
                         filterVersion = it.filterVersion + 1,
                         filtersLoaded = true,
                     )
@@ -300,13 +305,22 @@ class BrowseNovelSourceScreenModel(
                 source = sourceId,
                 sourceType = SourceType.NOVEL,
                 name = name,
-                query = state.listing.query,
+                // BRN-10b/BRM-2: never persist the Popular/Latest SENTINEL query strings (see
+                // the manga SM comment) - null keeps the filters-only semantics.
+                query = state.listing.query?.takeUnless { q ->
+                    q == GetRemoteNovel.QUERY_POPULAR || q == GetRemoteNovel.QUERY_LATEST
+                },
                 filtersJson = filtersJson,
             )
             insertSavedSearch.await(savedSearch)
             dismissDialog()
             loadSavedSearches()
         }
+    }
+
+    /** BRN-10b: legacy rows may still hold sentinel strings - map them to "no query". */
+    private fun SavedSearch.sanitizedQuery(): String? = query?.takeUnless { q ->
+        q == GetRemoteNovel.QUERY_POPULAR || q == GetRemoteNovel.QUERY_LATEST
     }
 
     fun deleteSearch(savedSearch: SavedSearch) {
@@ -328,9 +342,9 @@ class BrowseNovelSourceScreenModel(
             }
             mutableState.update {
                 it.copy(
-                    listing = Listing.Search(savedSearch.query, baseFilters),
+                    listing = Listing.Search(savedSearch.sanitizedQuery(), baseFilters),
                     filters = baseFilters,
-                    toolbarQuery = savedSearch.query,
+                    toolbarQuery = savedSearch.sanitizedQuery(),
                     filterVersion = it.filterVersion + 1,
                     filtersLoaded = true,
                     savedSearches = it.savedSearches.map { (s, _) -> s to (s.id == savedSearch.id) }.toImmutableList(),
@@ -343,9 +357,7 @@ class BrowseNovelSourceScreenModel(
         setDialog(null)
     }
 
-    private val hideInLibraryItems = sourcePreferences.hideInNovelLibraryItems().get()
-
-    private val autoFavoriteLocalNovels = sourcePreferences.importEpubAddToLibrary().get()
+    // BRN-16/РЕШ-B5: the autoFavoriteLocalNovels field was read once and never used (removed).
 
     val favoriteNovelUrls = resolveGetNovelFavorites()?.subscribe(sourceId)
         ?.map { list -> list.map { it.url }.toSet() }
@@ -383,7 +395,11 @@ class BrowseNovelSourceScreenModel(
                     }
                 }
                 .map { pagingData ->
-                    pagingData.filter { !hideInLibraryItems || !it.favorite }
+                    // BRN-7 (РЕШ-10 port): the pref was snapshotted once in the constructor -
+                    // toggling the setting did not affect the open browse screen. Read it live
+                    // per emission (manga etalon).
+                    val hideLibraryItems = sourcePreferences.hideInNovelLibraryItems().get()
+                    pagingData.filter { !hideLibraryItems || !it.favorite }
                 }
                 .cachedIn(ioCoroutineScope)
         }
@@ -399,6 +415,11 @@ class BrowseNovelSourceScreenModel(
                 state.copy(
                     filters = resetFilters,
                     filtersLoaded = true,
+                    // BRN-4: bump filterVersion - the pager flow's distinctUntilChanged does not
+                    // compare filters, so a chip switch (async resetFilters + sync setListing
+                    // with the same query) used to keep the OLD Pager running with the stale
+                    // user filters instead of re-triggering with the reset ones.
+                    filterVersion = state.filterVersion + 1,
                 )
             }
         }
@@ -408,15 +429,16 @@ class BrowseNovelSourceScreenModel(
         mutableState.update { it.copy(listing = listing, toolbarQuery = null) }
     }
 
+    // РЕШ-9 (novel mirror): the filter sheet mutates the same FilterList instance the state
+    // holds, so the self-comparison was always equal and browse never tracked FILTER.
+    private var appliedFiltersSnapshot: String? = null
+
     fun setFilters(filters: NovelFilterList) {
         if (source !is NovelCatalogueSource) return
 
-        val currentFilters = state.value.filters
-        val changed = try {
-            SavedSearchFilterSerializer.serialize(filters) != SavedSearchFilterSerializer.serialize(currentFilters)
-        } catch (e: Exception) {
-            true
-        }
+        val newSnapshot = runCatching { SavedSearchFilterSerializer.serialize(filters) }.getOrNull()
+        val changed = newSnapshot != appliedFiltersSnapshot
+        appliedFiltersSnapshot = newSnapshot
 
         mutableState.update { current ->
             val updatedFilters = if (current.listing == Listing.Latest && filters !== current.filters) {
@@ -442,10 +464,20 @@ class BrowseNovelSourceScreenModel(
         val q = query ?: input.query
         if (!q.isNullOrBlank()) {
             val f = filters ?: input.filters
+            // BRN-2: getFilterList() used to run SYNCHRONOUSLY on the caller thread here (toolbar
+            // IME / queryEvent paths = main) while every other call site treats it as IO-bound
+            // (loadSourceFilters) - a plugin doing IO there meant NetworkOnMainThreadException/
+            // ANR. It only feeds the achievement heuristic: warm the baseline on IO instead and
+            // fall back to "filters non-empty" until it is ready.
             if (defaultFiltersSerialized == null) {
-                defaultFiltersSerialized = serializeFilters(source.getFilterList())
+                screenModelScope.launchIO { loadSourceFilters() }
             }
-            val hasActiveFilters = serializeFilters(f)?.let { it != defaultFiltersSerialized } ?: f.isNotEmpty()
+            val baseline = defaultFiltersSerialized
+            val hasActiveFilters = if (baseline != null) {
+                serializeFilters(f)?.let { it != baseline } ?: f.isNotEmpty()
+            } else {
+                f.isNotEmpty()
+            }
             if (hasActiveFilters) {
                 achievementHandler.trackFeatureUsed(AchievementEvent.Feature.ADVANCED_SEARCH)
             } else {
@@ -508,6 +540,9 @@ class BrowseNovelSourceScreenModel(
                     filters = defaultFilters,
                     listing = listing,
                     toolbarQuery = listing.query,
+                    // Without the bump a second genre search produced an identical-looking state
+                    // and the results list never re-ran (UI keys the fetch on filterVersion).
+                    filterVersion = it.filterVersion + 1,
                 )
             }
         }
@@ -551,12 +586,16 @@ class BrowseNovelSourceScreenModel(
                 val listing = if (anyExists) {
                     Listing.Search(query = null, filters = defaultFilters)
                 } else {
-                    Listing.Search(query = genres.firstOrNull(), filters = defaultFilters)
+                    // BRN-8 (B4 port): the fallback used only the FIRST genre, silently
+                    // dropping the rest; search with all of them (manga etalon :518-520).
+                    Listing.Search(query = genres.joinToString(" "), filters = defaultFilters)
                 }
                 it.copy(
                     filters = defaultFilters,
                     listing = listing,
                     toolbarQuery = listing.query,
+                    // Same re-run guarantee as searchGenre.
+                    filterVersion = it.filterVersion + 1,
                 )
             }
         }
@@ -618,11 +657,16 @@ class BrowseNovelSourceScreenModel(
             val updateNovelInteractor = resolveUpdateNovel() ?: return@launch
 
             val toggled = !novel.favorite
+            // BRN-12: removing from the library left the covers in the cache forever
+            // (manga/anime browse SMs call removeCovers - orphaned custom covers piled up
+            // on disk with every unfavorite).
+            val updated = if (!toggled) novel.removeCovers() else novel
             val added = updateNovelInteractor.await(
                 NovelUpdate(
                     id = novel.id,
                     favorite = toggled,
                     dateAdded = if (toggled) Instant.now().toEpochMilli() else 0L,
+                    coverLastModified = updated.coverLastModified.takeIf { it != novel.coverLastModified },
                 ),
             )
 
@@ -672,12 +716,21 @@ class BrowseNovelSourceScreenModel(
     }
 
     suspend fun getDuplicateLibraryNovel(novel: Novel): Novel? {
+        // BRN-11: targeted DB query (manga/anime etalon GetDuplicateLibraryManga) - the
+        // full-favorites in-memory scan was O(library) on every long-press.
+        resolveGetDuplicateLibraryNovel()?.let { interactor ->
+            return interactor.await(novel).firstOrNull()
+        }
         val favoritesInteractor = resolveGetNovelFavorites() ?: return null
         return favoritesInteractor.await()
             .firstOrNull { duplicate ->
                 duplicate.id != novel.id &&
                     duplicate.title.equals(novel.title, ignoreCase = true)
             }
+    }
+
+    private fun resolveGetDuplicateLibraryNovel(): GetDuplicateLibraryNovel? {
+        return runCatching { Injekt.get<GetDuplicateLibraryNovel>() }.getOrNull()
     }
 
     private suspend fun getCategories(
@@ -817,7 +870,7 @@ class BrowseNovelSourceScreenModel(
         val isSourceConfigurable: Boolean = false,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
-        val filterable get() = savedSearches.isNotEmpty()
+        // РЕШ-B5: `filterable` removed - zero production readers.
     }
 
     private data class PagingRequest(

@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,8 +32,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.domain.source.interactor.NovelReaderIncognitoState
 import eu.kanade.presentation.reader.novel.LocalNovelChapterHighlights
 import eu.kanade.presentation.reader.novel.NovelAtmosphereBackground
+import eu.kanade.presentation.reader.novel.NovelFinaleOverlay
 import eu.kanade.presentation.reader.novel.NovelReaderBackdropSession
 import eu.kanade.presentation.reader.novel.NovelReaderChapterHandoffPolicy
 import eu.kanade.presentation.reader.novel.NovelReaderPageReaderHandoffTarget
@@ -46,8 +49,11 @@ import eu.kanade.presentation.reader.novel.resolveNovelReaderBackdropColor
 import eu.kanade.presentation.reader.novel.resolveReaderBackgroundBackdropColor
 import eu.kanade.presentation.reader.novel.resolveReaderBackgroundImageModel
 import eu.kanade.presentation.reader.novel.resolveReaderBackgroundSelection
+import eu.kanade.presentation.reader.novel.resolveReaderKeepScreenOn
 import eu.kanade.presentation.reader.novel.resolveReaderSystemUiFlag
 import eu.kanade.presentation.reader.novel.safeEnum
+import eu.kanade.tachiyomi.data.discord.DiscordPresenceInfo
+import eu.kanade.tachiyomi.data.discord.DiscordPresenceManager
 import eu.kanade.tachiyomi.ui.reader.novel.dictionary.NovelDictionaryHistoryScreen
 import eu.kanade.tachiyomi.ui.reader.novel.setting.GeminiPromptMode
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelBookFlipAnimationSpeed
@@ -126,6 +132,28 @@ class NovelReaderScreen(
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
+        if (currentState is NovelReaderScreenModel.State.Success) {
+            val presenceManager = remember { Injekt.get<DiscordPresenceManager>() }
+            val presenceHandle = remember { Any() }
+            val presenceStartedAt = remember { System.currentTimeMillis() }
+            DisposableEffect(presenceManager, presenceHandle) {
+                onDispose { presenceManager.clearSession(presenceHandle) }
+            }
+            LaunchedEffect(currentState.chapter.id) {
+                if (!NovelReaderIncognitoState.active.value) {
+                    presenceManager.setSession(
+                        presenceHandle,
+                        DiscordPresenceInfo(
+                            mediaKind = DiscordPresenceInfo.MediaKind.NOVEL,
+                            title = currentState.novel.title,
+                            primaryNumber = currentState.chapter.chapterNumber,
+                            secondaryLine = currentState.chapter.name,
+                            startedAt = presenceStartedAt,
+                        ),
+                    )
+                }
+            }
+        }
         var showReaderUi by remember { mutableStateOf(false) }
         val context = LocalContext.current
         var ttsPlaybackService by remember { mutableStateOf<NovelTtsPlaybackService?>(null) }
@@ -155,7 +183,14 @@ class NovelReaderScreen(
 
         SystemUIController(
             fullScreenMode = fullScreenMode,
-            keepScreenOn = keepScreenOn,
+            keepScreenOn = resolveReaderKeepScreenOn(
+                keepScreenOn = keepScreenOn,
+                ttsKeepScreenOnDuringPlayback = activeReaderSettings?.ttsKeepScreenOnDuringPlayback == true,
+                ttsPlaybackState = (currentState as? NovelReaderScreenModel.State.Success)
+                    ?.ttsUiState
+                    ?.playbackState
+                    ?: NovelTtsPlaybackState.IDLE,
+            ),
             showReaderUi = showReaderUi,
         )
 
@@ -279,6 +314,11 @@ class NovelReaderScreen(
                                     // is written through before this screen goes away.
                                     screenModel.flushBookModeProgress()
                                     screenModel.persistCurrentChapterExitState()
+                                    // A true exit (unlike an internal chapter replace) ends playback:
+                                    // the session goes IDLE, which is the emission the foreground
+                                    // service self-stops on. Without it the service, media session
+                                    // and an ongoing "playing" notification outlive the dead engine.
+                                    screenModel.stopTtsPlayback()
                                     navigator.pop()
                                 }
                             },
@@ -290,11 +330,13 @@ class NovelReaderScreen(
                             onStopGeminiTranslation = screenModel::stopGeminiTranslation,
                             onToggleGeminiTranslationVisibility = screenModel::toggleGeminiTranslationVisibility,
                             onClearGeminiTranslation = screenModel::clearGeminiTranslation,
+                            onClearGeminiTranslationForSwitch = screenModel::clearGeminiTranslationForSwitch,
                             onClearAllGeminiTranslationCache = screenModel::clearAllGeminiTranslationCache,
                             onAddAiTranslationLog = screenModel::addAiTranslationLog,
                             onClearGeminiLogs = screenModel::clearGeminiLogs,
                             onSetGeminiApiKey = screenModel::setGeminiApiKey,
                             onSetGeminiModel = screenModel::setGeminiModel,
+                            onRefreshGeminiModels = screenModel::refreshGeminiModels,
                             onSetGeminiBatchSize = screenModel::setGeminiBatchSize,
                             onSetGeminiConcurrency = screenModel::setGeminiConcurrency,
                             onSetGeminiRelaxedMode = screenModel::setGeminiRelaxedMode,
@@ -363,6 +405,8 @@ class NovelReaderScreen(
                             onDisableTts = screenModel::disableTts,
                             onPreviewTtsVoice = screenModel::previewTtsVoice,
                             onStopTtsVoicePreview = screenModel::stopTtsVoicePreview,
+                            onSetTtsSleepTimer = screenModel::setTtsSleepTimer,
+                            onSetTtsSleepTimerEndOfChapter = screenModel::setTtsSleepTimerEndOfChapter,
                             onSelectedTextSelectionChanged = screenModel::updateSelectedTextSelection,
                             onUpdateHighlight = screenModel::updateHighlight,
                             onDeleteHighlight = screenModel::deleteHighlight,
@@ -484,40 +528,57 @@ class NovelReaderScreen(
                         ),
                     )
                 }
-                successState.seriesInterstitialState?.let { seriesInterstitialState ->
-                    val continueAction: (() -> Unit)? = seriesInterstitialState.nextNovel?.let { nextNovel ->
-                        seriesInterstitialState.nextChapterId?.let { nextChapterId ->
-                            {
-                                coroutineScope.launch {
-                                    screenModel.persistCurrentChapterExitState()
-                                    screenModel.clearSeriesInterstitial()
-                                    NovelReaderSystemUiSession.markInternalChapterReplace()
-                                    NovelReaderChapterHandoffPolicy.markInternalChapterHandoff(
-                                        NovelReaderPageReaderHandoffTarget.START,
-                                    )
-                                    navigator.replace(
-                                        NovelReaderScreen(
-                                            nextChapterId,
-                                            sourceId = nextNovel.source,
-                                            seriesId = seriesId,
-                                        ),
-                                    )
+                successState.finaleState?.let { finaleState ->
+                    NovelFinaleOverlay(
+                        state = finaleState,
+                        reducedMotion = eu.kanade.presentation.theme.AuroraTheme.colors.isEInk,
+                        onBackToNovel = {
+                            screenModel.clearFinale()
+                            // Same reader-exit semantics as onBack: end TTS so the foreground
+                            // service self-stops on the IDLE emission.
+                            screenModel.stopTtsPlayback()
+                            navigator.pop()
+                        },
+                        onStay = screenModel::clearFinale,
+                    )
+                }
+                if (successState.finaleState == null) {
+                    successState.seriesInterstitialState?.let { seriesInterstitialState ->
+                        val continueAction: (() -> Unit)? = seriesInterstitialState.nextNovel?.let { nextNovel ->
+                            seriesInterstitialState.nextChapterId?.let { nextChapterId ->
+                                {
+                                    coroutineScope.launch {
+                                        screenModel.persistCurrentChapterExitState()
+                                        screenModel.clearSeriesInterstitial()
+                                        NovelReaderSystemUiSession.markInternalChapterReplace()
+                                        NovelReaderChapterHandoffPolicy.markInternalChapterHandoff(
+                                            NovelReaderPageReaderHandoffTarget.START,
+                                        )
+                                        navigator.replace(
+                                            NovelReaderScreen(
+                                                nextChapterId,
+                                                sourceId = nextNovel.source,
+                                                seriesId = seriesId,
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
+                        SeriesInterstitialOverlay(
+                            state = seriesInterstitialState,
+                            onBackToSeries = {
+                                coroutineScope.launch {
+                                    screenModel.persistCurrentChapterExitState()
+                                    screenModel.clearSeriesInterstitial()
+                                    screenModel.stopTtsPlayback()
+                                    navigator.pop()
+                                }
+                            },
+                            onContinue = continueAction,
+                            onDismissRequest = screenModel::clearSeriesInterstitial,
+                        )
                     }
-                    SeriesInterstitialOverlay(
-                        state = seriesInterstitialState,
-                        onBackToSeries = {
-                            coroutineScope.launch {
-                                screenModel.persistCurrentChapterExitState()
-                                screenModel.clearSeriesInterstitial()
-                                navigator.pop()
-                            }
-                        },
-                        onContinue = continueAction,
-                        onDismissRequest = screenModel::clearSeriesInterstitial,
-                    )
                 }
             }
         }

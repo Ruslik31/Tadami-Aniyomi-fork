@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.entries.manga.interactor.SetMangaViewerFlags
+import eu.kanade.domain.entries.manga.interactor.UpdateManga
 import eu.kanade.domain.entries.manga.model.readerOrientation
 import eu.kanade.domain.entries.manga.model.readingMode
 import eu.kanade.domain.items.chapter.model.toDbChapter
@@ -19,6 +20,7 @@ import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.reader.manga.MangaSeriesInterstitialState
 import eu.kanade.presentation.reader.manga.resolveMangaSeriesInterstitialState
+import eu.kanade.tachiyomi.data.database.models.manga.Chapter
 import eu.kanade.tachiyomi.data.database.models.manga.isRecognizedNumber
 import eu.kanade.tachiyomi.data.database.models.manga.toDomainChapter
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
@@ -28,13 +30,18 @@ import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.model.ReaderFinaleState
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.model.daysOnShelf
+import eu.kanade.tachiyomi.ui.reader.model.shouldCelebrateFinale
+import eu.kanade.tachiyomi.ui.reader.model.shouldRecordCompletion
 import eu.kanade.tachiyomi.ui.reader.setting.MangaReaderPageDimensions
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
@@ -52,6 +59,7 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.connectivityManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -82,6 +90,7 @@ import tachiyomi.domain.achievement.repository.ActivityDataRepository
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.entries.manga.interactor.GetManga
 import tachiyomi.domain.entries.manga.model.Manga
+import tachiyomi.domain.entries.manga.model.MangaUpdate
 import tachiyomi.domain.history.manga.interactor.GetNextChapters
 import tachiyomi.domain.history.manga.interactor.UpsertMangaHistory
 import tachiyomi.domain.history.manga.model.MangaHistoryUpdate
@@ -95,6 +104,7 @@ import tachiyomi.domain.source.manga.service.MangaSourceManager
 import tachiyomi.source.local.entries.manga.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.text.DateFormat
 import java.time.Instant
 import java.util.Date
 
@@ -120,6 +130,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val upsertHistory: UpsertMangaHistory = Injekt.get(),
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
+    private val updateManga: UpdateManga = Injekt.get(),
     private val getIncognitoState: GetMangaIncognitoState = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     private val eventBus: AchievementEventBus = Injekt.get(),
@@ -177,6 +188,8 @@ class ReaderViewModel @JvmOverloads constructor(
     private var seriesId: Long? = null
     private var seriesInterstitialState: MangaSeriesInterstitialState? = null
     private var seriesInterstitialShownForChapterId: Long? = null
+    private var finaleShownForMangaId: Long? = null
+    private var pendingFinaleState: ReaderFinaleState? = null
 
     private var chapterToDownload: MangaDownload? = null
 
@@ -223,6 +236,8 @@ class ReaderViewModel @JvmOverloads constructor(
                                             it.scanlator,
                                             manga.title,
                                             manga.source,
+                                            mangaId = manga.id,
+                                            chapterId = it.id,
                                         )
                                     ) ||
                                 (
@@ -233,6 +248,8 @@ class ReaderViewModel @JvmOverloads constructor(
                                             it.scanlator,
                                             manga.title,
                                             manga.source,
+                                            mangaId = manga.id,
+                                            chapterId = it.id,
                                         )
                                     ) ||
                                 (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_BOOKMARKED && !it.bookmark) ||
@@ -271,12 +288,15 @@ class ReaderViewModel @JvmOverloads constructor(
             .map(::ReaderChapter)
     }
 
-    private val incognitoMode: Boolean by lazy { getIncognitoState.await(manga?.source) }
-
     private fun shouldPauseHistory(): Boolean {
         return getIncognitoState.shouldPauseHistory(manga?.source, manga?.favorite == true)
     }
+
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading().get()
+
+    // A-LOW: read on the main thread and cleared from detached IO flushes - make the handoff
+    // visibility-safe across threads.
+    @Volatile
     private var pendingWebtoonProgress: PendingWebtoonProgress? = null
     private var webtoonProgressSaveJob: Job? = null
 
@@ -290,8 +310,21 @@ class ReaderViewModel @JvmOverloads constructor(
                 if (chapterPageIndex >= 0) {
                     // Restore from SavedState
                     currentChapter.requestedPage = chapterPageIndex
-                    currentChapter.requestedPageOffset = 0
-                    currentChapter.requestedPageOffsetRatioPpm = null
+                    // A-LOW (process kill): the px offset within the page was dropped here even
+                    // though the stored progress carries it (webtoon long pages) - reopening
+                    // after a process death landed at the TOP of the restored page. Reuse the
+                    // stored offset when it belongs to the same page index.
+                    val storedProgress = decodeStoredChapterProgress(
+                        value = currentChapter.chapter.last_page_read,
+                        restoreOffset = readerPreferences.saveLongPagePosition().get(),
+                    )
+                    if (storedProgress.index == chapterPageIndex) {
+                        currentChapter.requestedPageOffset = storedProgress.offsetPx
+                        currentChapter.requestedPageOffsetRatioPpm = storedProgress.offsetRatioPpm
+                    } else {
+                        currentChapter.requestedPageOffset = 0
+                        currentChapter.requestedPageOffsetRatioPpm = null
+                    }
                 } else if (shouldRestoreSavedProgress(
                         currentChapter,
                         readerPreferences.preserveReadingPosition().get(),
@@ -306,7 +339,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         foregroundIncognitoJob?.cancel()
-        ForegroundIncognitoState.set(false)
+        ForegroundIncognitoState.set(this, false)
         webtoonProgressSaveJob?.cancel()
         flushPendingWebtoonScrollProgress()
 
@@ -371,7 +404,6 @@ class ReaderViewModel @JvmOverloads constructor(
             chapterId = chapterId,
             chapterKey = chapterKey,
             encodedProgress = encodedProgress,
-            read = currentChapter.chapter.read,
         )
 
         if (flushImmediately) {
@@ -390,29 +422,39 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     private fun flushPendingWebtoonScrollProgress() {
         val pending = pendingWebtoonProgress ?: return
         pendingWebtoonProgress = null
 
-        if (readerPreferences.saveLongPagePosition().get()) {
-            val saved = readerPreferences.getLongPageProgressForChapter(
-                chapterId = pending.chapterId,
-                chapterKey = pending.chapterKey,
-            )
-            if (saved != pending.encodedProgress) {
-                readerPreferences.putLongPageProgressForChapter(
+        // `read` is intentionally NOT written here: the pending snapshot captured it on the main
+        // thread while updateChapterProgressOnComplete flips read=true on an IO coroutine, and the
+        // debounced flush landed AFTER that write - reverting freshly completed chapters to unread
+        // (webtoon fling to the very bottom). The completion/page-change paths own the read flag;
+        // the flush owns only the px-precision position. Detached scope (GlobalScope launchIO):
+        // onCleared runs after viewModelScope is closed, so a child launch here never dispatched
+        // and the final progress write was silently dropped on system destroy.
+        //
+        // A-LOW (progress churn): the pref-cache read/write (a JSON-backed per-chapter map,
+        // string parsing on access) ran synchronously on the MAIN thread on every flush (chapter
+        // change, pause, finish); it moved into the same detached IO block as the DB write.
+        launchIO {
+            if (readerPreferences.saveLongPagePosition().get()) {
+                val saved = readerPreferences.getLongPageProgressForChapter(
                     chapterId = pending.chapterId,
-                    encodedProgress = pending.encodedProgress,
                     chapterKey = pending.chapterKey,
                 )
+                if (saved != pending.encodedProgress) {
+                    readerPreferences.putLongPageProgressForChapter(
+                        chapterId = pending.chapterId,
+                        encodedProgress = pending.encodedProgress,
+                        chapterKey = pending.chapterKey,
+                    )
+                }
             }
-        }
-
-        viewModelScope.launchIO {
             updateChapter.await(
                 ChapterUpdate(
                     id = pending.chapterId,
-                    read = pending.read,
                     lastPageRead = pending.encodedProgress,
                 ),
             )
@@ -423,7 +465,7 @@ class ReaderViewModel @JvmOverloads constructor(
         foregroundIncognitoJob?.cancel()
         foregroundIncognitoJob = viewModelScope.launch {
             getIncognitoState.subscribe(sourceId).collect { active ->
-                ForegroundIncognitoState.set(active)
+                ForegroundIncognitoState.set(this@ReaderViewModel, active)
             }
         }
     }
@@ -535,23 +577,31 @@ class ReaderViewModel @JvmOverloads constructor(
 
     /**
      * Called when the user is going to load the prev/next chapter through the toolbar buttons.
+     * Returns true only when the chapter became active (see [loadNextChapter]).
      */
-    private suspend fun loadAdjacent(chapter: ReaderChapter) {
-        val loader = loader ?: return
+    private suspend fun loadAdjacent(chapter: ReaderChapter): Boolean {
+        // WEBTOON-ARROWS: re-entrancy guard - the progress dialog is shown asynchronously, so a
+        // fast double tap used to start two overlapping adjacent switches.
+        if (state.value.isLoadingAdjacentChapter) return false
+        val loader = loader ?: return false
 
         logcat { "Loading adjacent ${chapter.chapter.url}" }
 
         mutableState.update { it.copy(isLoadingAdjacentChapter = true) }
-        try {
+        return try {
             prepareAdjacentChapterSwitch(::flushReadTimer, ::restartReadTimer)
             withIOContext {
                 loadChapter(loader, chapter)
             }
+            true
         } catch (e: Throwable) {
             if (e is CancellationException) {
                 throw e
             }
+            // WEBTOON-ARROWS (H2): the failure is reported to the caller instead of only being
+            // logged - the activity no longer re-anchors the viewer on a failed switch.
             logcat(LogPriority.ERROR, e)
+            false
         } finally {
             mutableState.update { it.copy(isLoadingAdjacentChapter = false) }
         }
@@ -575,6 +625,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 manga.title,
                 manga.source,
                 skipCache = true,
+                mangaId = manga.id,
+                chapterId = dbChapter.id,
             )
             if (isDownloaded) {
                 chapter.state = ReaderChapter.State.Wait
@@ -658,6 +710,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 nextChapter.scanlator,
                 manga.title,
                 manga.source,
+                mangaId = manga.id,
+                chapterId = nextChapter.id,
             )
             if (!isNextChapterDownloaded) return@launchIO
 
@@ -692,13 +746,20 @@ class ReaderViewModel @JvmOverloads constructor(
      * If both conditions are satisfied enqueues chapter for delete
      * @param currentChapter current chapter, which is going to be marked as read.
      */
-    private fun deleteChapterIfNeeded(currentChapter: ReaderChapter) {
+    private fun deleteChapterIfNeeded(currentChapter: ReaderChapter, orderedChapters: List<Chapter>) {
         val removeAfterReadSlots = downloadPreferences.removeAfterReadSlots().get()
         if (removeAfterReadSlots == -1) return
 
-        // Determine which chapter should be deleted and enqueue
-        val currentChapterPosition = chapterList.indexOf(currentChapter)
-        val chapterToDelete = chapterList.getOrNull(currentChapterPosition - removeAfterReadSlots)
+        // Determine which chapter should be deleted and enqueue. Positions come from the FULL
+        // ordered DB snapshot (id-based): the filtered chapterList used to target the wrong
+        // chapter whenever skip filters were active, and fullChapterList holds distinct instances
+        // with stale read flags.
+        val currentPosition = orderedChapters.indexOfFirst { it.id == currentChapter.chapter.id }
+        val chapterToDelete = if (currentPosition >= 0) {
+            orderedChapters.getOrNull(currentPosition - removeAfterReadSlots)
+        } else {
+            null
+        }
 
         // If chapter is completely read, no need to download it
         chapterToDownload = null
@@ -764,24 +825,55 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     private suspend fun updateChapterProgressOnComplete(readerChapter: ReaderChapter) {
+        val chapterWasUnread = !readerChapter.chapter.read
         readerChapter.chapter.read = true
         updateTrackChapterRead(readerChapter)
-        deleteChapterIfNeeded(readerChapter)
+
+        // Fresh FULL chapter snapshot from the DB in reading order, with the just-finished chapter
+        // forced read (its own DB write happens after this function returns). `chapterList` is
+        // filtered (skipRead/skipFiltered/downloadedOnly/dedupe) and its sibling instances carry
+        // stale in-memory read flags, so completion, duplicate-marking and delete-after-read all
+        // used to target the wrong set: finishing the last VISIBLE chapter declared the whole
+        // entry completed (event, completedAt keepsake, THE END plate) while unread chapters were
+        // merely hidden by a filter.
+        val currentManga = manga
+        val currentChapterId = readerChapter.chapter.id
+        val completionChapters = if (currentManga != null) {
+            withIOContext {
+                getChaptersByMangaId.await(currentManga.id, applyScanlatorFilter = true)
+            }
+                .sortedWith(getChapterSort(currentManga, sortDescending = false))
+                .map { dbChapter ->
+                    dbChapter.toDbChapter().also { converted ->
+                        if (dbChapter.id == currentChapterId) converted.read = true
+                    }
+                }
+        } else {
+            emptyList()
+        }
+
+        deleteChapterIfNeeded(readerChapter, completionChapters)
         maybeShowSeriesInterstitial(readerChapter)
 
-        // Emit ChapterRead event for achievement tracking
-        val mangaId = manga?.id ?: return
-        eventBus.tryEmit(
-            AchievementEvent.ChapterRead(
-                mangaId = mangaId,
-                chapterNumber = readerChapter.chapter.chapter_number.toInt(),
-            ),
-        )
+        // Emit ChapterRead event for achievement tracking. Gated on the unread->read transition:
+        // re-reaching the last page of an already-read chapter re-emitted the event on every visit
+        // (achievement rules recompute from the DB, so the event is only a trigger - but the
+        // activity log below accumulates blindly).
+        val mangaId = currentManga?.id ?: return
+        if (chapterWasUnread) {
+            eventBus.tryEmit(
+                AchievementEvent.ChapterRead(
+                    mangaId = mangaId,
+                    chapterNumber = readerChapter.chapter.chapter_number.toInt(),
+                ),
+            )
+        }
 
-        if (eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin()) {
-            val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
-            manager.registerNightAction()
-            manager.revealHint()
+        runCatching {
+            if (eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin()) {
+                val manager = Injekt.get<eu.kanade.domain.easteregg.aurora.AuroraHeartManager>()
+                manager.registerNightAction()
+            }
         }
 
         // Record reading activity for stats
@@ -789,34 +881,40 @@ class ReaderViewModel @JvmOverloads constructor(
         if (chapterId > 0) {
             activityDataRepository.recordReading(
                 id = chapterId,
-                chaptersCount = 1,
+                // Re-visits of an already-read chapter must not inflate the daily chapter count;
+                // the re-read session duration still counts (incrementChapters keeps the level
+                // via MAX and adds 0 to chapters_read).
+                chaptersCount = if (chapterWasUnread) 1 else 0,
                 durationMs = chapterReadStartTime?.let { System.currentTimeMillis() - it } ?: 0L,
             )
         }
 
-        // Check for manga completion
-        val allChapters = chapterList.map { it.chapter }
-        if (allChapters.all { it.read }) {
-            eventBus.tryEmit(AchievementEvent.MangaCompleted(mangaId))
+        // Check for manga completion against the full snapshot.
+        if (completionChapters.isNotEmpty() && completionChapters.all { it.read }) {
+            // Event-driven rules (complete_1_manga, crybaby) unlock purely from this event, so it
+            // is gated on the entry's own (possibly custom) COMPLETED status: an exhausted ONGOING
+            // series must not count as a completed manga.
+            if (currentManga.displayStatus == SManga.COMPLETED.toLong()) {
+                eventBus.tryEmit(AchievementEvent.MangaCompleted(mangaId))
+            }
+            recordCompletionIfNeeded(readerChapter, completionChapters)
+            maybeShowFinale(readerChapter, completionChapters, chapterWasUnread)
         }
 
         val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead().get()
             .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_EXISTING)
         if (!markDuplicateAsRead) return
 
-        val duplicateUnreadChapters = chapterList
-            .mapNotNull {
-                val chapter = it.chapter
-                if (
-                    !chapter.read &&
-                    chapter.isRecognizedNumber &&
-                    chapter.chapter_number == readerChapter.chapter.chapter_number
-                ) {
-                    ChapterUpdate(id = chapter.id!!, read = true)
-                } else {
-                    null
-                }
+        // Duplicates by chapter number are searched in the FULL snapshot as well: the dedupe
+        // filters (skipDupe / forced Aurora dedupe) remove exactly those duplicates from
+        // chapterList, so the feature was dead whenever dedupe was active.
+        val duplicateUnreadChapters = completionChapters
+            .filter {
+                !it.read &&
+                    it.isRecognizedNumber &&
+                    it.chapter_number == readerChapter.chapter.chapter_number
             }
+            .map { ChapterUpdate(id = it.id!!, read = true) }
         updateChapter.awaitAll(duplicateUnreadChapters)
     }
 
@@ -854,9 +952,13 @@ class ReaderViewModel @JvmOverloads constructor(
     private fun maybeShowSeriesInterstitial(chapter: ReaderChapter) {
         if (seriesId == null) return
         if (seriesInterstitialState != null) return
-        val chapterIndex = chapterList.indexOf(chapter)
-        if (chapterIndex < 0 || chapterIndex != chapterList.lastIndex) return
         val chapterId = chapter.chapter.id ?: return
+        // Full list, id-based: chapterList is filtered (the interstitial fired at the last
+        // VISIBLE chapter), and fullChapterList holds distinct ReaderChapter instances so the
+        // identity-based indexOf would always miss there.
+        val fullList = fullChapterList
+        val chapterIndex = fullList.indexOfFirst { it.chapter.id == chapterId }
+        if (chapterIndex < 0 || chapterIndex != fullList.lastIndex) return
         if (seriesInterstitialShownForChapterId == chapterId) return
         seriesInterstitialShownForChapterId = chapterId
         viewModelScope.launchIO {
@@ -865,13 +967,96 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Persists the keepsake completion timestamp (title-screen finished stamp; travels through
+     * backups). Independent of the plate preference. Refreshed whenever the final chapter of a
+     * completed entry is end-read again.
+     */
+    private fun recordCompletionIfNeeded(readerChapter: ReaderChapter, chapters: List<Chapter>) {
+        val currentManga = manga ?: return
+        if (!shouldRecordCompletion(
+                currentManga,
+                chapters,
+                finishedChapterIsLast = readerChapter.chapter.id == chapters.lastOrNull()?.id,
+            )
+        ) {
+            return
+        }
+        val timestamp = System.currentTimeMillis()
+        viewModelScope.launchNonCancellable {
+            updateManga.await(MangaUpdate(id = currentManga.id, completedAt = timestamp))
+        }
+    }
+
+    /**
+     * Prepares the one-time «THE END» plate when the final chapter of a truly completed manga
+     * gets read (docs/plans/2026-08-02_reader_finale.md). The plate is not shown immediately —
+     * that would steal the last page — it waits pending until the end-of-manga transition is
+     * reached ([revealPendingFinale]). A multi-work series continuation takes precedence: if the
+     * reader is about to be sent to the next work, the interstitial owns that ending and the
+     * plate silently steps aside. The plate is also rendered with priority over the interstitial,
+     * so the empty "last work" branch never stacks two modals.
+     */
+    private fun maybeShowFinale(
+        readerChapter: ReaderChapter,
+        allChapters: List<Chapter>,
+        chapterWasUnread: Boolean,
+    ) {
+        val currentManga = manga ?: return
+        if (!shouldCelebrateFinale(
+                manga = currentManga,
+                chapters = allChapters,
+                chapterWasUnread = chapterWasUnread,
+                cardEnabled = readerPreferences.showFinaleCard().get(),
+                alreadyShownForManga = finaleShownForMangaId == currentManga.id,
+            )
+        ) {
+            return
+        }
+        finaleShownForMangaId = currentManga.id
+        viewModelScope.launchIO {
+            if (seriesId != null) {
+                val interstitial = resolveSeriesInterstitialState(readerChapter)
+                if (interstitial?.nextManga != null) return@launchIO
+            }
+            pendingFinaleState = ReaderFinaleState(
+                title = currentManga.displayTitle,
+                coverData = currentManga,
+                chapterCount = allChapters.size,
+                daysOnShelf = daysOnShelf(currentManga.dateAdded),
+                finishedOn = DateFormat.getDateInstance(DateFormat.SHORT).format(Date()),
+                nightVeil = eu.kanade.domain.easteregg.aurora.AuroraNight.isVeilThin(),
+            )
+        }
+    }
+
+    /**
+     * Called by the viewers when the end-of-manga transition becomes active (swipe past the
+     * last page of the final chapter): that is the moment the finale plate is revealed.
+     */
+    fun revealPendingFinale() {
+        val pending = pendingFinaleState ?: return
+        pendingFinaleState = null
+        setFinaleState(pending)
+    }
+
+    private fun setFinaleState(value: ReaderFinaleState?) {
+        mutableState.update { it.copy(finaleState = value) }
+    }
+
+    fun clearFinale() = setFinaleState(null)
+
     fun restartReadTimer() {
         chapterReadStartTime = Instant.now().toEpochMilli()
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     fun flushReadTimer() {
         getCurrentChapter()?.let {
-            viewModelScope.launchNonCancellable {
+            // Detached: called from the activity finish/destroy path where viewModelScope may
+            // already be closed - the child launch never dispatched and the history entry was
+            // lost (launchNonCancellable only protects an already-started coroutine).
+            launchIO {
                 updateHistory(it)
             }
         }
@@ -885,7 +1070,10 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val chapterId = readerChapter.chapter.id!!
         val readAt = Date()
-        val sessionReadDuration = chapterReadStartTime?.let { readAt.time - it } ?: 0
+        val sessionReadDuration = resolveSessionReadDurationMs(
+            readAtMs = readAt.time,
+            startMs = chapterReadStartTime,
+        )
 
         upsertHistory.await(MangaHistoryUpdate(chapterId, readAt, sessionReadDuration))
         chapterReadStartTime = null
@@ -893,18 +1081,25 @@ class ReaderViewModel @JvmOverloads constructor(
 
     /**
      * Called from the activity to load and set the next chapter as active.
+     *
+     * WEBTOON-ARROWS (H2): returns whether the chapter ACTUALLY became active - the activity
+     * must only re-anchor the viewer in that case. The old silent `return` (no next chapter,
+     * null loader, swallowed load error) still let the activity run moveToPageIndex(0), which
+     * scrolled the CURRENT chapter to its start ("the chapter didn't switch, it rewound to the
+     * beginning").
      */
-    suspend fun loadNextChapter() {
-        val nextChapter = state.value.viewerChapters?.nextChapter ?: return
-        loadAdjacent(nextChapter)
+    suspend fun loadNextChapter(): Boolean {
+        val nextChapter = state.value.viewerChapters?.nextChapter ?: return false
+        return loadAdjacent(nextChapter)
     }
 
     /**
      * Called from the activity to load and set the previous chapter as active.
+     * See [loadNextChapter] for the Boolean contract.
      */
-    suspend fun loadPreviousChapter() {
-        val prevChapter = state.value.viewerChapters?.prevChapter ?: return
-        loadAdjacent(prevChapter)
+    suspend fun loadPreviousChapter(): Boolean {
+        val prevChapter = state.value.viewerChapters?.prevChapter ?: return false
+        return loadAdjacent(prevChapter)
     }
 
     /**
@@ -1148,7 +1343,11 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     fun setMangaReadingMode(readingMode: ReadingMode) {
         val manga = manga ?: return
-        runBlocking(Dispatchers.IO) {
+        // A-M9: was runBlocking(Dispatchers.IO) ON THE MAIN THREAD (called from the reading-mode
+        // and series-override dialogs): two DB writes + getManga + a rendezvous send blocked the
+        // UI thread (jank/ANR risk on slow IO). The event collector suspends in receive on the
+        // main dispatcher, so the send handoff works identically from an IO coroutine.
+        viewModelScope.launchIO {
             setMangaViewerFlags.awaitSetReadingMode(
                 manga.id,
                 readingMode.flagValue.toLong(),
@@ -1157,6 +1356,12 @@ class ReaderViewModel @JvmOverloads constructor(
             if (currChapters != null) {
                 // Save current page
                 val currChapter = currChapters.currChapter
+                // РЕШ-8 (part 2): the long-page px cache takes priority over the DB when a
+                // chapter is reopened, but only WEBTOON writes it. A mode switch left the stale
+                // webtoon entry behind: webtoon(px 50) -> pager(page 80) -> webtoon rolled back
+                // to the old px-50 position. Drop the entry so applySavedProgress resolves from
+                // the fresh DB progress written by the pager.
+                currChapter.chapter.id?.let { readerPreferences.removeLongPageProgressForChapter(it) }
                 applySavedProgress(currChapter)
 
                 mutableState.update {
@@ -1501,13 +1706,13 @@ class ReaderViewModel @JvmOverloads constructor(
      * Enqueues this [chapter] to be deleted when [deletePendingChapters] is called. The download
      * manager handles persisting it across process deaths.
      */
-    private fun enqueueDeleteReadChapters(chapter: ReaderChapter) {
-        if (!chapter.chapter.read) return
+    private fun enqueueDeleteReadChapters(chapter: Chapter) {
+        if (!chapter.read) return
         val manga = manga ?: return
 
         viewModelScope.launchNonCancellable {
             downloadManager.enqueueChaptersToDelete(
-                listOf(chapter.chapter.toDomainChapter()!!),
+                listOf(chapter.toDomainChapter()!!),
                 manga,
             )
         }
@@ -1517,8 +1722,10 @@ class ReaderViewModel @JvmOverloads constructor(
      * Deletes all the pending chapters. This operation will run in a background thread and errors
      * are ignored.
      */
+    @OptIn(DelicateCoroutinesApi::class)
     private fun deletePendingChapters() {
-        viewModelScope.launchNonCancellable {
+        // Detached, see flushReadTimer: teardown-path work must survive the closed viewModelScope.
+        launchIO {
             downloadManager.deletePendingChapters()
         }
     }
@@ -1541,6 +1748,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val menuVisible: Boolean = false,
         @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
         val seriesInterstitialState: MangaSeriesInterstitialState? = null,
+        val finaleState: ReaderFinaleState? = null,
 
         // Auto-scroll state
         val autoScrollEnabled: Boolean = false,
@@ -1585,7 +1793,6 @@ class ReaderViewModel @JvmOverloads constructor(
         val chapterId: Long,
         val chapterKey: String?,
         val encodedProgress: Long,
-        val read: Boolean,
     )
 }
 
@@ -1621,9 +1828,22 @@ internal fun shouldRestoreSavedProgress(
     chapter: ReaderChapter,
     preserveReadingPosition: Boolean,
 ): Boolean {
-    return !chapter.chapter.read ||
-        preserveReadingPosition ||
-        chapter.chapter.last_page_read > 0L
+    // РЕШ-1 revival: the old formula (`!read || preserve || last_page_read > 0`) made the
+    // "preserve reading position on read chapters" toggle dead in EVERY state - a chapter read
+    // in the reader always has last_page_read > 0, and at last_page_read == 0 both branches land
+    // on page 0 anyway. OFF now genuinely starts read chapters from the beginning.
+    return !chapter.chapter.read || preserveReadingPosition
+}
+
+/**
+ * Reading-session duration, clamped to zero.
+ *
+ * History upserts ACCUMULATE time_read (`time_read = time_read + :time_read`), so a system clock
+ * rollback mid-session (NTP correction, manual change) used to subtract from the stored reading
+ * statistics. The novel pipeline already clamps its session durations in five places.
+ */
+internal fun resolveSessionReadDurationMs(readAtMs: Long, startMs: Long?): Long {
+    return startMs?.let { (readAtMs - it).coerceAtLeast(0L) } ?: 0L
 }
 
 internal fun prepareAdjacentChapterSwitch(

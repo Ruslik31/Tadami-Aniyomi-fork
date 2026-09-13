@@ -1,9 +1,13 @@
 package eu.kanade.tachiyomi.ui.browse.novel.migration
 
 import dev.icerock.moko.resources.StringResource
-import eu.kanade.tachiyomi.data.download.novel.NovelDownloadManager
+import eu.kanade.domain.entries.novel.model.hasCustomCover
+import eu.kanade.tachiyomi.data.cache.NovelCoverCache
+import eu.kanade.tachiyomi.data.download.novel.NovelDownloadCache
+import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.entries.novel.model.Novel
 import tachiyomi.i18n.MR
+import uy.kohesive.injekt.injectLazy
 
 data class NovelMigrationFlag(
     val flag: Int,
@@ -25,9 +29,34 @@ object NovelMigrationFlags {
 
     private const val CHAPTERS = 0b00001
     private const val CATEGORIES = 0b00010
-    private const val DELETE_DOWNLOADED = 0b00100
+    private const val TRACKING = 0b00100
+    private const val DELETE_DOWNLOADED = 0b01000
+    private const val EXTRA = 0b10000
+    private const val NOTES = 0b100000
+    private const val CUSTOM_COVER = 0b1000000
 
-    private val downloadManager = NovelDownloadManager()
+    private const val COLLISION_RESET_KEY = "migrate_flags_novel_collision_reset"
+
+    /**
+     * BMG-2/РЕШ-B8: the config sheet historically toggled bit 0b100 (TRACKING) under the
+     * "delete downloaded" label, so existing `migrate_flags_novel` values carry polluted
+     * tracking bits the user never chose intentionally. One-time reset to the all-on default
+     * when the fixed sheet first runs; tracked by a dedicated flag so intentional choices made
+     * after the fix are never touched again.
+     */
+    fun ensureBitCollisionReset(preferenceStore: PreferenceStore) {
+        val done = preferenceStore.getBoolean(COLLISION_RESET_KEY, false)
+        if (done.get()) return
+        preferenceStore.getInt("migrate_flags_novel", Int.MAX_VALUE).set(Int.MAX_VALUE)
+        done.set(true)
+    }
+
+    // BMG-10: was `NovelDownloadManager()` whose getDownloadCount walks the SAF storage tree
+    // on the CALLER thread - and getFlags runs inside composition (dialog/list `remember`):
+    // main-thread disk IO per opened migration dialog. The in-memory download cache is the
+    // manga/anime etalon (MangaMigrationFlags:38).
+    private val downloadCache: NovelDownloadCache by injectLazy()
+    private val coverCache: NovelCoverCache by injectLazy()
 
     fun hasChapters(value: Int): Boolean {
         return value and CHAPTERS != 0
@@ -37,16 +66,45 @@ object NovelMigrationFlags {
         return value and CATEGORIES != 0
     }
 
+    fun hasTracking(value: Int): Boolean {
+        return value and TRACKING != 0
+    }
+
     fun hasDeleteDownloaded(value: Int): Boolean {
         return value and DELETE_DOWNLOADED != 0
+    }
+
+    fun hasExtra(value: Int): Boolean {
+        return value and EXTRA != 0
+    }
+
+    fun hasNotes(value: Int): Boolean {
+        return value and NOTES != 0
+    }
+
+    fun hasCustomCover(value: Int): Boolean {
+        return value and CUSTOM_COVER != 0
     }
 
     fun getFlags(novel: Novel?, defaultSelectedBitMap: Int): List<NovelMigrationFlag> {
         val flags = mutableListOf<NovelMigrationFlag>()
         flags += NovelMigrationFlag.create(CHAPTERS, defaultSelectedBitMap, MR.strings.chapters)
         flags += NovelMigrationFlag.create(CATEGORIES, defaultSelectedBitMap, MR.strings.categories)
+        flags += NovelMigrationFlag.create(TRACKING, defaultSelectedBitMap, MR.strings.track)
+        flags += NovelMigrationFlag.create(EXTRA, defaultSelectedBitMap, MR.strings.migration_extra)
+        if (novel == null || novel.notes.isNotBlank()) {
+            flags += NovelMigrationFlag.create(NOTES, defaultSelectedBitMap, MR.strings.action_notes)
+        }
 
-        if (novel != null && downloadManager.getDownloadCount(novel) > 0) {
+        if (novel != null && novel.hasCustomCover(coverCache)) {
+            flags += NovelMigrationFlag.create(
+                CUSTOM_COVER,
+                defaultSelectedBitMap,
+                MR.strings.custom_cover,
+            )
+        }
+
+        if (novel != null && downloadCache.getDownloadCount(novel) > 0) {
             flags += NovelMigrationFlag.create(
                 DELETE_DOWNLOADED,
                 defaultSelectedBitMap,

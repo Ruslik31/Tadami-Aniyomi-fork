@@ -26,13 +26,23 @@ class ReaderViewModelTest {
     }
 
     @Test
-    fun `read chapters restore when saved progress exists`() {
+    fun `read chapters restore only when preserve is enabled`() {
+        // РЕШ-1: the toggle was dead in every state before (last_page_read > 0 forced restore);
+        // OFF must start read chapters from the beginning even when saved progress exists.
         shouldRestoreSavedProgress(
             chapter = readerChapter(
                 read = true,
                 lastPageRead = 12L,
             ),
             preserveReadingPosition = false,
+        ) shouldBe false
+
+        shouldRestoreSavedProgress(
+            chapter = readerChapter(
+                read = true,
+                lastPageRead = 12L,
+            ),
+            preserveReadingPosition = true,
         ) shouldBe true
     }
 
@@ -53,6 +63,15 @@ class ReaderViewModelTest {
             ),
             preserveReadingPosition = true,
         ) shouldBe true
+    }
+
+    @Test
+    fun `session read duration is clamped against clock rollbacks`() {
+        // History upserts accumulate time_read, so a negative session (system clock rolled back
+        // mid-session) used to subtract from the stored reading statistics.
+        resolveSessionReadDurationMs(readAtMs = 5_000L, startMs = 10_000L) shouldBe 0L
+        resolveSessionReadDurationMs(readAtMs = 15_000L, startMs = 10_000L) shouldBe 5_000L
+        resolveSessionReadDurationMs(readAtMs = 15_000L, startMs = null) shouldBe 0L
     }
 
     @Test

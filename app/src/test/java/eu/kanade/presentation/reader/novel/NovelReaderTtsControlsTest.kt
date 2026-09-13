@@ -85,6 +85,45 @@ class NovelReaderTtsControlsTest {
     }
 
     @Test
+    fun `sleep timer snapshot is disarmed by default`() {
+        val snapshot = resolveNovelReaderTtsControlSnapshot(
+            NovelReaderTtsUiState(enabled = true),
+        )
+
+        assertFalse(snapshot.sleepTimerActive)
+        assertFalse(snapshot.sleepTimerEndOfChapter)
+        assertEquals(0, snapshot.sleepTimerRemainingSeconds)
+    }
+
+    @Test
+    fun `countdown arms the sleep timer snapshot with remaining seconds`() {
+        val snapshot = resolveNovelReaderTtsControlSnapshot(
+            NovelReaderTtsUiState(
+                enabled = true,
+                sleepTimerRemainingSeconds = 900,
+            ),
+        )
+
+        assertTrue(snapshot.sleepTimerActive)
+        assertFalse(snapshot.sleepTimerEndOfChapter)
+        assertEquals(900, snapshot.sleepTimerRemainingSeconds)
+    }
+
+    @Test
+    fun `end-of-chapter flag arms the sleep timer snapshot without countdown`() {
+        val snapshot = resolveNovelReaderTtsControlSnapshot(
+            NovelReaderTtsUiState(
+                enabled = true,
+                sleepTimerEndOfChapter = true,
+            ),
+        )
+
+        assertTrue(snapshot.sleepTimerActive)
+        assertTrue(snapshot.sleepTimerEndOfChapter)
+        assertEquals(0, snapshot.sleepTimerRemainingSeconds)
+    }
+
+    @Test
     fun `options snapshot exposes selected engine and selected voice`() {
         val snapshot = resolveNovelReaderTtsOptionsSnapshot(
             NovelReaderTtsUiState(

@@ -59,6 +59,7 @@ import tachiyomi.domain.entries.manga.model.Manga
 import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.domain.items.chapter.model.NoChaptersException
 import tachiyomi.domain.library.manga.LibraryManga
+import tachiyomi.domain.library.model.GroupLibraryMode
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_HAS_UNVIEWED
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.ENTRY_NON_COMPLETED
@@ -99,6 +100,9 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
     override suspend fun doWork(): Result {
         val uiPreferences: UiPreferences = Injekt.get()
         if (!uiPreferences.showMangaSection().get()) {
+            // D-L: was a completely silent Result.success() - including MANUAL refreshes whose
+            // toolbar snackbar had just promised "Updating category...".
+            logcat(LogPriority.WARN) { "Skipping manga library update: manga section is hidden" }
             return Result.success()
         }
 
@@ -109,22 +113,24 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         }
 
         if (tags.contains(WORK_NAME_AUTO)) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-                val preferences = Injekt.get<LibraryPreferences>()
-                val restrictions = preferences.autoUpdateDeviceRestrictions().get()
-                if (
-                    shouldRetryLegacyAutoUpdateRun(
-                        restrictions = restrictions,
-                        isConnectedToWifi = context.isConnectedToWifi(),
-                        isCharging = context.isCharging(),
-                    )
-                ) {
-                    return Result.retry()
-                }
+            // I8: the runtime re-check used to run only below API 28 - but auto triggers are
+            // enqueued without WorkManager constraints, so a retried/deferred trigger could run
+            // the full update on metered data despite "Wi-Fi only" on ANY API level.
+            val preferences = Injekt.get<LibraryPreferences>()
+            val restrictions = preferences.autoUpdateDeviceRestrictions().get()
+            if (
+                shouldRetryLegacyAutoUpdateRun(
+                    restrictions = restrictions,
+                    isConnectedToWifi = context.isConnectedToWifi(),
+                    isCharging = context.isCharging(),
+                )
+            ) {
+                return Result.retry()
             }
 
-            // Find a running manual worker. If exists, try again later
-            if (context.workManager.isRunning(WORK_NAME_MANUAL)) {
+            // Find a running/enqueued manual worker. If exists, try again later (I6: ENQUEUED
+            // too - a not-yet-running manual used to slip through and both ran duplicate passes).
+            if (context.workManager.isRunningOrEnqueued(WORK_NAME_MANUAL)) {
                 return Result.retry()
             }
         }
@@ -167,10 +173,16 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
     }
 
     private suspend fun filterByCategoryId(libraryManga: List<LibraryManga>, categoryId: Long): List<LibraryManga> {
+        // D-M2: libraryView yields one row per (manga, category) membership; the attribute-based
+        // pseudo branches below (status/source/track) kept every row, so multi-category entries
+        // were fetched multiple times per refresh (the entryIds branch already deduped).
         return when {
             categoryId == -1L -> {
-                // Ungrouped
-                libraryManga.filter { it.category == 0L }
+                // D-M1: the UI's "Ungrouped" pseudo-group flattens ALL items (applyGrouping
+                // UNGROUPED in the library screen model), while this branch used to take only
+                // Default-category rows - refreshing the visible group updated something else
+                // entirely. Match the UI semantics.
+                libraryManga
             }
             categoryId == -2L -> {
                 // Untracked
@@ -227,7 +239,7 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
             else -> {
                 libraryManga.filter { it.category == categoryId }
             }
-        }
+        }.distinctBy { it.manga.id }
     }
 
     /**
@@ -248,23 +260,39 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         } else if (categoryId != -999L) {
             filterByCategoryId(libraryManga, categoryId)
         } else {
-            val categoriesToUpdate = libraryPreferences.mangaUpdateCategories().get().map { it.toLong() }
-            val includedManga = if (categoriesToUpdate.isNotEmpty()) {
-                libraryManga.filter { it.category in categoriesToUpdate }
-            } else {
-                libraryManga
-            }
+            // РЕШ-15 revival: mangaGroupLibraryUpdateType was a dead setting (exactly two
+            // occurrences in the repo: the declaration and the Settings UI). Per its Settings
+            // summary ("Controls how dynamic/virtual groups behave during manual updates"):
+            // GLOBAL (default) keeps the classic include/exclude category behavior; ALL updates
+            // every entry (all dynamic groups); ALL_BUT_UNGROUPED updates every entry except the
+            // Ungrouped bucket (this job maps the Ungrouped pseudo-id -1 to category 0/Default).
+            when (libraryPreferences.mangaGroupLibraryUpdateType().get()) {
+                GroupLibraryMode.ALL -> libraryManga.distinctBy { it.manga.id }
+                GroupLibraryMode.ALL_BUT_UNGROUPED ->
+                    libraryManga
+                        .filterNot { it.category == 0L }
+                        .distinctBy { it.manga.id }
+                GroupLibraryMode.GLOBAL -> {
+                    val categoriesToUpdate = libraryPreferences.mangaUpdateCategories().get().map { it.toLong() }
+                    val includedManga = if (categoriesToUpdate.isNotEmpty()) {
+                        libraryManga.filter { it.category in categoriesToUpdate }
+                    } else {
+                        libraryManga
+                    }
 
-            val categoriesToExclude = libraryPreferences.mangaUpdateCategoriesExclude().get().map { it.toLong() }
-            val excludedMangaIds = if (categoriesToExclude.isNotEmpty()) {
-                libraryManga.filter { it.category in categoriesToExclude }.map { it.manga.id }
-            } else {
-                emptyList()
-            }
+                    val categoriesToExclude =
+                        libraryPreferences.mangaUpdateCategoriesExclude().get().map { it.toLong() }
+                    val excludedMangaIds = if (categoriesToExclude.isNotEmpty()) {
+                        libraryManga.filter { it.category in categoriesToExclude }.map { it.manga.id }
+                    } else {
+                        emptyList()
+                    }
 
-            includedManga
-                .filterNot { it.manga.id in excludedMangaIds }
-                .distinctBy { it.manga.id }
+                    includedManga
+                        .filterNot { it.manga.id in excludedMangaIds }
+                        .distinctBy { it.manga.id }
+                }
+            }
         }
 
         if (targetEntryIds != null) {
@@ -355,6 +383,9 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         val newUpdates = CopyOnWriteArrayList<Pair<Manga, Array<Chapter>>>()
         val failedUpdates = CopyOnWriteArrayList<LibraryUpdateFailure>()
         val hasDownloads = AtomicBoolean(false)
+        // I9: atomic accumulator - the per-entry preference getAndSet was a non-synchronized
+        // read-modify-write racing across the Semaphore(5) coroutines (lost badge increments).
+        val newChapterCountTotal = AtomicInteger(0)
         val fetchWindow = mangaFetchInterval.getWindow(ZonedDateTime.now())
 
         coroutineScope {
@@ -393,8 +424,7 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
                                                 downloadChapters(manga, chaptersToDownload)
                                                 hasDownloads.set(true)
                                             }
-                                            libraryPreferences.newMangaUpdatesCount()
-                                                .getAndSet { it + newChapters.size }
+                                            newChapterCountTotal.addAndGet(newChapters.size)
 
                                             // Convert to the manga that contains new chapters
                                             newUpdates.add(manga to newChapters.toTypedArray())
@@ -454,6 +484,9 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
         notifier.cancelProgressNotification()
 
         if (newUpdates.isNotEmpty()) {
+            // I9: single preference write after the run (see newChapterCountTotal).
+            libraryPreferences.newMangaUpdatesCount()
+                .getAndSet { it + newChapterCountTotal.get() }
             notifier.showUpdateNotifications(newUpdates)
             if (hasDownloads.get()) {
                 downloadManager.startDownloads()
@@ -595,22 +628,24 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
             eu.kanade.tachiyomi.data.library.LibraryAutoUpdateSchedulerJob.setupTask(context, prefInterval)
         }
 
-        fun startNow(
+        // I15: the enqueue guard runs a blocking WorkManager query - never on the caller's
+        // thread (pull-to-refresh handlers live on MAIN).
+        suspend fun startNow(
             context: Context,
             category: Category? = null,
-        ): Boolean {
+        ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val inputData = category
                 ?.let { workDataOf(KEY_CATEGORY to it.id) }
                 ?: workDataOf()
-            return enqueueManualUpdate(context, inputData)
+            enqueueManualUpdate(context, inputData)
         }
 
-        fun startNow(
+        suspend fun startNow(
             context: Context,
             entryIds: LongArray,
-        ): Boolean {
-            if (entryIds.isEmpty()) return false
-            return enqueueManualUpdate(context, workDataOf(KEY_ENTRY_IDS to entryIds))
+        ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (entryIds.isEmpty()) return@withContext false
+            enqueueManualUpdate(context, workDataOf(KEY_ENTRY_IDS to entryIds))
         }
 
         private fun enqueueManualUpdate(
@@ -618,7 +653,10 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
             inputData: Data,
         ): Boolean {
             val wm = context.workManager
-            if (wm.isRunning(TAG) || wm.isRunningOrEnqueued(WORK_NAME_MANUAL)) {
+            // I6: ENQUEUED-aware single TAG query - an enqueued-but-not-yet-running auto
+            // trigger used to slip through the isRunning(TAG) check, letting a manual refresh
+            // start a duplicate full pass (TAG is carried by both manual and auto workers).
+            if (wm.isRunningOrEnqueued(TAG)) {
                 // Already running either as a scheduled or manual job
                 return false
             }
@@ -635,8 +673,17 @@ class MangaLibraryUpdateJob(private val context: Context, workerParams: WorkerPa
 
         fun stop(context: Context) {
             val wm = context.workManager
+            // I5: cancel ENQUEUED/BLOCKED work too - a RUNNING-only query left an enqueued auto
+            // trigger (or a retry parked in backoff, or a constrained trigger waiting for Wi-Fi
+            // in BLOCKED) alive, resurrecting the update right after Cancel.
             val workQuery = WorkQuery.Builder.fromTags(listOf(TAG))
-                .addStates(listOf(WorkInfo.State.RUNNING))
+                .addStates(
+                    listOf(
+                        WorkInfo.State.RUNNING,
+                        WorkInfo.State.ENQUEUED,
+                        WorkInfo.State.BLOCKED,
+                    ),
+                )
                 .build()
             val future = wm.getWorkInfos(workQuery)
             future.addListener(

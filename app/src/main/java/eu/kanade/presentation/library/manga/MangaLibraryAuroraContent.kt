@@ -7,7 +7,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -41,6 +45,7 @@ import tachiyomi.domain.library.manga.LibraryManga
 import tachiyomi.domain.library.model.AuroraLibraryCardStyle
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.series.model.SeriesCoverMode
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.presentation.core.components.Badge
@@ -73,6 +78,9 @@ fun MangaLibraryAuroraContent(
     onGlobalSearchClicked: () -> Unit,
     contentPadding: PaddingValues,
     libraryPreferences: LibraryPreferences,
+    // H15: caller-retained scroll states (the Aurora pager disposes pages beyond ±1).
+    listState: LazyListState = rememberLazyListState(),
+    gridState: LazyGridState = rememberLazyGridState(),
 ) {
     val auroraAdaptiveSpec = rememberAuroraAdaptiveSpec()
     val auroraCardStyle by libraryPreferences.auroraLibraryCardStyle().collectAsState()
@@ -120,6 +128,7 @@ fun MangaLibraryAuroraContent(
                 onClickContinueReading = onContinueReadingClicked,
                 listMaxWidthDp = auroraAdaptiveSpec.listMaxWidthDp,
                 horizontalPaddingDp = auroraAdaptiveSpec.contentHorizontalPaddingDp,
+                state = listState,
             )
         }
 
@@ -146,6 +155,7 @@ fun MangaLibraryAuroraContent(
                     glowDisplayMode = LibraryDisplayMode.CompactGrid,
                     enabledAuras = enabledAuras,
                     performanceMode = useLargeGridPerformanceMode,
+                    state = gridState,
                 )
             } else {
                 MangaLibraryCompactGrid(
@@ -162,6 +172,7 @@ fun MangaLibraryAuroraContent(
                     onClickContinueReading = onContinueReadingClicked,
                     searchQuery = searchQuery,
                     onGlobalSearchClicked = onGlobalSearchClicked,
+                    state = gridState,
                 )
             }
         }
@@ -187,6 +198,7 @@ fun MangaLibraryAuroraContent(
                 glowDisplayMode = LibraryDisplayMode.CoverOnlyGrid,
                 enabledAuras = enabledAuras,
                 performanceMode = useLargeGridPerformanceMode,
+                state = gridState,
             )
         }
 
@@ -211,6 +223,7 @@ fun MangaLibraryAuroraContent(
                 glowDisplayMode = LibraryDisplayMode.ComfortableGrid,
                 enabledAuras = enabledAuras,
                 performanceMode = useLargeGridPerformanceMode,
+                state = gridState,
             )
         }
     }
@@ -231,11 +244,13 @@ private fun MangaLibraryAuroraList(
     onClickContinueReading: ((LibraryManga) -> Unit)?,
     listMaxWidthDp: Int?,
     horizontalPaddingDp: Int,
+    state: LazyListState,
 ) {
     val colors = AuroraTheme.colors
     val showPinnedSection = remember(items) { items.containsAtLeastMatches(requiredCount = 2) { it.pinned } }
 
     FastScrollLazyColumn(
+        state = state,
         modifier = Modifier.fillMaxSize(),
         contentPadding = contentPadding + PaddingValues(horizontal = horizontalPaddingDp.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -316,7 +331,7 @@ private fun MangaLibraryAuroraList(
 
                 subtitle = subtitle,
                 seriesHeaderText = seriesHeaderText,
-                customCover = if (isSeries) {
+                customCover = if (isSeries && libraryItem.librarySeries.series.coverMode == SeriesCoverMode.AUTO) {
                     {
                         SeriesStackedCoverCard(
                             covers = libraryItem.covers,
@@ -420,12 +435,14 @@ private fun MangaLibraryAuroraCardGrid(
     glowDisplayMode: LibraryDisplayMode,
     enabledAuras: Set<String> = emptySet(),
     performanceMode: Boolean = false,
+    state: LazyGridState,
 ) {
     val useGlowContourCards = cardStyle == AuroraLibraryCardStyle.GlowContour
     val showPinnedSection = remember(items) { items.containsAtLeastMatches(requiredCount = 2) { it.pinned } }
     val textSpec = resolveGlowContourLibraryTextSpec(glowDisplayMode)
 
     LazyLibraryGrid(
+        state = state,
         modifier = Modifier
             .fillMaxSize()
             .auroraCenteredMaxWidth(listMaxWidthDp),
@@ -518,10 +535,9 @@ private fun MangaLibraryAuroraCardGrid(
                     cardAspectRatio = 0.76f,
                     cornerIndicatorState = cornerIndicatorState,
                     seriesHeaderText = seriesHeaderText,
-                    genres = manga.genre ?: emptyList(),
                     enabledAuras = enabledAuras,
                     performanceMode = performanceMode,
-                    customCover = if (isSeries) {
+                    customCover = if (isSeries && libraryItem.librarySeries.series.coverMode == SeriesCoverMode.AUTO) {
                         {
                             SeriesStackedCoverCard(
                                 covers = libraryItem.covers,
@@ -579,7 +595,7 @@ private fun MangaLibraryAuroraCardGrid(
 
                     subtitle = subtitle,
                     seriesHeaderText = seriesHeaderText,
-                    customCover = if (isSeries) {
+                    customCover = if (isSeries && libraryItem.librarySeries.series.coverMode == SeriesCoverMode.AUTO) {
                         {
                             SeriesStackedCoverCard(
                                 covers = libraryItem.covers,

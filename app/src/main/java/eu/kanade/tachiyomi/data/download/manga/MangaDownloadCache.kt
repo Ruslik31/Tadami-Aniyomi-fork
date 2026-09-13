@@ -99,6 +99,11 @@ class MangaDownloadCache(
         get() = File(context.cacheDir, "dl_index_cache_v3")
 
     private val rootDownloadsDirMutex = Mutex()
+
+    // C-M6: read from many threads without the mutex; the fork replaced the baseline's
+    // ConcurrentHashMap with a plain map - at minimum the root reference must be @Volatile so
+    // readers see the swapped snapshot (writers only ever assign fully built objects).
+    @Volatile
     private var rootDownloadsDir = RootDirectory(storageManager.getDownloadsDirectory())
 
     init {
@@ -113,7 +118,12 @@ class MangaDownloadCache(
                             ProtoBuf.decodeFromByteArray<RootDirectory>(it.readBytes())
                         }
                         rootDownloadsDir = diskCache
-                        lastRenew = System.currentTimeMillis()
+                        // C-M5: the trust window starts at the file's AGE, not at "now" - the old
+                        // code marked a month-old snapshot as freshly renewed, so external
+                        // renames/deletes stayed invisible for another full hour after launch.
+                        // An unavailable mtime (0) forces an immediate renewal.
+                        lastRenew = diskCacheFile.lastModified()
+                            .takeIf { it in 1..System.currentTimeMillis() } ?: 0L
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Failed to initialize from disk cache" }
@@ -142,6 +152,8 @@ class MangaDownloadCache(
         mangaTitle: String,
         sourceId: Long,
         skipCache: Boolean,
+        mangaId: Long? = null,
+        chapterId: Long? = null,
     ): Boolean {
         if (skipCache) {
             val source = sourceManager.getOrStub(sourceId)
@@ -149,6 +161,8 @@ class MangaDownloadCache(
                 chapterName,
                 chapterScanlator,
                 mangaTitle,
+                mangaId,
+                chapterId,
                 source,
             ) != null
         }
@@ -157,13 +171,22 @@ class MangaDownloadCache(
 
         val sourceDir = rootDownloadsDir.sourceDirs[sourceId]
         if (sourceDir != null) {
-            val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(mangaTitle)]
-            if (mangaDir != null) {
-                return provider.getValidChapterDirNames(chapterName, chapterScanlator)
-                    .any { it in mangaDir.chapterDirs }
-            }
+            val names = provider.getValidChapterDirNames(chapterName, chapterScanlator, chapterId)
+            return mangaDirsFor(sourceDir, mangaTitle, mangaId)
+                .any { mangaDir -> names.any { it in mangaDir.chapterDirs } }
         }
         return false
+    }
+
+    /**
+     * DECISION-6/7: resolve the cached manga directories by the scoped name first plus the
+     * legacy title-only name - during the compatibility window a manga's chapters can live in
+     * either directory (new downloads scoped, old ones legacy).
+     */
+    private fun mangaDirsFor(sourceDir: SourceDirectory, mangaTitle: String, mangaId: Long?): List<MangaDirectory> {
+        val scoped = mangaId?.let { sourceDir.mangaDirs[provider.getMangaDirName(mangaTitle, it)] }
+        val legacy = sourceDir.mangaDirs[provider.getLegacyMangaDirName(mangaTitle)]
+        return listOfNotNull(scoped, legacy)
     }
 
     /**
@@ -189,10 +212,7 @@ class MangaDownloadCache(
 
         val sourceDir = rootDownloadsDir.sourceDirs[manga.source]
         if (sourceDir != null) {
-            val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(manga.title)]
-            if (mangaDir != null) {
-                return mangaDir.chapterDirs.size
-            }
+            return mangaDirsFor(sourceDir, manga.title, manga.id).sumOf { it.chapterDirs.size }
         }
         return 0
     }
@@ -216,11 +236,10 @@ class MangaDownloadCache(
     fun getDownloadSize(manga: Manga): Long {
         renewCache()
 
-        return rootDownloadsDir.sourceDirs[manga.source]?.mangaDirs?.get(
-            provider.getMangaDirName(
-                manga.title,
-            ),
-        )?.dir?.size() ?: 0
+        return rootDownloadsDir.sourceDirs[manga.source]
+            ?.let { sourceDir ->
+                mangaDirsFor(sourceDir, manga.title, manga.id).sumOf { it.dir?.size() ?: 0L }
+            } ?: 0
     }
 
     /**
@@ -242,15 +261,16 @@ class MangaDownloadCache(
             }
 
             // Retrieve the cached manga directory or cache a new one
-            val mangaDirName = provider.getMangaDirName(manga.title)
+            val mangaDirName = provider.getMangaDirName(manga.title, manga.id)
             var mangaDir = sourceDir.mangaDirs[mangaDirName]
             if (mangaDir == null) {
                 mangaDir = MangaDirectory(mangaUniFile)
                 sourceDir.mangaDirs += mangaDirName to mangaDir
             }
 
-            // Save the chapter directory
-            mangaDir.chapterDirs += chapterDirName
+            // Save the chapter directory (C-M6: copy-on-write - readers iterate the set without
+            // the mutex, so it must never be mutated in place)
+            mangaDir.chapterDirs = (mangaDir.chapterDirs + chapterDirName).toMutableSet()
         }
 
         notifyChanges()
@@ -265,10 +285,11 @@ class MangaDownloadCache(
     suspend fun removeChapter(chapter: Chapter, manga: Manga) {
         rootDownloadsDirMutex.withLock {
             val sourceDir = rootDownloadsDir.sourceDirs[manga.source] ?: return
-            val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(manga.title)] ?: return
-            provider.getValidChapterDirNames(chapter.name, chapter.scanlator).forEach {
-                if (it in mangaDir.chapterDirs) {
-                    mangaDir.chapterDirs -= it
+            mangaDirsFor(sourceDir, manga.title, manga.id).forEach { mangaDir ->
+                provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.id).forEach {
+                    if (it in mangaDir.chapterDirs) {
+                        mangaDir.chapterDirs = (mangaDir.chapterDirs - it).toMutableSet()
+                    }
                 }
             }
         }
@@ -285,11 +306,12 @@ class MangaDownloadCache(
     suspend fun removeChapters(chapters: List<Chapter>, manga: Manga) {
         rootDownloadsDirMutex.withLock {
             val sourceDir = rootDownloadsDir.sourceDirs[manga.source] ?: return
-            val mangaDir = sourceDir.mangaDirs[provider.getMangaDirName(manga.title)] ?: return
-            chapters.forEach { chapter ->
-                provider.getValidChapterDirNames(chapter.name, chapter.scanlator).forEach {
-                    if (it in mangaDir.chapterDirs) {
-                        mangaDir.chapterDirs -= it
+            mangaDirsFor(sourceDir, manga.title, manga.id).forEach { mangaDir ->
+                chapters.forEach { chapter ->
+                    provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.id).forEach {
+                        if (it in mangaDir.chapterDirs) {
+                            mangaDir.chapterDirs = (mangaDir.chapterDirs - it).toMutableSet()
+                        }
                     }
                 }
             }
@@ -306,9 +328,13 @@ class MangaDownloadCache(
     suspend fun removeManga(manga: Manga) {
         rootDownloadsDirMutex.withLock {
             val sourceDir = rootDownloadsDir.sourceDirs[manga.source] ?: return
-            val mangaDirName = provider.getMangaDirName(manga.title)
-            if (sourceDir.mangaDirs.containsKey(mangaDirName)) {
-                sourceDir.mangaDirs -= mangaDirName
+            listOfNotNull(
+                provider.getMangaDirName(manga.title, manga.id),
+                provider.getLegacyMangaDirName(manga.title),
+            ).distinct().forEach { name ->
+                if (sourceDir.mangaDirs.containsKey(name)) {
+                    sourceDir.mangaDirs -= name
+                }
             }
         }
 
@@ -357,10 +383,21 @@ class MangaDownloadCache(
                 return@launchIO
             }
 
+            // C-M5: a temporarily unavailable downloads directory (unmounted SD card, revoked
+            // SAF permission) used to produce an EMPTY snapshot that was swapped in AND
+            // persisted to disk - wiping the index until the next renewal. Keep the previous
+            // snapshot and retry on the failure interval instead.
+            val downloadsDirNow = storageManager.getDownloadsDirectory()
+            if (downloadsDirNow == null) {
+                logcat(LogPriority.WARN) { "DownloadCache: downloads directory unavailable, keeping previous snapshot" }
+                _isInitializing.emit(false)
+                return@launchIO
+            }
+
             val sourceMap = sources.associate { provider.getSourceDirName(it).lowercase() to it.id }
 
             rootDownloadsDirMutex.withLock {
-                val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
+                val updatedRootDir = RootDirectory(downloadsDirNow)
 
                 updatedRootDir.sourceDirs = updatedRootDir.dir?.listFiles().orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }
@@ -379,8 +416,20 @@ class MangaDownloadCache(
                             val chapterDirs = mangaDir.dir?.listFiles().orEmpty()
                                 .mapNotNull {
                                     when {
-                                        // Ignore incomplete downloads
-                                        it.name?.endsWith(MangaDownloader.TMP_DIR_SUFFIX) == true -> null
+                                        // Ignore incomplete downloads; C-M4: reap STALE ones.
+                                        // Crashed/errored downloads left "_tmp" dirs and
+                                        // ".cbz_tmp" files with no cleaner anywhere. Active
+                                        // downloads keep touching their files, so the 24h
+                                        // last-modified guard never hits a live download.
+                                        it.name?.endsWith(MangaDownloader.TMP_DIR_SUFFIX) == true -> {
+                                            val lastModified = runCatching { it.lastModified() }.getOrDefault(0L)
+                                            if (lastModified > 0L &&
+                                                System.currentTimeMillis() - lastModified > STALE_TMP_MILLIS
+                                            ) {
+                                                runCatching { it.delete() }
+                                            }
+                                            null
+                                        }
                                         // Folder of images
                                         it.isDirectory -> it.name
                                         // CBZ files
@@ -461,6 +510,9 @@ private class RootDirectory(
     val dir: UniFile?,
     var sourceDirs: Map<Long, SourceDirectory> = mapOf(),
 )
+
+/** C-M4: incomplete-download artifacts older than this are reaped during cache renewal. */
+private const val STALE_TMP_MILLIS = 24L * 60 * 60 * 1000
 
 /**
  * Class to store the files under a source directory.

@@ -9,15 +9,16 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Одна ступень квеста. В коде НЕТ ни ответа, ни награды:
- * только соль, контрольный хеш ключа и AES-GCM-шифртекст.
+ * Одна ступень квеста (Option C — per-phrase срезы). В коде НЕТ ни ответа,
+ * ни награды: только соль, контрольные хеши ключей и AES-GCM-срезы
+ * шифртекста — по одному на вариант ответа (canonical + aliases):
+ * checks[i] = b64(sha256(key_i)), data[i] = b64(iv12 || GCM-шифртекст || tag16).
  * Подобрать ответ анализом кодовой базы невозможно — его можно только знать.
  */
 data class AuroraStage(
     val salt: String,
-    val iv: String,
-    val check: String,
-    val data: String,
+    val checks: List<String>,
+    val data: List<String>,
 )
 
 object AuroraVault {
@@ -25,57 +26,59 @@ object AuroraVault {
     private const val ITERATIONS = 120_000
 
     /**
-     * Нормализация ввода. ДОЛЖНА бит в бит совпадать с normalize()
-     * в tools/aurora_forge.mjs: NFC, lowercase, ё→е, схлопывание пробелов.
+     * Unicode-пробелы вне ASCII-класса `\s` — вместе с ним дают ровно JS `\s`
+     * из tools/aurora_forge.mjs (NBSP и BOM включены явно). Task 13 (K2c).
      */
-    fun normalize(input: String): String {
-        val base = Normalizer.normalize(input, Normalizer.Form.NFC)
-            .lowercase()
-            .replace('ё', 'е')
-            .trim()
-            .replace(Regex("\\s+"), " ")
+    private const val UNICODE_SPACES =
+        "\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A" +
+            "\u2028\u2029\u202F\u205F\u3000\uFEFF"
 
-        if (base in listOf(
-                "hour of the wolf",
-                "the hour of the wolf",
-                "wolf hour",
-                "the wolf hour",
-                "wolfs hour",
-                "wolf's hour",
-                "3 am",
-                "3:00 am",
-                "3:00",
-                "3.00 am",
-                "3.00",
-                "three am",
-                "three o'clock",
-            )
-        ) {
-            return "час волка"
-        }
-        return base
-    }
+    /** Класс схлопывания: `[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+`. */
+    private val SPACES_REGEX =
+        Regex("[\\s\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+")
 
     /**
-     * Пробует открыть ступень фразой. Возвращает расшифрованный payload
-     * или null, если фраза неверна. Ложное срабатывание исключено:
-     * даже при коллизии контрольного хеша GCM-тег не сойдётся.
+     * Нормализация ввода. ДОЛЖНА бит в бит совпадать с normalize()
+     * в tools/aurora_forge.mjs: NFC, lowercase, ё→е, trim, схлопывание
+     * пробелов. ПОРЯДОК операций заморожен — иначе хеши разъедутся с JS.
+     * Alias-таблица удалена (Task 13): алиасы живут в checks ступеней.
+     */
+    fun normalize(input: String): String =
+        Normalizer.normalize(input, Normalizer.Form.NFC)
+            .lowercase()
+            .replace('ё', 'е')
+            .trim { it.isWhitespace() || it in UNICODE_SPACES }
+            .replace(SPACES_REGEX, " ")
+
+    /**
+     * Пробует открыть ступень фразой (Option C): ОДИН PBKDF2 на попытку →
+     * h = b64(sha256(key)) → idx = checks.indexOf(h); idx < 0 → null;
+     * иначе AES-GCM-дешифровка среза data[idx] под тем же ключом
+     * (iv — первые 12 байт среза, tag — последние 16). Any-match семантика
+     * обеспечивается индексом, не перебором дешифровок. Ложное срабатывание
+     * исключено: даже при коллизии контрольного хеша GCM-тег не сойдётся.
      */
     fun tryOpen(phrase: String, stage: AuroraStage): ByteArray? {
         val normalized = normalize(phrase)
         if (normalized.isEmpty()) return null
         val salt = Base64.decode(stage.salt, Base64.DEFAULT)
         val key = pbkdf2(normalized.encodeToByteArray(), salt, ITERATIONS, 32)
-        val check = MessageDigest.getInstance("SHA-256").digest(key)
-        if (!MessageDigest.isEqual(check, Base64.decode(stage.check, Base64.DEFAULT))) return null
+        val hash = Base64.encodeToString(
+            MessageDigest.getInstance("SHA-256").digest(key),
+            Base64.NO_WRAP,
+        )
+        val idx = stage.checks.indexOf(hash)
+        if (idx < 0) return null
+        val sliceB64 = stage.data.getOrNull(idx) ?: return null
         return runCatching {
+            val slice = Base64.decode(sliceB64, Base64.DEFAULT)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(
                 Cipher.DECRYPT_MODE,
                 SecretKeySpec(key, "AES"),
-                GCMParameterSpec(128, Base64.decode(stage.iv, Base64.DEFAULT)),
+                GCMParameterSpec(128, slice, 0, 12),
             )
-            cipher.doFinal(Base64.decode(stage.data, Base64.DEFAULT))
+            cipher.doFinal(slice, 12, slice.size - 12)
         }.getOrNull()
     }
 

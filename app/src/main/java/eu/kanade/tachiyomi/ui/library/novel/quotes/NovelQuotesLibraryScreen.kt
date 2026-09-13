@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.presentation.library.novel.quotes.NovelQuoteCardShareSheet
 import eu.kanade.presentation.library.novel.quotes.NovelQuotesLibraryContent
 import eu.kanade.presentation.reader.novel.NovelHighlightEditorSheet
 import eu.kanade.presentation.util.Screen
@@ -36,6 +37,7 @@ class NovelQuotesLibraryScreen : Screen() {
 
         var editing by remember { mutableStateOf<NovelHighlightWithChapter?>(null) }
         var deleting by remember { mutableStateOf<NovelHighlightWithChapter?>(null) }
+        var cardSharing by remember { mutableStateOf<NovelHighlightWithChapter?>(null) }
 
         val onCopy: (String) -> Unit = { text ->
             val clipboard =
@@ -52,11 +54,12 @@ class NovelQuotesLibraryScreen : Screen() {
             onEditQuote = { editing = it },
             onDeleteQuote = { deleting = it },
             onCopyQuote = onCopy,
+            onShareQuoteAsImage = { cardSharing = it },
         )
 
         editing?.let { item ->
             NovelHighlightEditorSheet(
-                highlight = item.highlight,
+                item = item,
                 onDismiss = { editing = null },
                 onSave = { note, colorArgb ->
                     screenModel.updateQuote(item.highlight.id, note, colorArgb)
@@ -68,6 +71,19 @@ class NovelQuotesLibraryScreen : Screen() {
                 },
                 onCopy = onCopy,
                 onShare = { text -> shareText(context, text) },
+                onShareCard = { note, colorArgb ->
+                    cardSharing = item.copy(
+                        highlight = item.highlight.copy(note = note, colorArgb = colorArgb),
+                    )
+                    editing = null
+                },
+            )
+        }
+
+        cardSharing?.let { item ->
+            NovelQuoteCardShareSheet(
+                item = item,
+                onDismiss = { cardSharing = null },
             )
         }
 

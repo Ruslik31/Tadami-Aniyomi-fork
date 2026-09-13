@@ -1,5 +1,5 @@
 {
-  "version": 27,
+  "version": 28,
   "achievements": [
     {
       "id": "first_chapter",
@@ -2960,7 +2960,6 @@
       "rarity": "mythic",
       "badge_icon": "ic_badge_aurora_heart",
       "tags": [
-        "secret",
         "secret"
       ],
       "rewards": [
@@ -2977,7 +2976,8 @@
           "description": "Night sky, travelling light wave and polar halo for the Aurora bottom bar"
         }
       ],
-      "season": null
+      "season": null,
+      "hint": "Северное сияние помнит тех, кто не спит."
     },
     {
       "id": "lattice_resonance",
@@ -2992,7 +2992,6 @@
       "rarity": "mythic",
       "badge_icon": "ic_badge_lattice_resonance",
       "tags": [
-        "secret",
         "secret"
       ],
       "rewards": [

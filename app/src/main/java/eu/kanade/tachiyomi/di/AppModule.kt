@@ -33,6 +33,9 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.MangaCoverCache
 import eu.kanade.tachiyomi.data.cache.NovelCoverCache
 import eu.kanade.tachiyomi.data.cache.SeriesCoverCache
+import eu.kanade.tachiyomi.data.discord.DiscordPreferences
+import eu.kanade.tachiyomi.data.discord.DiscordPresenceManager
+import eu.kanade.tachiyomi.data.discord.RealDiscordGatewayClient
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadCache
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.anime.AnimeDownloadProvider
@@ -40,6 +43,8 @@ import eu.kanade.tachiyomi.data.download.manga.MangaDownloadCache
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadManager
 import eu.kanade.tachiyomi.data.download.manga.MangaDownloadProvider
 import eu.kanade.tachiyomi.data.download.novel.NovelDownloadCache
+import eu.kanade.tachiyomi.data.download.novel.NovelDownloadManager
+import eu.kanade.tachiyomi.data.download.novel.NovelTranslatedDownloadManager
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.sync.service.GoogleDriveService
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -67,7 +72,6 @@ import eu.kanade.tachiyomi.extension.novel.api.NovelPluginIndexFetcher
 import eu.kanade.tachiyomi.extension.novel.api.NovelPluginIndexParser
 import eu.kanade.tachiyomi.extension.novel.api.NovelPluginRepoProvider
 import eu.kanade.tachiyomi.extension.novel.kotlin.KotlinNovelExtensionInstaller
-import eu.kanade.tachiyomi.extension.novel.repo.InMemoryNovelPluginStorage
 import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginRepoParser
 import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginRepoService
 import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginRepoServiceContract
@@ -141,7 +145,6 @@ import uy.kohesive.injekt.api.addSingleton
 import uy.kohesive.injekt.api.addSingletonFactory
 import uy.kohesive.injekt.api.get
 import java.io.File
-import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginStorage as NovelRepoPluginStorage
 
 class AppModule(val app: Application) : InjektModule {
     companion object {
@@ -751,7 +754,6 @@ class AppModule(val app: Application) : InjektModule {
         }
         addSingletonFactory { NovelExtensionUpdateChecker() }
         addSingletonFactory { NovelPluginRepoParser(get()) }
-        addSingletonFactory<NovelRepoPluginStorage> { InMemoryNovelPluginStorage() }
         addSingletonFactory { NovelPluginRepoService(get<NetworkHelper>().client, get()) }
         addSingletonFactory<NovelPluginRepoServiceContract> { get<NovelPluginRepoService>() }
         addSingletonFactory { NovelPluginRepoUpdateInteractor(get(), get(), get()) }
@@ -765,12 +767,18 @@ class AppModule(val app: Application) : InjektModule {
 
         addSingletonFactory { MangaDownloadProvider(app) }
         addSingletonFactory { MangaDownloadManager(app) }
+        addSingletonFactory { DiscordPreferences(get()) }
+        addSingletonFactory { DiscordPresenceManager(get(), RealDiscordGatewayClient()) }
         addSingletonFactory { MangaDownloadCache(app) }
 
         addSingletonFactory { AnimeDownloadProvider(app) }
         addSingletonFactory { AnimeDownloadManager(app) }
         addSingletonFactory { AnimeDownloadCache(app) }
         addSingletonFactory { NovelDownloadCache() }
+        // F9: shared singletons - per-screen NovelDownloadManager instances defeated the SAF
+        // scan caches (the same pattern was already fixed once elsewhere, see BMG-10).
+        addSingletonFactory { NovelDownloadManager() }
+        addSingletonFactory { NovelTranslatedDownloadManager() }
 
         addSingletonFactory { TrackerManager(app) }
         addSingletonFactory { DelayedAnimeTrackingStore(app) }

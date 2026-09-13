@@ -7,12 +7,11 @@ import eu.kanade.tachiyomi.data.download.novel.NovelDownloadManager
 import eu.kanade.tachiyomi.data.prefetch.AllowAllContentPrefetchEnvironment
 import eu.kanade.tachiyomi.data.prefetch.AndroidContentPrefetchEnvironment
 import eu.kanade.tachiyomi.data.prefetch.ContentPrefetchService
-import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginStorage
+import eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginAssetBindings
+import eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginIdentitySource
 import eu.kanade.tachiyomi.extension.novel.runtime.resolveUrl
-import eu.kanade.tachiyomi.novelsource.NovelSource
 import eu.kanade.tachiyomi.source.novel.NovelPluginImage
 import eu.kanade.tachiyomi.source.novel.NovelSiteSource
-import eu.kanade.tachiyomi.source.novel.NovelWebUrlSource
 import eu.kanade.tachiyomi.ui.novel.sortedByNovelReadingOrder
 import eu.kanade.tachiyomi.ui.reader.novel.NovelReaderScreenModel
 import eu.kanade.tachiyomi.ui.reader.novel.NovelRichContentBlock
@@ -20,19 +19,20 @@ import eu.kanade.tachiyomi.ui.reader.novel.PageReaderProgress
 import eu.kanade.tachiyomi.ui.reader.novel.decodeNativeScrollProgress
 import eu.kanade.tachiyomi.ui.reader.novel.decodePageReaderProgress
 import eu.kanade.tachiyomi.ui.reader.novel.decodeWebScrollProgressPercent
+import eu.kanade.tachiyomi.ui.reader.novel.extractContentBlocks
+import eu.kanade.tachiyomi.ui.reader.novel.normalizeStructuredChapterPayload
 import eu.kanade.tachiyomi.ui.reader.novel.parseNovelRichContent
 import eu.kanade.tachiyomi.ui.reader.novel.prependChapterHeadingIfMissing
 import eu.kanade.tachiyomi.ui.reader.novel.replace.applyReplaceRulesToHtml
 import eu.kanade.tachiyomi.ui.reader.novel.resolveNovelChapterWebUrl
+import eu.kanade.tachiyomi.ui.reader.novel.resolveNovelChapterWebUrlForSource
 import eu.kanade.tachiyomi.ui.reader.novel.sanitizeChapterHtmlForReader
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import org.jsoup.Jsoup
 import tachiyomi.domain.entries.novel.interactor.GetNovel
 import tachiyomi.domain.entries.novel.model.Novel
 import tachiyomi.domain.items.novelchapter.model.NovelChapter
@@ -68,7 +68,7 @@ class NovelTtsChapterRepository internal constructor(
     private val getNovel: GetNovel = Injekt.get(),
     private val sourceManager: NovelSourceManager = Injekt.get(),
     private val novelDownloadManager: NovelDownloadManager = NovelDownloadManager(),
-    private val pluginStorage: NovelPluginStorage = Injekt.get(),
+    private val pluginAssetBindings: NovelPluginAssetBindings = Injekt.get(),
     private val novelReaderPreferences: NovelReaderPreferences = Injekt.get(),
     private val contentPrefetchService: ContentPrefetchService = ContentPrefetchService(
         environment = runCatching {
@@ -117,13 +117,21 @@ class NovelTtsChapterRepository internal constructor(
                     cacheReadChapters = novelReaderPreferences.cacheReadChapters().get(),
                 )
         }
-        val pluginPackage = withContext(Dispatchers.IO) {
-            pluginStorage.getAll().firstOrNull { it.entry.id.hashCode().toLong() == novel.source }
+        // Plugin custom assets resolve by pluginId from the disk-backed asset bindings (the
+        // identity interface is delegated by the configurable source wrapper). The old path
+        // scanned the never-populated in-memory repo storage and matched entry.id.hashCode()
+        // against the SHA-256-derived source id, so customJs/customCss were always null and
+        // obfuscated chapters stayed obfuscated in the WebView reader and in TTS.
+        val pluginId = (source as? NovelPluginIdentitySource)?.pluginId?.takeIf { it.isNotBlank() }
+        val pluginCustomJs = withContext(Dispatchers.IO) {
+            pluginId?.let { pluginAssetBindings.getCustomJs(it) }
         }
-        val sourceSiteUrl = (source as? NovelSiteSource)?.siteUrl
-        val pluginSite = pluginPackage?.entry?.site ?: sourceSiteUrl
+        val pluginCustomCss = withContext(Dispatchers.IO) {
+            pluginId?.let { pluginAssetBindings.getCustomCss(it) }
+        }
+        val pluginSite = (source as? NovelSiteSource)?.siteUrl
         val chapterWebUrl = withContext(Dispatchers.IO) {
-            resolveChapterWebUrl(
+            resolveNovelChapterWebUrlForSource(
                 source = source,
                 chapterUrl = chapter.url,
                 novelUrl = novel.url,
@@ -132,7 +140,10 @@ class NovelTtsChapterRepository internal constructor(
         }
         val normalizedChapterHtml = withContext(Dispatchers.Default) {
             prependChapterHeadingIfMissing(
-                rawHtml = html,
+                // Every renderer normalizes structured (JSON) payloads before extraction; the
+                // snapshot pipeline skipped it, so the translation worker split raw payload lines
+                // into "paragraphs" and cached garbage under real block indices.
+                rawHtml = html.normalizeStructuredChapterPayload(),
                 chapterName = chapter.name,
             )
         }
@@ -148,7 +159,10 @@ class NovelTtsChapterRepository internal constructor(
             }
         }
         val contentBlocks = withContext(Dispatchers.Default) {
-            extractSnapshotContentBlocks(
+            // Canonical collect-space extraction shared with the reader and the HTML overlay
+            // mapper: translation maps keyed by text-block index must address the same blocks in
+            // the queue worker, the native reader, TTS and the WebView/book overlays.
+            extractContentBlocks(
                 rawHtml = readerHtml,
                 chapterWebUrl = chapterWebUrl,
                 novelUrl = novel.url,
@@ -189,8 +203,8 @@ class NovelTtsChapterRepository internal constructor(
             chapter = chapter,
             chapterOrderList = chapterOrderList,
             rawHtml = html,
-            customCss = pluginPackage?.customCss?.toString(Charsets.UTF_8),
-            customJs = pluginPackage?.customJs?.toString(Charsets.UTF_8),
+            customCss = pluginCustomCss,
+            customJs = pluginCustomJs,
             pluginSite = pluginSite,
             chapterWebUrl = chapterWebUrl,
             contentBlocks = contentBlocks,
@@ -237,86 +251,6 @@ class NovelTtsChapterRepository internal constructor(
             ).takeIf { it.isNotBlank() }
         }.getOrNull()
     }
-
-    private suspend fun resolveChapterWebUrl(
-        source: NovelSource,
-        chapterUrl: String,
-        novelUrl: String,
-        pluginSite: String?,
-    ): String? {
-        // A busy plugin runtime (e.g. an ongoing chapter-list refresh holds the plugin
-        // mutex) must not delay showing already-downloaded/cached chapter text; give the
-        // source a short window and otherwise fall back to string-based resolution.
-        val sourceResolved = withTimeoutOrNull(1_500L) {
-            (source as? NovelWebUrlSource)
-                ?.getChapterWebUrl(chapterPath = chapterUrl, novelPath = novelUrl)
-        }
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-        if (sourceResolved != null) {
-            sourceResolved.toHttpUrlOrNull()?.let { return it.toString() }
-            resolveNovelChapterWebUrl(
-                chapterUrl = sourceResolved,
-                pluginSite = pluginSite,
-                novelUrl = novelUrl,
-            )?.let { return it }
-        }
-        return resolveNovelChapterWebUrl(
-            chapterUrl = chapterUrl,
-            pluginSite = pluginSite,
-            novelUrl = novelUrl,
-        )
-    }
-}
-
-private fun extractSnapshotContentBlocks(
-    rawHtml: String,
-    chapterWebUrl: String?,
-    novelUrl: String,
-    pluginSite: String?,
-): List<NovelReaderScreenModel.ContentBlock> {
-    val document = Jsoup.parse(rawHtml)
-    val paragraphLikeNodes = document.select("p, li, blockquote, h1, h2, h3, h4, h5, h6, pre, img")
-        .filterNot { node ->
-            node.tagName().equals("p", ignoreCase = true) &&
-                node.parent()?.tagName()?.equals("li", ignoreCase = true) == true
-        }
-    if (paragraphLikeNodes.isNotEmpty()) {
-        return paragraphLikeNodes.mapNotNull { element ->
-            if (element.tagName().equals("img", ignoreCase = true)) {
-                val rawUrl = element.attr("src")
-                    .ifBlank { element.attr("data-src") }
-                    .ifBlank { element.attr("data-original") }
-                    .trim()
-                val resolvedUrl = resolveSnapshotContentResourceUrl(
-                    rawUrl = rawUrl,
-                    chapterWebUrl = chapterWebUrl,
-                    novelUrl = novelUrl,
-                    pluginSite = pluginSite,
-                ) ?: return@mapNotNull null
-                NovelReaderScreenModel.ContentBlock.Image(
-                    url = resolvedUrl,
-                    alt = element.attr("alt").sanitizeSnapshotTextBlock().ifBlank { null },
-                )
-            } else {
-                val text = element.text().sanitizeSnapshotTextBlock()
-                if (text.isBlank()) {
-                    null
-                } else {
-                    NovelReaderScreenModel.ContentBlock.Text(
-                        if (element.tagName().equals("li", ignoreCase = true)) "• $text" else text,
-                    )
-                }
-            }
-        }
-    }
-    val text = document.body().wholeText().sanitizeSnapshotTextBlock()
-    if (text.isBlank()) return emptyList()
-    return text.split(Regex("\n{2,}"))
-        .flatMap { block -> block.split('\n') }
-        .map { it.sanitizeSnapshotTextBlock() }
-        .filter { it.isNotBlank() }
-        .map(NovelReaderScreenModel.ContentBlock::Text)
 }
 
 private fun resolveSnapshotRichContentBlocks(
@@ -364,9 +298,3 @@ private fun resolveSnapshotContentResourceUrl(
 }
 
 private const val CHAPTER_LIST_CACHE_TTL_MS = 60_000L
-
-private fun String.sanitizeSnapshotTextBlock(): String {
-    return replace('\u00A0', ' ')
-        .replace("\r", "")
-        .trim()
-}

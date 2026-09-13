@@ -119,6 +119,7 @@
     <string name="password">Пароль</string>
     <string name="picture_saved">Картинка сохранена</string>
     <string name="plan_to_read">Запланировано</string>
+    <string name="considering">Рассматриваю</string>
     <string name="portrait">Портретная</string>
     <string name="pref_acra_summary">Помогает исправлять все возможные ошибки. Данные пользователя не передаются</string>
     <string name="pref_auto_update_manga_sync">Обновлять прогресс после прочтения</string>
@@ -316,6 +317,27 @@
     <string name="migration_deep_search_mode">Глубокий режим поиска</string>
     <string name="migration_prioritize_by_chapters">Приоритет по главам</string>
     <string name="migration_advanced_options_warning">Расширенные параметры могут снизить качество поиска.</string>
+    <!-- BMG-12а: 16 ключей экрана миграции существовали только в base - ru-пользователи видели
+         английский на всех экранах migration. Плюс ext_update_available_banner (BEXT-8) и
+         migration_checking_sources_count (BMG-12в, заменяет хардкод "N sources" в SM). -->
+    <string name="migration_latest_chapter">Последняя глава: %1$s</string>
+    <string name="migration_unknown_latest_chapter">Неизвестно</string>
+    <string name="migration_no_match_found">Совпадений не найдено</string>
+    <string name="migration_checking_source">Проверка %1$s</string>
+    <string name="migration_search_manually">Найти вручную</string>
+    <string name="migration_skip_entry">Пропустить</string>
+    <string name="migration_migrate_now">Перенести сейчас</string>
+    <string name="migration_copy_now">Скопировать сейчас</string>
+    <string name="migration_confirm_migrate_title">Перенести записи?</string>
+    <string name="migration_confirm_copy_title">Скопировать записи?</string>
+    <string name="migration_confirm_body">Готово %1$d из %2$d записей. Будет пропущено: %3$d.</string>
+    <string name="migration_exit_title">Выйти из переноса?</string>
+    <string name="migration_exit_body">Результаты поиска на этом экране будут потеряны.</string>
+    <string name="migration_exit_body_migrating">Текущий перенос будет отменён, экран закроется.</string>
+    <string name="migration_progress_title">Перенос записей</string>
+    <string name="migration_progress_body">Прогресс: %1$d%%</string>
+    <string name="migration_checking_sources_count">Проверяется источников: %1$d</string>
+    <string name="ext_update_available_banner">В магазине доступна более новая версия этого расширения.</string>
     <string name="migrate">Перенести</string>
     <string name="copy">Копировать</string>
     <string name="ext_trust">Надёжное</string>
@@ -332,6 +354,13 @@
     <string name="transition_no_previous">Предыдущей главы нет</string>
     <string name="transition_pages_loading">Идёт загрузка страниц…</string>
     <string name="transition_pages_error">Не удалось загрузить страницы: %1$s</string>
+    <string name="reader_finale_title">THE END</string>
+    <string name="reader_finale_subtitle">Здесь ты прочёл все главы</string>
+    <string name="reader_finale_back_to_manga">К странице манги</string>
+    <string name="reader_finale_back_to_novel">К странице новеллы</string>
+    <string name="reader_finale_stay">Остаться</string>
+    <string name="reader_finale_stamp_label">Завершено</string>
+    <string name="pref_reader_finale_card">Праздновать завершение серии</string>
     <string name="pref_read_with_long_tap">Показать действия при долгом нажатии</string>
     <string name="action_open_in_web_view">Открыть в WebView</string>
     <string name="pref_skip_read_chapters">Пропускать прочитанные главы</string>
@@ -347,6 +376,8 @@
     <string name="action_webview_back">Назад</string>
     <string name="action_webview_forward">Вперед</string>
     <string name="action_webview_refresh">Обновить</string>
+    <string name="action_open_webview">Открыть WebView</string>
+    <string name="action_entry_refresh">Обновить</string>
     <string name="pref_category_library">Библиотека</string>
     <string name="ext_obsolete">Автономное</string>
     <string name="obsolete_extension_message">Это расширение не связано ни с одним хранилищем. Оно не будет получать обновления, может работать неправильно и вызывать проблемы в приложении. Рекомендуется удалить его.</string>
@@ -755,6 +786,20 @@
     <string name="pref_reader_summary">Режим чтения, отображение, навигация</string>
     <string name="pref_downloads_summary">Автоматическая загрузка, загрузка наперёд</string>
     <string name="pref_tracking_summary">Односторонняя синхронизация прогресса, расширенная синхронизация</string>
+    <!-- Discord Rich Presence -->
+    <string name="pref_discord_rpc">Discord Rich Presence</string>
+    <string name="pref_discord_rpc_enabled">Показывать активность чтения и просмотра в Discord</string>
+    <string name="pref_discord_rpc_token">Токен аккаунта Discord</string>
+    <string name="pref_discord_rpc_token_dialog">Вставьте токен своего аккаунта Discord. Он хранится только на этом устройстве и никогда не логируется.</string>
+    <string name="pref_discord_rpc_status">Состояние подключения</string>
+    <string name="pref_discord_rpc_status_connected">Подключено</string>
+    <string name="pref_discord_rpc_status_connecting">Подключение…</string>
+    <string name="pref_discord_rpc_status_disconnected">Не подключено (нет активной сессии)</string>
+    <string name="pref_discord_rpc_status_invalid_token">Неверный токен</string>
+    <string name="pref_discord_rpc_warning_title">Неофициальная интеграция</string>
+    <string name="pref_discord_rpc_warning">Discord официально не поддерживает Rich Presence на мобильных. Функция подключается к Discord с токеном вашего аккаунта — это нарушает условия использования Discord и может привести к ограничению аккаунта. Используйте на свой риск.</string>
+    <string name="pref_discord_rpc_warning_confirm">Понимаю риски</string>
+
     <string name="pref_browse_summary">Источники, расширения, глобальный поиск</string>
     <string name="pref_backup_summary">Ручные и автоматические резервные копий, хранилище</string>
     <string name="pref_security_summary">Блокировка приложения, защита экрана</string>
@@ -1107,20 +1152,19 @@
     <string name="achievement_stat_unlocked">Достижений получено</string>
     <string name="achievement_vs_last_month">vs прошлый месяц</string>
     <string name="achievement_no_data">Нет данных</string>
-    <string name="achievement_year_activity_title">Активность за год</string>
-    <string name="achievement_period_jan_jun">Янв–Июнь</string>
-    <string name="achievement_period_jul_dec">Июль–Дек</string>
-    <string name="achievement_stat_total">Всего: %d</string>
-    <string name="achievement_stat_chapters">Глав: %d</string>
-    <string name="achievement_stat_episodes">Эпизодов: %d</string>
-    <string name="achievement_stat_time">Время: %s</string>
-    <string name="achievement_stat_achievements">Достижений: %d</string>
     <string name="achievement_no_activity">Нет активности</string>
     <string name="achievement_hours_minutes">%1$dч %2$dм</string>
     <string name="achievement_hours">%1$dч</string>
     <string name="achievement_minutes">%1$dм</string>
     <string name="achievement_hours_minutes_alt">%1$dч %2$dмин</string>
     <string name="achievement_minutes_alt">%1$dмин</string>
+    <string name="achievement_heatmap_title">Активность</string>
+    <string name="achievement_heatmap_period">365 дней</string>
+    <string name="achievement_heatmap_less">Меньше</string>
+    <string name="achievement_heatmap_more">Больше</string>
+    <string name="achievement_summary_active_days">Дней активности</string>
+    <string name="achievement_summary_current_streak">Текущая серия</string>
+    <string name="achievement_summary_best_streak">Рекордная серия</string>
 
     <!-- External metadata status labels -->
     <string name="status_finished">Завершён</string>
@@ -1656,6 +1700,8 @@
     <string name="reels_preload_wifi_only">Предзагрузка только по Wi-Fi</string>
     <string name="reels_unmute_hint">Нажмите, чтобы включить звук</string>
     <string name="reels_data_saver_metered">SD в мобильных сетях</string>
+    <string name="reels_clear_video_cache">Очистить кеш видео</string>
+    <string name="reels_video_cache_cleared">Очищено %1$s кеша видео</string>
     <string name="reels_favorites_removed_snackbar">Видео удалено из избранного</string>
     <string name="reels_unknown_source">Неизвестный источник</string>
     <string name="reels_follow">Подписаться</string>
@@ -1665,4 +1711,35 @@
     <string name="reels_follows_empty_hint">Нажмите на значок автора в видео, чтобы подписаться</string>
     <string name="reels_follow_cap_reached">Достигнут лимит — не более 100 авторов на источник</string>
     <string name="reels_follows_removed_snackbar">Автор удалён из подписок</string>
+    <string name="reels_login">Войти</string>
+    <string name="reels_account">Аккаунт</string>
+    <string name="reels_logged_in_as">Вы вошли как %1$s</string>
+    <string name="reels_logout">Выйти</string>
+    <string name="reels_login_email">Email</string>
+    <string name="reels_login_password">Пароль</string>
+    <string name="reels_login_button">Войти</string>
+    <string name="reels_custom_feeds">Мои ленты</string>
+    <string name="reels_custom_feeds_empty">Пока нет своих лент</string>
+    <string name="reels_web_login_title">Вход на странице сайта</string>
+    <string name="reels_web_login_done">Готово</string>
+    <string name="reels_web_login_not_yet">Сессия пока не обнаружена — завершите вход и нажмите «Готово»</string>
+    <string name="reels_niches">Ниши</string>
+    <string name="reels_niches_empty">Пока нет ниш</string>
+    <string name="reels_search_tab_niches">Ниши</string>
+    <string name="reels_search_tab_creators">Креаторы</string>
+    <string name="reels_search_tab_tags">Теги</string>
+    <string name="reels_search_tab_all">Все</string>
+    <string name="reels_content_prefs">Настройки контента</string>
+    <string name="reels_content_prefs_empty">Нет доступных настроек контента</string>
+    <string name="reels_blocked_tags">Заблокированные теги</string>
+    <string name="reels_blocked_tags_add">Добавить тег</string>
+    <string name="reels_blocked_tags_empty">Нет заблокированных тегов</string>
+    <string name="reels_custom_feed_new">Новая лента</string>
+    <string name="reels_custom_feed_edit">Изменить ленту</string>
+    <string name="reels_custom_feed_delete">Удалить ленту</string>
+    <string name="reels_custom_feed_delete_confirm">Удалить эту ленту? Это действие необратимо.</string>
+    <string name="reels_custom_feed_name">Название</string>
+    <string name="reels_custom_feed_search_tags">Поиск тегов</string>
+    <string name="reels_custom_feed_save">Сохранить</string>
+    <string name="reels_custom_feed_save_failed">Не удалось сохранить</string>
 </resources>

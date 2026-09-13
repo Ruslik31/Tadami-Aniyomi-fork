@@ -7,6 +7,8 @@ import android.content.pm.ActivityInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.text.format.Formatter
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -16,6 +18,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -28,16 +31,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,7 +55,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -60,17 +68,28 @@ import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.theme.AuroraTheme
+import eu.kanade.tachiyomi.animesource.model.CustomFeedRef
+import eu.kanade.tachiyomi.animesource.model.SearchSuggestionKind
 import eu.kanade.tachiyomi.ui.browse.anime.source.browse.SourceFilterAnimeDialog
+import eu.kanade.tachiyomi.ui.reels.components.CfBootstrapWebView
+import eu.kanade.tachiyomi.ui.reels.components.ReelsBlockedTagsSheet
+import eu.kanade.tachiyomi.ui.reels.components.ReelsContentPreferencesSheet
+import eu.kanade.tachiyomi.ui.reels.components.ReelsCustomFeedsSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsEmptySearchState
 import eu.kanade.tachiyomi.ui.reels.components.ReelsErrorState
+import eu.kanade.tachiyomi.ui.reels.components.ReelsLoginDialog
 import eu.kanade.tachiyomi.ui.reels.components.ReelsNextPageLoader
 import eu.kanade.tachiyomi.ui.reels.components.ReelsSourcePickerSheet
 import eu.kanade.tachiyomi.ui.reels.components.ReelsTopBar
 import eu.kanade.tachiyomi.ui.reels.components.ReelsVideoPage
+import eu.kanade.tachiyomi.ui.reels.components.ReelsWebLoginDialog
+import eu.kanade.tachiyomi.ui.reels.player.clearReelsVideoCache
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import tachiyomi.domain.reels.anime.model.ReelsFavorite
+import kotlinx.coroutines.withContext
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
@@ -78,13 +97,25 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 
 data class ReelsFeedScreen(
     val sourceId: Long,
-    // Non-empty => offline playlist mode (opened from the Favorites screen).
-    val initialFavorites: List<ReelsFavorite> = emptyList(),
-    val initialPage: Int = 0,
+    // Offline playlist mode (opened from the Favorites screen). Only lightweight seek/sort
+    // hints are stored here: Voyager Java-serializes every stacked Screen into the saved
+    // state, and carrying the full favorites list blew the binder parcel
+    // (TransactionTooLargeException). The model reloads the playlist from the favorites DB.
+    val offlinePlaylist: Boolean = false,
+    val playlistSort: FavoritesSort = FavoritesSort.DateDesc,
+    val initialVideoId: String? = null,
     // Contract v18: one creator's page (creator != null) or the aggregated Following feed
     // (followingFeed = true). Mutually exclusive; never combined with offline playlists.
     val creator: String? = null,
     val followingFeed: Boolean = false,
+    // Contract v19: one custom feed's page (customFeedId != null). Mutually exclusive with
+    // creator/following/offline playlists.
+    val customFeedId: String? = null,
+    val customFeedName: String? = null,
+    // Contract v20: one category's feed (nicheId != null). Mutually exclusive with the modes
+    // above and offline playlists.
+    val nicheId: String? = null,
+    val nicheName: String? = null,
 ) : Screen {
     // Voyager disposes screens (and their ScreenModels) by screen.key. The default key is only
     // the class name, so a popped offline playlist would share the live feed's key and never be
@@ -93,7 +124,8 @@ data class ReelsFeedScreen(
     // (the saveable state would orphan models across recreation). Creator and Following pages
     // ride the same rule: their keys must include creator/followingFeed.
     override val key: String
-        get() = "ReelsFeedScreen:$sourceId:$initialPage:${initialFavorites.hashCode()}:$creator:$followingFeed"
+        get() = "ReelsFeedScreen:$sourceId:$offlinePlaylist:$playlistSort:$initialVideoId" +
+            ":$creator:$followingFeed:$customFeedId:$nicheId"
 
     @Composable
     override fun Content() {
@@ -117,23 +149,25 @@ data class ReelsFeedScreen(
         val screenModel = rememberScreenModel {
             ReelsFeedScreenModel(
                 initialSourceId = sourceId,
-                initialFavorites = initialFavorites,
-                initialPage = initialPage,
+                offlinePlaylist = offlinePlaylist,
+                playlistSort = playlistSort,
+                initialVideoId = initialVideoId,
                 creator = creator,
                 followingFeed = followingFeed,
+                customFeedId = customFeedId,
+                customFeedName = customFeedName,
+                nicheId = nicheId,
+                nicheName = nicheName,
             )
         }
         val state by screenModel.state.collectAsStateWithLifecycle()
         val snackbarHostState = remember { SnackbarHostState() }
+        var pendingDeleteFeed by remember { mutableStateOf<CustomFeedRef?>(null) }
         val retryLabel = stringResource(MR.strings.action_retry)
-        val followCapMessage = stringResource(MR.strings.reels_follow_cap_reached)
 
-        // Follow tap at the per-source cap: no state/DB change, just the refusal snackbar.
         fun handleFollowToggle(creatorName: String?) {
             if (creatorName == null) return
-            if (!screenModel.toggleFollow(creatorName)) {
-                coroutineScope.launch { snackbarHostState.showSnackbar(followCapMessage) }
-            }
+            screenModel.toggleFollow(creatorName)
         }
         // Preload gating must be reactive: a plain context.isOnWifi() call here would be
         // recomputed (stale) on every recomposition instead of tracking network changes.
@@ -156,9 +190,15 @@ data class ReelsFeedScreen(
         val effectiveHd = if (state.dataSaverMetered && !isOnWifi) false else state.isHdQuality
         var chromeVisible by remember { mutableStateOf(true) }
         // Landscape fullscreen (software-rotated overlay, see ReelsVideoPage): entered from
-        // the expand button on landscape reels, left via the button or system back.
+        // the expand button on landscape reels, left via the button or system back. The intent
+        // is sticky: an auto-exit on a portrait reel keeps it armed so the next landscape reel
+        // re-enters fullscreen on its own; a manual exit disarms it.
         var landscapeFullscreen by remember { mutableStateOf(false) }
-        BackHandler(enabled = landscapeFullscreen) { landscapeFullscreen = false }
+        var landscapeAutoRestore by remember { mutableStateOf(false) }
+        BackHandler(enabled = landscapeFullscreen) {
+            landscapeFullscreen = false
+            landscapeAutoRestore = false
+        }
 
         // Hide the system bars while the rotated video owns the screen; restore on exit
         // and on screen disposal so the rest of the app is unaffected.
@@ -173,6 +213,18 @@ data class ReelsFeedScreen(
             onDispose {
                 controller?.show(WindowInsetsCompat.Type.systemBars())
             }
+        }
+
+        // A playing reel keeps the screen awake (auto-advance must not fall asleep mid-feed);
+        // a paused reel lets the system timeout apply, same as the video player.
+        DisposableEffect(state.isPlaying) {
+            val window = (context as? Activity)?.window
+            if (state.isPlaying) {
+                window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         }
 
         // Immersive: auto-hide the top bar after 3s of playback; any tap reveals it.
@@ -218,7 +270,10 @@ data class ReelsFeedScreen(
                 }
                 else -> {
                     val pagerState = rememberPagerState(
-                        initialPage = initialPage.coerceIn(0, (state.items.size - 1).coerceAtLeast(0)),
+                        initialPage = state.targetPageIndex.coerceIn(
+                            0,
+                            (state.items.size - 1).coerceAtLeast(0),
+                        ),
                         pageCount = { state.items.size },
                     )
 
@@ -256,14 +311,52 @@ data class ReelsFeedScreen(
                         }
                     }
 
+                    // Horizontal swipe switches feeds: left on the global feed opens this
+                    // source's Following feed, right on Following pops back. The vertical
+                    // pager owns the orthogonal axis; landscape fullscreen ignores swipes.
+                    val feedSwipeEnabled = !landscapeFullscreen &&
+                        (
+                            followingFeed ||
+                                (state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL && state.isCreatorCapable)
+                            )
+                    val swipeThresholdPx = with(LocalDensity.current) { 110.dp.toPx() }
+                    var horizontalDragPx by remember { mutableFloatStateOf(0f) }
+
                     // Vertical Pager for reels video cards
                     VerticalPager(
                         state = pagerState,
                         beyondViewportPageCount = 1,
-                        // Swiping away underneath the rotated fullscreen overlay would
-                        // orphan it; the feed only scrolls in normal portrait mode.
+                        // The pager lives outside the software rotation, so manual swipes in
+                        // landscape fullscreen would land sideways; auto-advance still moves
+                        // the feed programmatically (portrait reels exit fullscreen, see
+                        // ReelsVideoPage).
                         userScrollEnabled = !landscapeFullscreen,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(feedSwipeEnabled, swipeThresholdPx) {
+                                if (!feedSwipeEnabled) return@pointerInput
+                                detectHorizontalDragGestures(
+                                    onDragStart = { horizontalDragPx = 0f },
+                                    onDragCancel = { horizontalDragPx = 0f },
+                                    onDragEnd = {
+                                        when {
+                                            horizontalDragPx <= -swipeThresholdPx && !followingFeed ->
+                                                navigator.push(
+                                                    ReelsFeedScreen(
+                                                        sourceId = state.currentSourceId,
+                                                        followingFeed = true,
+                                                    ),
+                                                )
+                                            horizontalDragPx >= swipeThresholdPx && followingFeed ->
+                                                navigator.pop()
+                                        }
+                                        horizontalDragPx = 0f
+                                    },
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    horizontalDragPx += dragAmount
+                                }
+                            },
                     ) { page ->
                         val item = state.items.getOrNull(page)
                         if (item != null) {
@@ -280,11 +373,16 @@ data class ReelsFeedScreen(
                                 isMuted = state.isMuted,
                                 isLiked = (item.id in state.likedIds),
                                 isHdQuality = effectiveHd,
-                                isAutoAdvance = state.isAutoAdvance && !landscapeFullscreen,
+                                isAutoAdvance = state.isAutoAdvance,
                                 isCropMode = state.isCropMode,
                                 chromeVisible = chromeVisible && !landscapeFullscreen,
                                 isLandscapeFullscreen = landscapeFullscreen,
-                                onLandscapeFullscreenChange = { landscapeFullscreen = it },
+                                landscapeAutoRestore = landscapeAutoRestore,
+                                onLandscapeFullscreenChange = { enter ->
+                                    landscapeFullscreen = enter
+                                    landscapeAutoRestore = enter
+                                },
+                                onLandscapeAutoExit = { landscapeFullscreen = false },
                                 onTogglePlayPause = {
                                     chromeVisible = true
                                     screenModel.togglePlayPause()
@@ -345,6 +443,9 @@ data class ReelsFeedScreen(
                                     }
                                 },
                                 onScrubStart = { chromeVisible = true },
+                                onViewReported = { watched, duration ->
+                                    screenModel.reportVideoView(item.id, watched, duration)
+                                },
                                 cachePrefix = state.currentSourceId.toString(),
                                 isLastPage = page == state.items.lastIndex,
                                 headers = state.sourceHeaders,
@@ -406,7 +507,8 @@ data class ReelsFeedScreen(
                 visible = !landscapeFullscreen &&
                     (
                         chromeVisible || state.isSearchBarOpen || state.isFilterDialogOpen ||
-                            state.isSourcePickerOpen
+                            state.isSourcePickerOpen || state.isLoginDialogOpen || state.isCustomFeedsOpen ||
+                            state.isWebLoginDialogOpen
                         ),
                 modifier = Modifier.align(Alignment.TopCenter),
             ) {
@@ -417,6 +519,10 @@ data class ReelsFeedScreen(
                             stringResource(MR.strings.reels_following_feed)
                         state.mode == ReelsFeedScreenModel.FeedMode.CREATOR ->
                             "@${state.creator.orEmpty()}"
+                        state.mode == ReelsFeedScreenModel.FeedMode.CUSTOM ->
+                            state.customFeedName.orEmpty()
+                        state.mode == ReelsFeedScreenModel.FeedMode.NICHE ->
+                            state.nicheName.orEmpty()
                         else -> state.sourceName
                     },
                     sourceIcon = state.sourceIcons[state.currentSourceId],
@@ -429,29 +535,95 @@ data class ReelsFeedScreen(
                     preloadEnabled = state.preloadEnabled,
                     preloadWifiOnly = state.preloadWifiOnly,
                     isOffline = state.isOffline,
-                    // Search, filters and source picking belong to the global feed only.
+                    // Search and source picking belong to the global feed; the filter sheet additionally
+                    // opens in NICHE mode for order-capable sources (contract v21).
                     showSearch = state.supportsTags && state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
-                    showFilter = state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
+                    showFilter = state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL ||
+                        (state.mode == ReelsFeedScreenModel.FeedMode.NICHE && state.isCategoryOrderCapable),
+                    // Source-supplied chips for the search bar (contract v19 addendum);
+                    // no chips when the source supplies none.
+                    searchHints = state.searchHints,
+                    // Categorized search tabs (contract v20) with preview rows.
+                    searchSuggestions = state.searchSuggestions,
+                    onSuggestionClick = { suggestion ->
+                        when (suggestion.kind) {
+                            SearchSuggestionKind.NICHE -> navigator.push(
+                                ReelsFeedScreen(
+                                    sourceId = state.currentSourceId,
+                                    nicheId = suggestion.id,
+                                    nicheName = suggestion.label,
+                                ),
+                            )
+                            SearchSuggestionKind.CREATOR -> navigator.push(
+                                ReelsFeedScreen(
+                                    sourceId = state.currentSourceId,
+                                    creator = suggestion.id,
+                                ),
+                            )
+                            SearchSuggestionKind.TAG -> screenModel.search(suggestion.label)
+                        }
+                    },
+                    onSuggestionsRequest = screenModel::requestSearchSuggestions,
+                    // Favorites stays a direct circle; personal content groups into the account hub.
+                    // Source switching lives on the title badge only — one affordance per action.
+                    // Account hub (V1): login state, custom feeds, Following, login/logout.
+                    showAccount = state.isLoginCapable && !state.isOffline &&
+                        state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
+                    isLoggedIn = state.loggedInAccount != null,
+                    loggedInAccount = state.loggedInAccount,
+                    showCustomFeedsAccountRow = state.isCustomFeedCapable,
+                    showFollowsAccountRow = state.isCreatorCapable,
+                    showNichesAccountRow = state.isBrowseCapable &&
+                        state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL,
+                    showContentPrefsAccountRow = state.isContentPreferencesCapable,
+                    showBlockedTagsAccountRow = state.isBlockedTagsCapable,
                     showSourcePicker = !state.isOffline &&
                         state.mode == ReelsFeedScreenModel.FeedMode.GLOBAL &&
                         state.availableSources.size > 1,
-                    showFollowToggle = state.mode == ReelsFeedScreenModel.FeedMode.CREATOR &&
-                        state.isCreatorCapable,
-                    isFollowingCreator = state.creator?.let { it in state.followingCreators } == true,
-                    onToggleFollow = { handleFollowToggle(state.creator) },
-                    showFollowsEntry = state.isCreatorCapable && !state.isOffline,
-                    onOpenFollows = { navigator.push(ReelsFollowsScreen(sourceId = state.currentSourceId)) },
+                    showFollowToggle =
+                    (state.mode == ReelsFeedScreenModel.FeedMode.CREATOR && state.isCreatorCapable) ||
+                        (state.mode == ReelsFeedScreenModel.FeedMode.NICHE && state.isCategorySubscribable),
+                    isFollowingCreator = if (state.mode == ReelsFeedScreenModel.FeedMode.NICHE) {
+                        state.isCategoryFollowed
+                    } else {
+                        state.creator?.let { it in state.followingCreators } == true
+                    },
+                    onToggleFollow = {
+                        if (state.mode == ReelsFeedScreenModel.FeedMode.NICHE) {
+                            screenModel.toggleCategoryFollow()
+                        } else {
+                            handleFollowToggle(state.creator)
+                        }
+                    },
                     onBackClick = { navigator.pop() },
                     onOpenSourcePicker = { screenModel.toggleSourcePicker(true) },
+                    onLoginRequest = { screenModel.openLoginFlow() },
+                    onLogout = screenModel::logout,
+                    onOpenCustomFeeds = { screenModel.toggleCustomFeeds(true) },
+                    onOpenNiches = { navigator.push(ReelsNichesScreen(sourceId = state.currentSourceId)) },
+                    onOpenContentPrefs = { screenModel.toggleContentPreferences(true) },
+                    onOpenBlockedTags = { screenModel.toggleBlockedTags(true) },
                     onToggleAutoAdvance = screenModel::toggleAutoAdvance,
                     onToggleCropMode = screenModel::toggleCropMode,
                     onToggleQuality = screenModel::toggleQuality,
                     onToggleDataSaver = screenModel::toggleDataSaver,
                     onTogglePreload = screenModel::togglePreload,
                     onTogglePreloadWifiOnly = screenModel::togglePreloadWifiOnly,
+                    onClearVideoCache = {
+                        coroutineScope.launch {
+                            val freed = withContext(Dispatchers.IO) { clearReelsVideoCache(context) }
+                            snackbarHostState.showSnackbar(
+                                context.stringResource(
+                                    MR.strings.reels_video_cache_cleared,
+                                    Formatter.formatFileSize(context, freed),
+                                ),
+                            )
+                        }
+                    },
                     onToggleSearchBar = { screenModel.toggleSearchBar(!state.isSearchBarOpen) },
                     onOpenFilterDialog = { screenModel.toggleFilterDialog(true) },
                     onOpenFavorites = { navigator.push(ReelsFavoritesScreen()) },
+                    onOpenFollows = { navigator.push(ReelsFollowsScreen(sourceId = state.currentSourceId)) },
                     onSearch = screenModel::search,
                     onClearSearch = screenModel::clearSearch,
                     modifier = Modifier,
@@ -477,6 +649,137 @@ data class ReelsFeedScreen(
                     currentSourceId = state.currentSourceId,
                     onSelectSource = screenModel::switchSource,
                     icons = state.sourceIcons,
+                )
+            }
+
+            // Account / login dialog (contract v19)
+            if (state.isLoginDialogOpen) {
+                ReelsLoginDialog(
+                    loggedInAccount = state.loggedInAccount,
+                    isLoggingIn = state.isLoggingIn,
+                    loginError = state.loginError,
+                    onLogin = screenModel::login,
+                    onLogout = screenModel::logout,
+                    onDismiss = { screenModel.toggleLoginDialog(false) },
+                )
+            }
+
+            // Hosted web login WebView (contract v20)
+            if (state.isWebLoginDialogOpen) {
+                screenModel.webLoginUrl()?.let { url ->
+                    ReelsWebLoginDialog(
+                        startUrl = url,
+                        freshStartUrl = { screenModel.ownAuthorizeUrl() },
+                        showHint = state.webLoginHint,
+                        isOwnRedirect = screenModel::isOwnWebLoginRedirect,
+                        stage2Attempt = state.webLoginStage2Attempt,
+                        onSession = { cookies, localStorage ->
+                            screenModel.tryImportWebSession(cookies, localStorage)
+                        },
+                        onDoneSession = { cookies, localStorage ->
+                            screenModel.tryImportWebSessionStage2(cookies, localStorage)
+                        },
+                        onOwnRedirect = { redirectUrl, cookies ->
+                            screenModel.tryImportWebRedirect(redirectUrl, cookies)
+                        },
+                        onDismiss = { screenModel.toggleWebLoginDialog(false) },
+                    )
+                }
+            }
+
+            // Content preferences editor (contract v20)
+            if (state.isContentPreferencesOpen) {
+                ReelsContentPreferencesSheet(
+                    preferences = state.contentPreferences,
+                    isLoading = state.isContentPreferencesLoading,
+                    error = state.contentPreferencesError,
+                    onSave = screenModel::saveContentPreferences,
+                    onDismiss = { screenModel.toggleContentPreferences(false) },
+                )
+            }
+
+            // Blocked tags editor (contract v20)
+            if (state.isBlockedTagsOpen) {
+                ReelsBlockedTagsSheet(
+                    initialTags = state.blockedTags.orEmpty(),
+                    isLoading = state.isBlockedTagsLoading,
+                    error = state.blockedTagsError,
+                    onSave = screenModel::saveBlockedTags,
+                    onDismiss = { screenModel.toggleBlockedTags(false) },
+                )
+            }
+
+            // Silent Cloudflare bootstrap (web-login-capable sources): an offscreen WebView
+            // solves the managed challenge and lifts the cookies — no user interaction; the
+            // import verification reloads the feed and unmounts the view on success.
+            if (state.cfBootstrapAttempt > 0) {
+                screenModel.webLoginUrl()?.let { url ->
+                    CfBootstrapWebView(
+                        startUrl = url,
+                        attempt = state.cfBootstrapAttempt,
+                        onSession = { cookies, localStorage ->
+                            screenModel.tryImportWebSession(cookies, localStorage)
+                        },
+                    )
+                }
+            }
+
+            // Custom feeds picker (contract v19)
+            if (state.isCustomFeedsOpen) {
+                ReelsCustomFeedsSheet(
+                    feeds = state.customFeeds,
+                    isLoading = state.isCustomFeedsLoading,
+                    error = state.customFeedsError,
+                    onDismissRequest = { screenModel.toggleCustomFeeds(false) },
+                    onSelectFeed = { feed ->
+                        screenModel.toggleCustomFeeds(false)
+                        navigator.push(
+                            ReelsFeedScreen(
+                                sourceId = state.currentSourceId,
+                                customFeedId = feed.id,
+                                customFeedName = feed.name,
+                            ),
+                        )
+                    },
+                    onNewFeed = {
+                        screenModel.toggleCustomFeeds(false)
+                        navigator.push(ReelsCustomFeedEditorScreen(sourceId = state.currentSourceId))
+                    },
+                    onEditFeed = { feed ->
+                        screenModel.toggleCustomFeeds(false)
+                        navigator.push(
+                            ReelsCustomFeedEditorScreen(
+                                sourceId = state.currentSourceId,
+                                feedId = feed.id,
+                                initialName = feed.name,
+                            ),
+                        )
+                    },
+                    onDeleteFeed = { feed -> pendingDeleteFeed = feed },
+                )
+            }
+
+            // Delete custom-feed confirmation
+            pendingDeleteFeed?.let { feed ->
+                AlertDialog(
+                    onDismissRequest = { pendingDeleteFeed = null },
+                    title = { Text(stringResource(MR.strings.reels_custom_feed_delete)) },
+                    text = { Text(stringResource(MR.strings.reels_custom_feed_delete_confirm)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                screenModel.deleteCustomFeed(feed.id)
+                                pendingDeleteFeed = null
+                            },
+                        ) {
+                            Text(stringResource(MR.strings.reels_custom_feed_delete))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDeleteFeed = null }) {
+                            Text(stringResource(MR.strings.action_cancel))
+                        }
+                    },
                 )
             }
 

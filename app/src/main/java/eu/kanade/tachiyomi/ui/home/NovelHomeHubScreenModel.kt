@@ -102,11 +102,14 @@ internal class NovelHomeHubScreenModel(
     private val getLibraryNovel: GetLibraryNovel by injectLazy()
     private val getNovel: GetNovel by injectLazy()
     private val getNovelWithChapters: GetNovelWithChapters by injectLazy()
+    private val getNovelBookState: tachiyomi.domain.book.novel.interactor.GetNovelBookState by injectLazy()
     private val getNovelCategories: GetNovelCategories by injectLazy()
     private val getEnabledNovelSources: GetEnabledNovelSources by injectLazy()
     private val sourcePreferences: SourcePreferences by injectLazy()
     private val sourceManager: NovelSourceManager by injectLazy()
     private val localNovelSourceFileSystem: LocalNovelSourceFileSystem by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
 
     override val avatarFileName: String = "user_avatar_novel.jpg"
 
@@ -225,6 +228,76 @@ internal class NovelHomeHubScreenModel(
                         },
                     )
                 }
+            }
+        }
+
+        // Тизер ленты «Для тебя» — чтение только из БД (ноль сети на рендер Home).
+        screenModelScope.launchIO {
+            combine(
+                discoveryRepository.subscribe(tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL),
+                discoveryPreferences.discoveryEnabled().changes(),
+                discoveryPreferences.teaserCount().changes(),
+                discoveryRepository.subscribeHidden(tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL),
+                discoveryRepository.subscribeBlacklist(tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL),
+            ) { items, enabled, count, hidden, blacklist ->
+                items.filterNot { it.cleanTitle in hidden } to Triple(
+                    enabled,
+                    count,
+                    eu.kanade.tachiyomi.data.discovery.expandGenreSet(blacklist.toList()),
+                )
+            }
+                .collectLatest { (visible, prefs) ->
+                    val (enabled, count, expandedBlacklist) = prefs
+                    val filtered = visible.filterNot {
+                        eu.kanade.tachiyomi.data.discovery.isBlacklisted(it, expandedBlacklist)
+                    }
+                    cachedDiscoveryPool = eu.kanade.tachiyomi.data.discovery.dedupeCrossRow(filtered)
+                    val teaser = if (enabled) {
+                        composeTeaserItems(
+                            cachedDiscoveryPool,
+                            count,
+                            offset = discoveryOffset,
+                        )
+                    } else {
+                        emptyList()
+                    }
+                    mutableState.update { it.copy(discovery = teaser, discoveryEnabled = enabled) }
+                }
+        }
+    }
+
+    private var cachedDiscoveryPool: List<tachiyomi.domain.discovery.model.DiscoverySuggestion> = emptyList()
+    private var discoveryOffset: Int = 0
+
+    override fun rotateOrRefreshDiscovery() {
+        if (!discoveryPreferences.discoveryEnabled().get()) return
+        val count = discoveryPreferences.teaserCount().get().coerceIn(3, 20)
+        val pool = cachedDiscoveryPool
+        if (pool.size > count) {
+            val nextOffset = discoveryOffset + count
+            if (nextOffset < pool.size) {
+                discoveryOffset = nextOffset
+                val teaser = composeTeaserItems(pool, count, offset = discoveryOffset)
+                mutableState.update { it.copy(discovery = teaser) }
+                return
+            }
+        }
+        discoveryOffset = 0
+        if (state.value.isDiscoveryRefreshing) return
+        // Ручной рефреш делит общий cooldown с feed-экраном (5 мин от нажатия).
+        val now = System.currentTimeMillis()
+        val lastManual = discoveryPreferences.manualRefreshAt().get().takeIf { it > 0L }
+        if (eu.kanade.tachiyomi.ui.discovery.remainingCooldownSeconds(lastManual, now) > 0L) return
+        discoveryPreferences.manualRefreshAt().set(now)
+        mutableState.update { it.copy(isDiscoveryRefreshing = true) }
+        screenModelScope.launchIO {
+            try {
+                Injekt.get<eu.kanade.tachiyomi.data.discovery.DiscoveryRunner>().run(
+                    listOf(tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL),
+                    isManualRefresh = true,
+                )
+            } finally {
+                mutableState.update { it.copy(isDiscoveryRefreshing = false) }
             }
         }
     }
@@ -371,7 +444,10 @@ internal class NovelHomeHubScreenModel(
 
     private suspend fun loadHeroChapterId(novelId: Long, fromChapterId: Long) {
         val chapters = getNovelWithChapters.awaitChapters(novelId, applyScanlatorFilter = true)
-        lastResolvedHeroChapterId = resolveNovelHomeHeroChapterId(chapters, fromChapterId)
+        // The hero card must resume a book-mode title at its stored book position, not at the
+        // per-chapter heuristic result.
+        val bookState = getNovelBookState.await(novelId)
+        lastResolvedHeroChapterId = resolveNovelHomeHeroChapterId(chapters, fromChapterId, bookState)
     }
 
     fun getHeroChapterId(): Long? {
@@ -499,8 +575,9 @@ internal class NovelHomeHubScreenModel(
 internal fun resolveNovelHomeHeroChapterId(
     chapters: List<tachiyomi.domain.items.novelchapter.model.NovelChapter>,
     fromChapterId: Long,
+    bookState: tachiyomi.domain.book.novel.model.NovelBookState? = null,
 ): Long? {
-    return resolveNovelResumeChapter(chapters, fromChapterId)?.id
+    return resolveNovelResumeChapter(chapters, fromChapterId, bookState)?.id
 }
 
 internal fun shouldReloadNovelHomeHeroChapterId(

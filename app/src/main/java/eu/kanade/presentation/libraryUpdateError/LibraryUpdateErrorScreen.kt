@@ -55,6 +55,7 @@ import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -122,6 +123,9 @@ fun LibraryUpdateErrorScreen(
     onErrorDelete: (Long) -> Unit,
     onErrorSelected: (LibraryUpdateErrorItem, Boolean) -> Unit,
     navigateUp: () -> Unit,
+    // P6: guided manual solve for a host stuck on an interactive Cloudflare challenge.
+    interactiveChallengeUrl: String? = null,
+    onOpenInteractiveChallenge: (String) -> Unit = {},
 ) {
     val uiStyle = rememberResolvedSettingsUiStyle()
     val pagerState = rememberPagerState(
@@ -159,91 +163,119 @@ fun LibraryUpdateErrorScreen(
 
     BackHandler(enabled = state.selectionMode, onBack = { onSelectAll(false) })
 
-    when (uiStyle) {
-        SettingsUiStyle.Classic -> {
-            Scaffold(
-                topBar = { scrollBehavior ->
-                    AppBar(
-                        title = stringResource(AYMR.strings.label_library_update_errors),
-                        navigateUp = onBackPressed,
-                        actions = {
-                            if (state.visibleItems.isNotEmpty()) {
-                                LibraryUpdateErrorRetryButton(
-                                    isRetrying = state.isRetryingVisible,
-                                    onClick = onRetryVisibleErrors,
-                                )
-                            }
-                        },
-                        scrollBehavior = scrollBehavior,
+    Box(Modifier.fillMaxSize()) {
+        when (uiStyle) {
+            SettingsUiStyle.Classic -> {
+                Scaffold(
+                    topBar = { scrollBehavior ->
+                        AppBar(
+                            title = stringResource(AYMR.strings.label_library_update_errors),
+                            navigateUp = onBackPressed,
+                            actions = {
+                                if (state.visibleItems.isNotEmpty()) {
+                                    LibraryUpdateErrorRetryButton(
+                                        isRetrying = state.isRetryingVisible,
+                                        onClick = onRetryVisibleErrors,
+                                    )
+                                }
+                            },
+                            scrollBehavior = scrollBehavior,
+                        )
+                    },
+                    bottomBar = {
+                        LibraryUpdateErrorSelectionBottomBar(
+                            visible = state.selectionMode,
+                            selectedCount = state.selected.size,
+                            onSelectAll = { onSelectAll(true) },
+                            onInvertSelection = onInvertSelection,
+                            onMigrateSelected = onMigrateSelected,
+                            onDelete = onErrorsDelete,
+                        )
+                    },
+                ) { contentPadding ->
+                    LibraryUpdateErrorContent(
+                        state = state,
+                        contentPadding = contentPadding,
+                        uiStyle = uiStyle,
+                        pagerState = pagerState,
+                        onTabSelected = onDisplayTabSelected,
+                        onClick = onClick,
+                        onErrorDelete = onErrorDelete,
+                        onErrorSelected = onErrorSelected,
                     )
-                },
-                bottomBar = {
-                    LibraryUpdateErrorSelectionBottomBar(
-                        visible = state.selectionMode,
-                        selectedCount = state.selected.size,
-                        onSelectAll = { onSelectAll(true) },
-                        onInvertSelection = onInvertSelection,
-                        onMigrateSelected = onMigrateSelected,
-                        onDelete = onErrorsDelete,
-                    )
-                },
-            ) { contentPadding ->
-                LibraryUpdateErrorContent(
-                    state = state,
-                    contentPadding = contentPadding,
-                    uiStyle = uiStyle,
-                    pagerState = pagerState,
-                    onTabSelected = onDisplayTabSelected,
-                    onClick = onClick,
-                    onErrorDelete = onErrorDelete,
-                    onErrorSelected = onErrorSelected,
-                )
+                }
+            }
+            SettingsUiStyle.Aurora -> {
+                val layoutDirection = LocalLayoutDirection.current
+                val topBarState = rememberTopAppBarState()
+                val topBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(topBarState)
+                Scaffold(
+                    topBarScrollBehavior = topBarScrollBehavior,
+                    containerColor = Color.Transparent,
+                    topBar = { scrollBehavior ->
+                        AuroraSettingsTopBarChrome(scrollBehavior) {
+                            AuroraLibraryUpdateErrorTopBar(
+                                state = state,
+                                onBackPressed = onBackPressed,
+                                onRetryVisibleErrors = onRetryVisibleErrors,
+                            )
+                        }
+                    },
+                    bottomBar = {
+                        LibraryUpdateErrorSelectionBottomBar(
+                            visible = state.selectionMode,
+                            selectedCount = state.selected.size,
+                            onSelectAll = { onSelectAll(true) },
+                            onInvertSelection = onInvertSelection,
+                            onMigrateSelected = onMigrateSelected,
+                            onDelete = onErrorsDelete,
+                        )
+                    },
+                ) { contentPadding ->
+                    SettingsAuroraBackground(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LibraryUpdateErrorContent(
+                                state = state,
+                                contentPadding = PaddingValues(
+                                    start = contentPadding.calculateLeftPadding(layoutDirection),
+                                    top = contentPadding.calculateTopPadding(),
+                                    end = contentPadding.calculateRightPadding(layoutDirection),
+                                    bottom = contentPadding.calculateBottomPadding() + 16.dp,
+                                ),
+                                uiStyle = uiStyle,
+                                pagerState = pagerState,
+                                onTabSelected = onDisplayTabSelected,
+                                onClick = onClick,
+                                onErrorDelete = onErrorDelete,
+                                onErrorSelected = onErrorSelected,
+                            )
+                        }
+                    }
+                }
             }
         }
-        SettingsUiStyle.Aurora -> {
-            val layoutDirection = LocalLayoutDirection.current
-            val topBarState = rememberTopAppBarState()
-            val topBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(topBarState)
-            Scaffold(
-                topBarScrollBehavior = topBarScrollBehavior,
-                containerColor = Color.Transparent,
-                topBar = { scrollBehavior ->
-                    AuroraSettingsTopBarChrome(scrollBehavior) {
-                        AuroraLibraryUpdateErrorTopBar(
-                            state = state,
-                            onBackPressed = onBackPressed,
-                            onRetryVisibleErrors = onRetryVisibleErrors,
-                        )
-                    }
-                },
-                bottomBar = {
-                    LibraryUpdateErrorSelectionBottomBar(
-                        visible = state.selectionMode,
-                        selectedCount = state.selected.size,
-                        onSelectAll = { onSelectAll(true) },
-                        onInvertSelection = onInvertSelection,
-                        onMigrateSelected = onMigrateSelected,
-                        onDelete = onErrorsDelete,
+
+        // P6: overlay banner - the WebView solve shares cookies app-wide (AndroidCookieJar),
+        // so solving there once clears every network client.
+        if (interactiveChallengeUrl != null) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 72.dp, start = 16.dp, end = 16.dp),
+                tonalElevation = 3.dp,
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(MR.strings.information_cloudflare_interactive_challenge),
+                        modifier = Modifier.weight(1f),
                     )
-                },
-            ) { contentPadding ->
-                SettingsAuroraBackground(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        LibraryUpdateErrorContent(
-                            state = state,
-                            contentPadding = PaddingValues(
-                                start = contentPadding.calculateLeftPadding(layoutDirection),
-                                top = contentPadding.calculateTopPadding(),
-                                end = contentPadding.calculateRightPadding(layoutDirection),
-                                bottom = contentPadding.calculateBottomPadding() + 16.dp,
-                            ),
-                            uiStyle = uiStyle,
-                            pagerState = pagerState,
-                            onTabSelected = onDisplayTabSelected,
-                            onClick = onClick,
-                            onErrorDelete = onErrorDelete,
-                            onErrorSelected = onErrorSelected,
-                        )
+                    TextButton(onClick = { onOpenInteractiveChallenge(interactiveChallengeUrl) }) {
+                        Text(text = stringResource(MR.strings.action_open_webview))
                     }
                 }
             }

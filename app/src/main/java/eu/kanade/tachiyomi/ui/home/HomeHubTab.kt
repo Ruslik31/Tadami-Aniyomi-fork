@@ -106,6 +106,7 @@ import eu.kanade.tachiyomi.ui.home.components.AnimatedNicknameOverlay
 import eu.kanade.tachiyomi.ui.home.components.NicknameBadgeDecorator
 import eu.kanade.tachiyomi.ui.home.components.isTreasury
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import tachiyomi.data.achievement.UnlockableManager
@@ -672,6 +673,9 @@ internal data class HomeHubUiState(
     val hero: HomeHubHero? = null,
     val history: List<HomeHubHistory> = emptyList(),
     val recommendations: List<HomeHubRecommendation> = emptyList(),
+    val discovery: List<HomeHubDiscoveryItem> = emptyList(),
+    val discoveryEnabled: Boolean = false,
+    val isDiscoveryRefreshing: Boolean = false,
     val userName: String,
     val userAvatar: String,
     val greeting: dev.icerock.moko.resources.StringResource,
@@ -707,11 +711,24 @@ internal data class HomeHubRecommendation(
     val progressDenominator: Long = 1,
 )
 
+internal data class HomeHubDiscoveryItem(
+    val title: String,
+    val cleanTitle: String,
+    val coverUrl: String?,
+    val seedTitle: String?,
+    val reasonPayload: String?,
+    val provider: String,
+    val rowType: tachiyomi.domain.discovery.model.DiscoveryRowType,
+    val mediaType: tachiyomi.domain.discovery.model.DiscoveryMediaType,
+)
+
 object HomeHubTab : Tab {
 
     private val uiPreferences: UiPreferences by injectLazy()
     private val activityDataRepository: tachiyomi.domain.achievement.repository.ActivityDataRepository by injectLazy()
     private val userProfilePreferences: UserProfilePreferences by injectLazy()
+    private val discoveryPreferences: eu.kanade.domain.discovery.service.DiscoveryPreferences by injectLazy()
+    private val discoveryRepository: tachiyomi.domain.discovery.repository.DiscoveryRepository by injectLazy()
 
     override val options: TabOptions
         @Composable
@@ -818,6 +835,8 @@ object HomeHubTab : Tab {
         val homeHeroCtaMode = HomeHeroCtaMode.fromKey(homeHeroCtaModeKey)
         val homeHubRecentCardModeKey by userProfilePreferences.homeHubRecentCardMode().collectAsStateWithLifecycle()
         val homeHubRecentCardMode = HomeHubRecentCardMode.fromKey(homeHubRecentCardModeKey)
+        val homeHeroModeKey by discoveryPreferences.homeHeroMode().collectAsStateWithLifecycle()
+        val homeHeroMode = eu.kanade.domain.ui.model.HomeHeroMode.fromKey(homeHeroModeKey)
 
         val homeHeaderGreetingAlignRight by userProfilePreferences
             .homeHeaderGreetingAlignRight()
@@ -908,6 +927,78 @@ object HomeHubTab : Tab {
             }
         }
 
+        // Страховка расписания ленты «Для тебя»: идемпотентно (ExistingPeriodicWorkPolicy.UPDATE),
+        // покрывает первый запуск, dev-сборки (миграция 208f) и восстановление после очистки данных.
+        LaunchedEffect(Unit) {
+            eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.setupTask(context)
+        }
+        // Per-media bootstrap: если лента активной вкладки никогда не генерировалась —
+        // one-shot сразу (фикс дыры: после успеха аниме манга/новеллы ждали бы до 24ч).
+        LaunchedEffect(selectedSection) {
+            val mediaType = when (selectedSection) {
+                HomeHubSection.Anime -> tachiyomi.domain.discovery.model.DiscoveryMediaType.ANIME
+                HomeHubSection.Manga -> tachiyomi.domain.discovery.model.DiscoveryMediaType.MANGA
+                HomeHubSection.Novel -> tachiyomi.domain.discovery.model.DiscoveryMediaType.NOVEL
+            }
+            if (discoveryRepository.lastUpdatedAt(mediaType) == null) {
+                eu.kanade.tachiyomi.data.discovery.DiscoveryUpdateJob.refreshNow(context, mediaType)
+            }
+        }
+        var hiddenSnackItem by remember { mutableStateOf<HomeHubDiscoveryItem?>(null) }
+        // B2: теговый snackbar — (тег, число скрытых карточек, исходный медиатип для undo).
+        var tagSnack by remember {
+            mutableStateOf<Triple<String, Int, tachiyomi.domain.discovery.model.DiscoveryMediaType>?>(null)
+        }
+        val discoveryHideScope = rememberCoroutineScope()
+        LaunchedEffect(hiddenSnackItem, tagSnack) {
+            if (hiddenSnackItem != null || tagSnack != null) {
+                delay(4000)
+                hiddenSnackItem = null
+                tagSnack = null
+            }
+        }
+        val onDiscoveryHide: (HomeHubDiscoveryItem) -> Unit = { item ->
+            discoveryHideScope.launch {
+                // mediaType берём из айтема, а не из текущей вкладки: snackbar переживает
+                // свайп между вкладками, и undo обязан целиться в исходный медиатип.
+                discoveryRepository.hide(item.mediaType, item.cleanTitle)
+                hiddenSnackItem = item
+            }
+        }
+        val onDiscoveryBlacklistTag: (HomeHubDiscoveryItem, String, Int) -> Unit = { item, tag, count ->
+            discoveryHideScope.launch {
+                discoveryRepository.blacklistTag(item.mediaType, tag)
+                tagSnack = Triple(tag, count, item.mediaType)
+            }
+        }
+        val onUndoHidden: () -> Unit = {
+            val snack = tagSnack
+            if (snack != null) {
+                tagSnack = null
+                discoveryHideScope.launch {
+                    discoveryRepository.unblacklistTag(snack.third, snack.first)
+                }
+            } else {
+                val item = hiddenSnackItem
+                hiddenSnackItem = null
+                if (item != null) {
+                    discoveryHideScope.launch {
+                        discoveryRepository.unhide(item.mediaType, item.cleanTitle)
+                    }
+                }
+            }
+        }
+        val currentTagSnack = tagSnack
+        val hiddenSnackText = when {
+            currentTagSnack != null -> stringResource(
+                AYMR.strings.for_you_tag_blacklist_undo,
+                currentTagSnack.second,
+                currentTagSnack.first,
+            )
+            hiddenSnackItem != null -> stringResource(AYMR.strings.for_you_hidden_snackbar)
+            else -> null
+        }
+
         val photoPickerLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.GetContent(),
         ) { uri ->
@@ -949,7 +1040,7 @@ object HomeHubTab : Tab {
         // which was causing repeated content-start logs and transient skeleton states.
         // Keys chosen so legitimate changes (search, selection, modes) still produce updated list.
         val tabs = remember(
-            sections, selectedSection, homeHeroCtaMode, homeHubRecentCardMode,
+            sections, selectedSection, homeHeroCtaMode, homeHubRecentCardMode, homeHeroMode,
             animeScreenModel, mangaScreenModel, novelScreenModel,
             animeSearchQuery, mangaSearchQuery, novelSearchQuery, scrollResetToken,
         ) {
@@ -964,6 +1055,11 @@ object HomeHubTab : Tab {
                                 searchQuery = animeSearchQuery,
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
+                                heroMode = homeHeroMode,
+                                hiddenSnackbar = hiddenSnackText,
+                                onUndoHidden = onUndoHidden,
+                                onDiscoveryLongClick = onDiscoveryHide,
+                                onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -980,6 +1076,11 @@ object HomeHubTab : Tab {
                                 searchQuery = mangaSearchQuery,
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
+                                heroMode = homeHeroMode,
+                                hiddenSnackbar = hiddenSnackText,
+                                onUndoHidden = onUndoHidden,
+                                onDiscoveryLongClick = onDiscoveryHide,
+                                onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,
@@ -996,6 +1097,11 @@ object HomeHubTab : Tab {
                                 searchQuery = novelSearchQuery,
                                 heroCtaMode = homeHeroCtaMode,
                                 recentCardMode = homeHubRecentCardMode,
+                                heroMode = homeHeroMode,
+                                hiddenSnackbar = hiddenSnackText,
+                                onUndoHidden = onUndoHidden,
+                                onDiscoveryLongClick = onDiscoveryHide,
+                                onDiscoveryBlacklistTag = onDiscoveryBlacklistTag,
                                 activeSection = selectedSection,
                                 scrollResetToken = scrollResetToken,
                                 onScrollSignal = onScrollSignal,

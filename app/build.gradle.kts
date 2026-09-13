@@ -18,9 +18,9 @@ android {
 
     defaultConfig {
         applicationId = "com.tadami.aurora"
-        versionCode = 204
+        versionCode = 209
 
-        versionName = "0.61"
+        versionName = "0.62"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -369,6 +369,8 @@ dependencies {
     implementation(aniyomilibs.aniyomi.mpv)
     // ExoPlayer for the short-video (Reels) feed player
     implementation(libs.media3.exoplayer)
+    // HLS support (Bunny-CDN playlist.m3u8 feeds), resolved by DefaultMediaSourceFactory
+    implementation(libs.media3.exoplayer.hls)
     // OkHttp-backed media data source so reels use the app network stack (cookies/DoH/proxy)
     implementation(libs.media3.datasource.okhttp)
     // FFmpeg-kit

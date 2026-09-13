@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.novel
 
 import android.app.Application
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.entries.novel.interactor.UpdateNovel
 import eu.kanade.domain.items.novelchapter.interactor.SyncNovelChaptersWithSource
 import eu.kanade.domain.source.novel.interactor.GetNovelIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
@@ -15,12 +16,12 @@ import eu.kanade.tachiyomi.data.translation.TranslationQueueItem
 import eu.kanade.tachiyomi.data.translation.TranslationQueueManager
 import eu.kanade.tachiyomi.data.translation.TranslationStatus
 import eu.kanade.tachiyomi.extension.novel.NovelExtensionManager
-import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginPackage
-import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginRepoEntry
-import eu.kanade.tachiyomi.extension.novel.repo.NovelPluginStorage
+import eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginAssetBindings
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.novelsource.NovelSource
 import eu.kanade.tachiyomi.novelsource.model.SNovelChapter
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.novel.NovelSiteSource
 import eu.kanade.tachiyomi.source.novel.NovelWebUrlSource
 import eu.kanade.tachiyomi.test.PersistingPreferenceStore
 import eu.kanade.tachiyomi.ui.reader.novel.SelectedTextAction
@@ -33,11 +34,14 @@ import eu.kanade.tachiyomi.ui.reader.novel.translation.DeepSeekTranslationServic
 import eu.kanade.tachiyomi.ui.reader.novel.translation.GeminiTranslationCacheEntry
 import eu.kanade.tachiyomi.ui.reader.novel.translation.GeminiTranslationService
 import eu.kanade.tachiyomi.ui.reader.novel.translation.GoogleTranslationService
+import eu.kanade.tachiyomi.ui.reader.novel.translation.NOVEL_TRANSLATION_EXTRACTOR_VERSION
 import eu.kanade.tachiyomi.ui.reader.novel.translation.NovelReaderTranslationDiskCacheStore
 import eu.kanade.tachiyomi.ui.reader.novel.translation.OpenRouterModelsService
 import eu.kanade.tachiyomi.ui.reader.novel.translation.OpenRouterTranslationService
 import eu.kanade.tachiyomi.ui.reader.novel.translation.translationCacheModelId
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -153,7 +157,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -189,7 +193,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(
                     selectedTextTranslationEnabled = true,
                 ),
@@ -223,7 +227,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -349,7 +353,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = sourceManager,
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -384,7 +388,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello</p><p>World</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = novelReaderPreferences,
                 isSystemDark = { false },
             )
@@ -461,7 +465,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello</p><p>World</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -520,7 +524,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello</p><p>World</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -576,7 +580,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello</p><p>World</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -598,6 +602,7 @@ class NovelReaderScreenModelTest {
                     targetLang = initialState.readerSettings.geminiTargetLang,
                     promptMode = initialState.readerSettings.geminiPromptMode,
                     stylePreset = initialState.readerSettings.geminiStylePreset,
+                    extractorVersion = NOVEL_TRANSLATION_EXTRACTOR_VERSION,
                 ),
             )
 
@@ -690,7 +695,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello</p><p>World</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -713,6 +718,7 @@ class NovelReaderScreenModelTest {
                     targetLang = initialState.readerSettings.geminiTargetLang,
                     promptMode = initialState.readerSettings.geminiPromptMode,
                     stylePreset = initialState.readerSettings.geminiStylePreset,
+                    extractorVersion = NOVEL_TRANSLATION_EXTRACTOR_VERSION,
                 ),
             )
 
@@ -766,7 +772,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<h1>Original title</h1><p>Original paragraph</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -835,7 +841,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<h1>Original title</h1><p>Original paragraph</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -908,7 +914,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Original paragraph</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -962,7 +968,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Original paragraph</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = novelReaderPreferences,
                 isSystemDark = { false },
             )
@@ -1005,7 +1011,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1044,7 +1050,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<h1>Сайтовый заголовок</h1><p>Hello</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1085,7 +1091,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Intro</p><img src=\"/images/pic.jpg\" /><p>Outro</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1140,7 +1146,7 @@ class NovelReaderScreenModelTest {
                         <p>Outro</p>
                     """.trimIndent(),
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1181,7 +1187,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = htmlWithMalformedFragment,
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1205,29 +1211,15 @@ class NovelReaderScreenModelTest {
     fun `loads custom js and css for plugin source`() {
         runBlocking {
             val pluginId = "plugin.test"
-            val entry = NovelPluginRepoEntry(
-                id = pluginId,
-                name = "Plugin",
-                site = "https://example.org",
-                lang = "en",
-                version = 1,
-                url = "https://example.org/plugin.js",
-                iconUrl = null,
-                customJsUrl = null,
-                customCssUrl = null,
-                hasSettings = false,
-                sha256 = "ignored",
-            )
             val customJs = "console.log('custom');"
             val customCss = "body { color: red; }"
-            val pkg = NovelPluginPackage(
-                entry = entry,
-                script = "console.log('main');".toByteArray(),
-                customJs = customJs.toByteArray(),
-                customCss = customCss.toByteArray(),
+            val assetBindings = writePluginAssets(
+                pluginId = pluginId,
+                customJs = customJs,
+                customCss = customCss,
             )
 
-            val novel = Novel.create().copy(id = 1L, source = pluginId.hashCode().toLong(), title = "Novel")
+            val novel = Novel.create().copy(id = 1L, source = 10L, title = "Novel")
             val chapter = NovelChapter.create().copy(
                 id = 5L,
                 novelId = 1L,
@@ -1239,8 +1231,13 @@ class NovelReaderScreenModelTest {
                 chapterId = chapter.id,
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
-                sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(listOf(pkg)),
+                sourceManager = FakeNovelSourceManager(
+                    sourceId = novel.source,
+                    chapterHtml = "<p>Hello</p>",
+                    pluginId = pluginId,
+                    siteUrl = "https://example.org",
+                ),
+                pluginAssetBindings = assetBindings,
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1266,27 +1263,12 @@ class NovelReaderScreenModelTest {
     fun `applies plugin css text indent to rich native blocks`() {
         runBlocking {
             val pluginId = "plugin.indent"
-            val entry = NovelPluginRepoEntry(
-                id = pluginId,
-                name = "Plugin",
-                site = "https://example.org",
-                lang = "en",
-                version = 1,
-                url = "https://example.org/plugin.js",
-                iconUrl = null,
-                customJsUrl = null,
-                customCssUrl = null,
-                hasSettings = false,
-                sha256 = "ignored",
-            )
-            val pkg = NovelPluginPackage(
-                entry = entry,
-                script = "console.log('main');".toByteArray(),
-                customJs = null,
-                customCss = "p { text-indent: 2em; }".toByteArray(),
+            val assetBindings = writePluginAssets(
+                pluginId = pluginId,
+                customCss = "p { text-indent: 2em; }",
             )
 
-            val novel = Novel.create().copy(id = 1L, source = pluginId.hashCode().toLong(), title = "Novel")
+            val novel = Novel.create().copy(id = 1L, source = 10L, title = "Novel")
             val chapter = NovelChapter.create().copy(
                 id = 5L,
                 novelId = 1L,
@@ -1298,8 +1280,13 @@ class NovelReaderScreenModelTest {
                 chapterId = chapter.id,
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
-                sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(listOf(pkg)),
+                sourceManager = FakeNovelSourceManager(
+                    sourceId = novel.source,
+                    chapterHtml = "<p>Hello</p>",
+                    pluginId = pluginId,
+                    siteUrl = "https://example.org",
+                ),
+                pluginAssetBindings = assetBindings,
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1324,27 +1311,12 @@ class NovelReaderScreenModelTest {
     fun `applies plugin descendant css text indent and align to rich native blocks`() {
         runBlocking {
             val pluginId = "plugin.indent.descendant"
-            val entry = NovelPluginRepoEntry(
-                id = pluginId,
-                name = "Plugin",
-                site = "https://example.org",
-                lang = "en",
-                version = 1,
-                url = "https://example.org/plugin.js",
-                iconUrl = null,
-                customJsUrl = null,
-                customCssUrl = null,
-                hasSettings = false,
-                sha256 = "ignored",
-            )
-            val pkg = NovelPluginPackage(
-                entry = entry,
-                script = "console.log('main');".toByteArray(),
-                customJs = null,
-                customCss = ".entry p { text-indent: 2em; text-align: justify; }".toByteArray(),
+            val assetBindings = writePluginAssets(
+                pluginId = pluginId,
+                customCss = ".entry p { text-indent: 2em; text-align: justify; }",
             )
 
-            val novel = Novel.create().copy(id = 1L, source = pluginId.hashCode().toLong(), title = "Novel")
+            val novel = Novel.create().copy(id = 1L, source = 10L, title = "Novel")
             val chapter = NovelChapter.create().copy(
                 id = 5L,
                 novelId = 1L,
@@ -1359,8 +1331,10 @@ class NovelReaderScreenModelTest {
                 sourceManager = FakeNovelSourceManager(
                     sourceId = novel.source,
                     chapterHtml = "<div class=\"entry\"><p>Hello</p></div>",
+                    pluginId = pluginId,
+                    siteUrl = "https://example.org",
                 ),
-                pluginStorage = FakeNovelPluginStorage(listOf(pkg)),
+                pluginAssetBindings = assetBindings,
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1386,27 +1360,9 @@ class NovelReaderScreenModelTest {
     fun `resolves chapter web url from plugin site when chapter path is relative`() {
         runBlocking {
             val pluginId = "plugin.relative"
-            val entry = NovelPluginRepoEntry(
-                id = pluginId,
-                name = "Plugin",
-                site = "example.org",
-                lang = "en",
-                version = 1,
-                url = "https://example.org/plugin.js",
-                iconUrl = null,
-                customJsUrl = null,
-                customCssUrl = null,
-                hasSettings = false,
-                sha256 = "ignored",
-            )
-            val pkg = NovelPluginPackage(
-                entry = entry,
-                script = "console.log('main');".toByteArray(),
-                customJs = null,
-                customCss = null,
-            )
+            val assetBindings = emptyPluginAssetBindings()
 
-            val novel = Novel.create().copy(id = 1L, source = pluginId.hashCode().toLong(), title = "Novel")
+            val novel = Novel.create().copy(id = 1L, source = 10L, title = "Novel")
             val chapter = NovelChapter.create().copy(
                 id = 5L,
                 novelId = 1L,
@@ -1418,8 +1374,13 @@ class NovelReaderScreenModelTest {
                 chapterId = chapter.id,
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
-                sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(listOf(pkg)),
+                sourceManager = FakeNovelSourceManager(
+                    sourceId = novel.source,
+                    chapterHtml = "<p>Hello</p>",
+                    pluginId = pluginId,
+                    siteUrl = "example.org",
+                ),
+                pluginAssetBindings = assetBindings,
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1463,7 +1424,7 @@ class NovelReaderScreenModelTest {
                         }
                     },
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1535,7 +1496,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -1587,7 +1548,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Intro</p><p>Outro</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -1641,7 +1602,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello <strong>world</strong></p><table><tr><td>x</td></tr></table>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1686,7 +1647,7 @@ class NovelReaderScreenModelTest {
                     sourceId = novel.source,
                     chapterHtml = "<p>Hello <em>styled</em> world</p>",
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -1729,7 +1690,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(null),
                 getNovel = GetNovel(FakeNovelRepository(Novel.create())),
                 sourceManager = FakeNovelSourceManager(sourceId = 10L, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1763,7 +1724,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
                 activityDataRepository = activityDataRepository,
@@ -1815,7 +1776,7 @@ class NovelReaderScreenModelTest {
                         sourceId = novel.source,
                         chapterHtml = "<p>Hello</p>",
                     ),
-                    pluginStorage = FakeNovelPluginStorage(emptyList()),
+                    pluginAssetBindings = emptyPluginAssetBindings(),
                     historyRepository = historyRepository,
                     novelReaderPreferences = createNovelReaderPreferences(),
                     isSystemDark = { false },
@@ -1856,7 +1817,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1892,7 +1853,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1932,7 +1893,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -1967,7 +1928,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2007,7 +1968,7 @@ class NovelReaderScreenModelTest {
                     novelChapterRepository = FakeNovelChapterRepository(chapter),
                     getNovel = GetNovel(FakeNovelRepository(novel)),
                     sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                    pluginStorage = FakeNovelPluginStorage(emptyList()),
+                    pluginAssetBindings = emptyPluginAssetBindings(),
                     novelReaderPreferences = preferences,
                     isSystemDark = { false },
                 )
@@ -2049,7 +2010,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2093,7 +2054,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2108,6 +2069,135 @@ class NovelReaderScreenModelTest {
             yield()
 
             chapterRepo.lastUpdate shouldBe null
+        }
+    }
+
+    @Test
+    fun `re-reading a fully read completed novel does not re-show the finale plate`() {
+        runBlocking {
+            val novel = Novel.create().copy(
+                id = 1L,
+                source = 10L,
+                title = "Novel",
+                status = SManga.COMPLETED.toLong(),
+            )
+            val chapter = NovelChapter.create().copy(
+                id = 5L,
+                novelId = 1L,
+                name = "Chapter 1",
+                url = "https://example.org/ch1",
+                read = true,
+                lastPageRead = 0L,
+            )
+            val chapterRepo = FakeNovelChapterRepository(chapter)
+
+            val screenModel = trackedNovelReaderScreenModel(
+                chapterId = chapter.id,
+                novelChapterRepository = chapterRepo,
+                getNovel = GetNovel(FakeNovelRepository(novel)),
+                sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
+                pluginAssetBindings = emptyPluginAssetBindings(),
+                novelReaderPreferences = createNovelReaderPreferences(),
+                isSystemDark = { false },
+            )
+
+            withTimeout(1_000) {
+                while (screenModel.state.value is NovelReaderScreenModel.State.Loading) {
+                    yield()
+                }
+            }
+
+            // First scroll of a re-read session: the position moved but the chapter was already
+            // read, so this is not a fresh completion and the plate must stay hidden.
+            screenModel.updateReadingProgress(currentIndex = 4, totalItems = 10)
+            yield()
+
+            val success = screenModel.state.value.shouldBeInstanceOf<NovelReaderScreenModel.State.Success>()
+            success.finaleState shouldBe null
+        }
+    }
+
+    @Test
+    fun `finishing the last unread chapter of a completed novel shows the finale plate`() {
+        runBlocking {
+            val novel = Novel.create().copy(
+                id = 1L,
+                source = 10L,
+                title = "Novel",
+                status = SManga.COMPLETED.toLong(),
+            )
+            val chapter = NovelChapter.create().copy(
+                id = 5L,
+                novelId = 1L,
+                name = "Chapter 1",
+                url = "https://example.org/ch1",
+            )
+            val chapterRepo = FakeNovelChapterRepository(chapter)
+
+            val screenModel = trackedNovelReaderScreenModel(
+                chapterId = chapter.id,
+                novelChapterRepository = chapterRepo,
+                getNovel = GetNovel(FakeNovelRepository(novel)),
+                sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
+                pluginAssetBindings = emptyPluginAssetBindings(),
+                novelReaderPreferences = createNovelReaderPreferences(),
+                isSystemDark = { false },
+            )
+
+            withTimeout(1_000) {
+                while (screenModel.state.value is NovelReaderScreenModel.State.Loading) {
+                    yield()
+                }
+            }
+
+            // Fresh completion: the last unread chapter crosses the read threshold.
+            screenModel.updateReadingProgress(currentIndex = 9, totalItems = 10)
+            yield()
+
+            val success = screenModel.state.value.shouldBeInstanceOf<NovelReaderScreenModel.State.Success>()
+            success.finaleState shouldNotBe null
+        }
+    }
+
+    @Test
+    fun `google translation setters write the source override when one exists`() {
+        runBlocking {
+            val novel = Novel.create().copy(id = 1L, source = 10L, title = "Novel")
+            val chapter = NovelChapter.create().copy(
+                id = 5L,
+                novelId = 1L,
+                name = "Chapter 1",
+                url = "https://example.org/ch1",
+            )
+            val prefs = createNovelReaderPreferences()
+            prefs.setSourceOverride(10L, eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderOverride())
+
+            val screenModel = trackedNovelReaderScreenModel(
+                chapterId = chapter.id,
+                novelChapterRepository = FakeNovelChapterRepository(chapter),
+                getNovel = GetNovel(FakeNovelRepository(novel)),
+                sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
+                pluginAssetBindings = emptyPluginAssetBindings(),
+                novelReaderPreferences = prefs,
+                isSystemDark = { false },
+            )
+
+            withTimeout(1_000) {
+                while (screenModel.state.value is NovelReaderScreenModel.State.Loading) {
+                    yield()
+                }
+            }
+
+            screenModel.setGoogleTranslationAutoStart(true)
+            screenModel.setGoogleTranslationTargetLang("Japanese")
+
+            // With an active override the dialog edits must land in the override (resolveSettings
+            // reads it first), leaving the global defaults for all other sources untouched.
+            val override = prefs.getSourceOverride(10L)
+            override?.googleTranslationAutoStart shouldBe true
+            override?.googleTranslationTargetLang shouldBe "Japanese"
+            prefs.googleTranslationAutoStart().get() shouldBe false
+            prefs.googleTranslationTargetLang().get() shouldBe "Russian"
         }
     }
 
@@ -2132,7 +2222,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2173,7 +2263,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 historyRepository = historyRepository,
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
@@ -2223,7 +2313,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2259,7 +2349,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2302,7 +2392,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2358,7 +2448,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2409,7 +2499,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2466,7 +2556,7 @@ class NovelReaderScreenModelTest {
                     ),
                     requestedChapterUrls = requestedUrls,
                 ),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -2487,7 +2577,9 @@ class NovelReaderScreenModelTest {
             screenModel.updateReadingProgress(currentIndex = 4, totalItems = 10)
             yield()
 
-            withTimeout(1_000) {
+            // 5s wall-clock: the 1s budget made this a reproducible flake when the class runs in
+            // one JVM slice with other heavy suites (prefetch legitimately starts, just later).
+            withTimeout(5_000) {
                 while (!requestedUrls.contains(chapter2.url)) {
                     yield()
                 }
@@ -2515,7 +2607,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2564,7 +2656,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2625,7 +2717,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = chapterRepo,
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = createNovelReaderPreferences(),
                 isSystemDark = { false },
             )
@@ -2796,13 +2888,26 @@ class NovelReaderScreenModelTest {
         ): List<NovelChapter> = emptyList()
     }
 
-    private class FakeNovelPluginStorage(
-        private val packages: List<NovelPluginPackage>,
-    ) : NovelPluginStorage {
-        override suspend fun save(pkg: NovelPluginPackage) = Unit
-        override suspend fun get(id: String): NovelPluginPackage? =
-            packages.firstOrNull { it.entry.id == id }
-        override suspend fun getAll(): List<NovelPluginPackage> = packages
+    private fun emptyPluginAssetBindings(): NovelPluginAssetBindings {
+        val dir = java.nio.file.Files.createTempDirectory("novel-plugin-assets").toFile()
+        return NovelPluginAssetBindings(tachiyomi.data.extension.novel.NovelPluginStorage(dir))
+    }
+
+    private fun writePluginAssets(
+        pluginId: String,
+        script: String = "console.log('main');",
+        customJs: String? = null,
+        customCss: String? = null,
+    ): NovelPluginAssetBindings {
+        val dir = java.nio.file.Files.createTempDirectory("novel-plugin-assets").toFile()
+        val storage = tachiyomi.data.extension.novel.NovelPluginStorage(dir)
+        storage.writePluginFiles(
+            pluginId = pluginId,
+            script = script.toByteArray(),
+            customJs = customJs?.toByteArray(),
+            customCss = customCss?.toByteArray(),
+        )
+        return NovelPluginAssetBindings(storage)
     }
 
     private class FakeNovelHistoryRepository : NovelHistoryRepository {
@@ -2900,7 +3005,7 @@ class NovelReaderScreenModelTest {
         novelChapterRepository: NovelChapterRepository,
         getNovel: GetNovel,
         sourceManager: NovelSourceManager,
-        pluginStorage: NovelPluginStorage,
+        pluginAssetBindings: NovelPluginAssetBindings,
         novelReaderPreferences: NovelReaderPreferences,
         isSystemDark: () -> Boolean,
         historyRepository: NovelHistoryRepository = FakeNovelHistoryRepository(),
@@ -2935,7 +3040,7 @@ class NovelReaderScreenModelTest {
                 storageManager = null,
                 downloadCache = null,
             ),
-            pluginStorage = pluginStorage,
+            pluginAssetBindings = pluginAssetBindings,
             historyRepository = historyRepository,
             novelReaderPreferences = novelReaderPreferences,
             isSystemDark = isSystemDark,
@@ -3042,6 +3147,29 @@ class NovelReaderScreenModelTest {
         runCatching { Injekt.get<TrackNovelChapter>() }
             .getOrElse {
                 Injekt.addSingleton(fullType<TrackNovelChapter>(), mockk<TrackNovelChapter>(relaxed = true))
+            }
+
+        // Resolved from Injekt by NovelReaderScreenModel's constructor; register them here so the
+        // class also runs in an isolated test slice instead of relying on other test classes in the
+        // same JVM having populated the global Injekt scope first.
+        runCatching { Injekt.get<UpdateNovel>() }
+            .getOrElse {
+                Injekt.addSingleton(
+                    fullType<UpdateNovel>(),
+                    UpdateNovel(
+                        mockk<NovelRepository>(relaxed = true),
+                        tachiyomi.domain.entries.novel.interactor.NovelFetchInterval(
+                            tachiyomi.domain.items.novelchapter.interactor.GetNovelChapters(mockk(relaxed = true)),
+                        ),
+                    ),
+                )
+            }
+        runCatching { Injekt.get<ReaderPreferences>() }
+            .getOrElse {
+                Injekt.addSingleton(
+                    fullType<ReaderPreferences>(),
+                    ReaderPreferences(InMemoryPreferenceStore()),
+                )
             }
 
         runCatching { Injekt.get<tachiyomi.domain.book.novel.interactor.GetNovelBookState>() }
@@ -3218,6 +3346,8 @@ class NovelReaderScreenModelTest {
         private val requestedChapterUrls: MutableList<String>? = null,
         private val chapterWebUrlResolver: ((String, String?) -> String?)? = null,
         private val onGetChapterText: (() -> Unit)? = null,
+        private val pluginId: String = "",
+        private val siteUrl: String? = null,
     ) : NovelSourceManager {
         override val isInitialized = MutableStateFlow(true)
         override val catalogueSources =
@@ -3231,6 +3361,8 @@ class NovelReaderScreenModelTest {
                     requestedChapterUrls = requestedChapterUrls,
                     chapterWebUrlResolver = chapterWebUrlResolver,
                     onGetChapterText = onGetChapterText,
+                    pluginId = pluginId,
+                    siteUrl = siteUrl,
                 )
             } else {
                 null
@@ -3252,7 +3384,12 @@ class NovelReaderScreenModelTest {
         private val requestedChapterUrls: MutableList<String>? = null,
         private val chapterWebUrlResolver: ((String, String?) -> String?)? = null,
         private val onGetChapterText: (() -> Unit)? = null,
-    ) : NovelSource, NovelWebUrlSource {
+        override val pluginId: String = "",
+        override val siteUrl: String? = null,
+    ) : NovelSource,
+        NovelWebUrlSource,
+        NovelSiteSource,
+        eu.kanade.tachiyomi.extension.novel.runtime.NovelPluginIdentitySource {
         override val name: String = "NovelSource"
 
         override suspend fun getChapterText(chapter: SNovelChapter): String {
@@ -3288,7 +3425,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -3333,7 +3470,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
             )
@@ -3380,7 +3517,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
                 addNovelHighlight = tachiyomi.domain.book.novel.interactor.AddNovelHighlight(highlightRepository),
@@ -3447,7 +3584,7 @@ class NovelReaderScreenModelTest {
                 novelChapterRepository = FakeNovelChapterRepository(chapter),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
                 addNovelHighlight = tachiyomi.domain.book.novel.interactor.AddNovelHighlight(highlightRepository),
@@ -3517,7 +3654,7 @@ class NovelReaderScreenModelTest {
                 ),
                 getNovel = GetNovel(FakeNovelRepository(novel)),
                 sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
-                pluginStorage = FakeNovelPluginStorage(emptyList()),
+                pluginAssetBindings = emptyPluginAssetBindings(),
                 novelReaderPreferences = prefs,
                 isSystemDark = { false },
                 addNovelHighlight = tachiyomi.domain.book.novel.interactor.AddNovelHighlight(highlightRepository),
@@ -3563,5 +3700,43 @@ class NovelReaderScreenModelTest {
             screenModel.subscribeNovelHighlightItems().first().none { it.highlight.normalizedText == "orphan" } shouldBe
                 true
         }
+    }
+
+    @Test
+    fun `downloadChapter downloads chapter outside sliding window`() = runBlocking {
+        val novel = Novel.create().copy(id = 1L, source = 10L, title = "Test Novel")
+        val chapters = (1L..100L).map { id ->
+            NovelChapter.create().copy(
+                id = id,
+                novelId = 1L,
+                name = "Chapter $id",
+                url = "https://example.org/ch$id",
+                sourceOrder = (id - 1L),
+            )
+        }
+        val first = chapters.first()
+        val downloadManager = mockk<NovelDownloadManager>(relaxed = true)
+        val chapterRepo = FakeNovelChapterRepository(
+            chapter = first,
+            chaptersByNovel = chapters,
+        )
+        val screenModel = trackedNovelReaderScreenModel(
+            chapterId = first.id,
+            novelChapterRepository = chapterRepo,
+            getNovel = GetNovel(FakeNovelRepository(novel)),
+            sourceManager = FakeNovelSourceManager(sourceId = novel.source, chapterHtml = "<p>Hello</p>"),
+            pluginAssetBindings = emptyPluginAssetBindings(),
+            novelReaderPreferences = createNovelReaderPreferences(),
+            isSystemDark = { false },
+            novelDownloadManager = downloadManager,
+        )
+        withTimeout(1_000) {
+            while (screenModel.state.value is NovelReaderScreenModel.State.Loading) {
+                yield()
+            }
+        }
+        // Chapter 90 is outside the default window radius (50) from Chapter 1
+        screenModel.downloadChapter(90L)
+        coVerify { downloadManager.downloadChapter(match { it.id == novel.id }, match { it.id == 90L }) }
     }
 }

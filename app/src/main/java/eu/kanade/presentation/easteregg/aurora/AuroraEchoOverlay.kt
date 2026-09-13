@@ -23,10 +23,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import eu.kanade.domain.easteregg.aurora.AuroraEcho
 import eu.kanade.domain.easteregg.aurora.AuroraEchoBus
 import eu.kanade.domain.easteregg.aurora.AuroraLocalization
+import eu.kanade.domain.easteregg.aurora.PendingEcho
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uy.kohesive.injekt.Injekt
@@ -52,10 +58,23 @@ fun AuroraEchoOverlay() {
     val echo by AuroraEchoBus.flash.collectAsState()
     val presentation by manager.presentation.collectAsState()
 
+    // Task 11 (B1/L6, Q2): дренаж персистентной очереди отложенных эхо — при появлении
+    // и на каждом resume (Q2: очередь проигрывается ЗДЕСЬ, в MainActivity; в Reader/Player
+    // оверлей не монтируется). Весь цикл — внутри LaunchedEffect (C6: никаких сайд-эффектов
+    // в теле композиции); live-эхо продолжают идти через StateFlow как прежде.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            drainDeferredEchoes()
+        }
+    }
+
     echo?.let {
-        // Suppression: ensure no riddle dialog overlaps the cinematic flash (prevents race on solve emit)
-        manager.dismissRiddle()
-        LaunchedEffect(it) { AuroraSensory.solve(view) }
+        LaunchedEffect(it) {
+            // Suppression: ensure no riddle dialog overlaps the cinematic flash (prevents race on solve emit)
+            manager.dismissRiddle()
+            AuroraSensory.solve(view)
+        }
         AuroraEchoFlash(
             echoTitle = it.echoTitle ?: "Эхо Авроры",
             stageIndex = it.stageIndex,
@@ -105,7 +124,7 @@ fun AuroraEchoOverlay() {
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             AuroraRiddleScreen(
-                riddle = manager.currentRiddle() ?: p.riddle,
+                riddle = manager.currentRiddle()?.display() ?: p.riddle,
                 stageIndex = managerState.stageIndex,
                 totalStages = managerState.totalStages,
                 onPhrase = { phrase ->
@@ -137,6 +156,42 @@ fun AuroraEchoOverlay() {
                 payload = payload,
                 onClose = { AuroraEchoBus.consumeUnlocked() },
             )
+        }
+    }
+}
+
+/**
+ * Последовательный дренаж очереди (Task 11): suspend-цикл, по одному эхо за итерацию.
+ * Голова НЕ извлекается заранее — её удалит consume сыгранного слота, поэтому отмена
+ * (пауза lifecycle) или смерть процесса посреди дренажа ничего не теряют: непросмотренный
+ * хвост остаётся в PENDING и доигрывается следующим дренажом. Live-эхо имеет приоритет:
+ * пока слот занят, отложенное эхо ждёт его consume (без перезаписи — L6). Если в слоте
+ * уже стоит ТО ЖЕ эхо (эмиссия в невидимое окно), повторный показ пропускается —
+ * цикл просто дожидается consume.
+ */
+private suspend fun drainDeferredEchoes() {
+    while (true) {
+        val head = AuroraEchoBus.peekDeferredHead() ?: return
+        if (head.type == PendingEcho.TYPE_PROGRESS) {
+            val progress = AuroraEcho.Progress(
+                stageIndex = head.stageIndex ?: 0,
+                totalStages = head.totalStages ?: 0,
+                echoTitle = head.echoTitle,
+            )
+            if (AuroraEchoBus.flash.value != progress) {
+                while (!AuroraEchoBus.replay(progress)) {
+                    AuroraEchoBus.flash.first { it == null }
+                }
+            }
+            AuroraEchoBus.flash.first { it == null } // ждём consume сыгранного эха
+        } else {
+            val text = head.whisper ?: return
+            if (AuroraEchoBus.whisper.value != text) {
+                while (!AuroraEchoBus.replayWhisper(text)) {
+                    AuroraEchoBus.whisper.first { it == null }
+                }
+            }
+            AuroraEchoBus.whisper.first { it == null } // ждём consumeWhisper
         }
     }
 }

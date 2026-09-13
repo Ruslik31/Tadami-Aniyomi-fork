@@ -10,6 +10,7 @@ import okhttp3.Interceptor
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
@@ -22,6 +23,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * The interceptor must serialize challenge solves globally: at most one resolver call active.
  */
 class CloudflareGlobalGateTest {
+
+    @BeforeEach
+    fun clearTracker() {
+        CloudflareInteractiveChallengeTracker.clearAll()
+    }
 
     private class RecordingResolver : CloudflareChallengeResolver {
         val insideCount = AtomicInteger(0)

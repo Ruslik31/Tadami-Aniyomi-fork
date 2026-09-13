@@ -107,4 +107,20 @@ class HosterTest {
             constructor.parameterTypes.map { it.name } == expectedParameterTypes
         } shouldBe true
     }
+
+    @Test
+    fun `pre-lazy legacy default constructor signature stays available`() {
+        val expectedParameterTypes = listOf(
+            "java.lang.String",
+            "java.lang.String",
+            "java.util.List",
+            "java.lang.String",
+            "int",
+            "kotlin.jvm.internal.DefaultConstructorMarker",
+        )
+
+        Hoster::class.java.declaredConstructors.any { constructor ->
+            constructor.parameterTypes.map { it.name } == expectedParameterTypes
+        } shouldBe true
+    }
 }

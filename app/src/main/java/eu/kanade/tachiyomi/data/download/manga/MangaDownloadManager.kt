@@ -24,6 +24,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.manga.interactor.GetMangaCategories
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.entries.manga.model.Manga
+import tachiyomi.domain.items.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.items.chapter.model.Chapter
 import tachiyomi.domain.source.manga.service.MangaSourceManager
 import tachiyomi.domain.storage.service.StorageManager
@@ -47,6 +48,7 @@ class MangaDownloadManager(
     private val getCategories: GetMangaCategories = Injekt.get(),
     private val sourceManager: MangaSourceManager = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
 ) {
 
     /**
@@ -77,7 +79,8 @@ class MangaDownloadManager(
     val queueState
         get() = downloader.queueState
 
-    // For use by DownloadService only
+    // For use by MangaDownloadJob only (there is no DownloadService in this fork; the stale
+    // comment masked the fact that the worker is the ONLY network-gated start path).
     fun downloaderStart() = downloader.start()
     fun downloaderStop(reason: String? = null) = downloader.stop(reason)
     fun downloaderPauseForNetwork(reason: String) = downloader.pauseForNetwork(reason)
@@ -133,6 +136,24 @@ class MangaDownloadManager(
             val existingDownload = getQueuedDownloadOrNull(chapterId)
             // If not in queue try to start a new download
             val toAdd = existingDownload ?: MangaDownload.fromChapterId(chapterId) ?: return@launchIO
+            if (existingDownload == null) {
+                // C-L: "download now" on an already-downloaded chapter re-fetched it and the CBZ
+                // rename silently replaced the existing archive; skip when nothing is missing.
+                val manga = toAdd.manga
+                val chapter = toAdd.chapter
+                if (
+                    isChapterDownloaded(
+                        chapter.name,
+                        chapter.scanlator,
+                        manga.title,
+                        manga.source,
+                        mangaId = manga.id,
+                        chapterId = chapter.id,
+                    )
+                ) {
+                    return@launchIO
+                }
+            }
             queueState.value.toMutableList().apply {
                 existingDownload?.let { remove(it) }
                 add(0, toAdd)
@@ -189,6 +210,8 @@ class MangaDownloadManager(
             chapter.name,
             chapter.scanlator,
             manga.title,
+            manga.id,
+            chapter.id,
             source,
         )
         val files = chapterDir?.listFiles().orEmpty()
@@ -218,6 +241,8 @@ class MangaDownloadManager(
         mangaTitle: String,
         sourceId: Long,
         skipCache: Boolean = false,
+        mangaId: Long? = null,
+        chapterId: Long? = null,
     ): Boolean {
         return cache.isChapterDownloaded(
             chapterName,
@@ -225,6 +250,8 @@ class MangaDownloadManager(
             mangaTitle,
             sourceId,
             skipCache,
+            mangaId,
+            chapterId,
         )
     }
 
@@ -290,13 +317,17 @@ class MangaDownloadManager(
 
             removeFromDownloadQueue(filteredChapters)
 
-            val (mangaDir, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
+            val (mangaDirs, chapterDirs) = provider.findChapterDirs(filteredChapters, manga, source)
             chapterDirs.forEach { it.delete() }
             cache.removeChapters(filteredChapters, manga)
 
-            // Delete manga directory if empty
-            if (mangaDir?.listFiles()?.isEmpty() == true) {
+            // Delete manga directories that became empty (scoped and/or legacy)
+            if (mangaDirs.isNotEmpty() && mangaDirs.all { it.listFiles()?.isEmpty() == true }) {
                 deleteManga(manga, source, removeQueued = false)
+            } else {
+                mangaDirs.forEach { dir ->
+                    if (dir.listFiles()?.isEmpty() == true) dir.delete()
+                }
             }
         }
     }
@@ -313,7 +344,24 @@ class MangaDownloadManager(
             if (removeQueued) {
                 downloader.removeFromQueue(manga)
             }
-            provider.findMangaDir(manga.title, source)?.delete()
+            // DECISION-6 (C-M3): the scoped dir is unique per manga - delete it wholesale. The
+            // legacy title-only dir can be SHARED by same-title manga of one source; deleting it
+            // wholesale destroyed the neighbor's chapters. Clean it per-chapter (this manga's
+            // chapter names only) and remove it just once empty - mirrors the novel-side
+            // resolution. Orphan legacy chapters with no DB rows stay (safe direction).
+            provider.findScopedMangaDir(manga.title, manga.id, source)?.delete()
+            provider.findLegacyMangaDir(manga.title, source)?.let { legacyDir ->
+                val chapters = runCatching { getChaptersByMangaId.await(manga.id) }.getOrDefault(emptyList())
+                val chapterNames = chapters.flatMapTo(HashSet()) { chapter ->
+                    provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.id)
+                }
+                legacyDir.listFiles().orEmpty()
+                    .filter { it.name in chapterNames }
+                    .forEach { it.delete() }
+                if (legacyDir.listFiles()?.isEmpty() == true) {
+                    legacyDir.delete()
+                }
+            }
             cache.removeManga(manga)
 
             // Delete source directory if empty
@@ -403,15 +451,19 @@ class MangaDownloadManager(
         oldChapter: Chapter,
         newChapter: Chapter,
     ) {
-        val oldNames = provider.getValidChapterDirNames(oldChapter.name, oldChapter.scanlator)
-        val mangaDir = provider.getMangaDir(manga.title, source)
+        // The old download may sit in the scoped OR the legacy manga dir; findChapterDir searches
+        // both across all valid name variants, and the rename stays inside the found parent.
+        val oldDownload = provider.findChapterDir(
+            oldChapter.name,
+            oldChapter.scanlator,
+            manga.title,
+            manga.id,
+            oldChapter.id,
+            source,
+        ) ?: return
+        val mangaDir = oldDownload.parentFile ?: return
 
-        // Assume there's only 1 version of the chapter name formats present
-        val oldDownload = oldNames.asSequence()
-            .mapNotNull { mangaDir.findFile(it) }
-            .firstOrNull() ?: return
-
-        var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator)
+        var newName = provider.getChapterDirName(newChapter.name, newChapter.scanlator, newChapter.id)
         if (oldDownload.isFile && oldDownload.extension == "cbz") {
             newName += ".cbz"
         }
@@ -422,7 +474,7 @@ class MangaDownloadManager(
             cache.removeChapter(oldChapter, manga)
             cache.addChapter(newName, mangaDir, manga)
         } else {
-            logcat(LogPriority.ERROR) { "Could not rename downloaded chapter: ${oldNames.joinToString()}" }
+            logcat(LogPriority.ERROR) { "Could not rename downloaded chapter: ${oldDownload.name}" }
         }
     }
 

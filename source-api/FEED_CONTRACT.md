@@ -1,11 +1,24 @@
 # Reels Feed Contract
 
-**Current version: 18** (`extensionLib` 12.0–18.0 accepted by the host) ·
+**Current version: 21** (`extensionLib` 12.0–21.0 accepted by the host) ·
 Owner module: [`:source-api`](build.gradle.kts) ·
 API surface: [`AnimeFeedSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeFeedSource.kt),
 [`AnimeCreatorFeedSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeCreatorFeedSource.kt),
+[`AnimeReelsFeedbackSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeReelsFeedbackSource.kt),
+[`AnimeFeedLoginSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeFeedLoginSource.kt),
+[`AnimeCustomFeedSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeCustomFeedSource.kt),
+[`CustomFeedRef`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/CustomFeedRef.kt),
+[`CustomFeedDetail`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/CustomFeedDetail.kt),
 [`FeedPage`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/FeedPage.kt),
-[`ShortVideoItem`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/ShortVideoItem.kt)
+[`ShortVideoItem`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/ShortVideoItem.kt),
+[`AnimeFeedWebLoginSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeFeedWebLoginSource.kt),
+[`AnimeFeedBrowseSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeFeedBrowseSource.kt),
+[`AnimeCategorizedSearchSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeCategorizedSearchSource.kt),
+[`FeedCategory`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/FeedCategory.kt),
+[`FeedCategoryPage`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/FeedCategoryPage.kt),
+[`SearchSuggestion`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/SearchSuggestion.kt),
+[`SearchSuggestions`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/model/SearchSuggestions.kt),
+[`AnimeCategoryFeedOrderSource`](src/commonMain/kotlin/eu/kanade/tachiyomi/animesource/AnimeCategoryFeedOrderSource.kt)
 
 This document is the standalone reference for authors of short-video feed
 (“Reels”) extensions. The Kotlin contracts live in `:source-api`; this file
@@ -35,6 +48,11 @@ data class FeedPage(
 interface AnimeCreatorFeedSource {
     suspend fun getCreatorFeed(creator: String, page: Int, cursor: String?): FeedPage
 }
+
+interface AnimeReelsFeedbackSource {
+    suspend fun onVideoViewed(itemId: String, secondsWatched: Double, duration: Double)
+    suspend fun onVideoLiked(itemId: String, liked: Boolean)
+}
 ```
 
 ## Creator feeds (v18 capability interface)
@@ -53,6 +71,78 @@ they simply don't opt in.
   the identical `(page, cursor)` pair.
 - A nonexistent/deleted creator should return an empty `FeedPage`, not throw.
 - Implementing the capability means bumping `extensionLib` to 18.0.
+
+## View & like feedback (v18 capability interface)
+
+`AnimeReelsFeedbackSource` is an **optional capability**: the source accepts
+per-video signals so the remote service can adapt its recommendations to the
+viewer's taste. The host detects support with `rawSource is AnimeReelsFeedbackSource`
+(instanceof); sources without the interface are simply never asked for feedback,
+and no default members are added to existing interfaces (same rule as creator feeds).
+
+- `onVideoViewed` is called **once** when a clip is left (swiped away) or finishes:
+  `secondsWatched` is the actual playback time, `duration` the full clip length
+  (both seconds). A source that personalizes remotely pushes a "view" event here.
+- `onVideoLiked` is called on every like/unlike toggle (`liked` reflects the new
+  state). Whether unlike maps to a distinct remote action is up to the source.
+- Both calls are fire-and-forget from the host's perspective: failures must be
+  swallowed, never surfaced to the user or written into feed state.
+- Implementing the capability does **not** change `LIB_VERSION` — it is additive
+  and detected with instanceof only.
+
+## Web login (v20 capability interface)
+
+`AnimeFeedWebLoginSource` is an **optional capability** for services without password
+credentials (email + one-time code, magic link, ...). Two cooperating paths: (1) the service's
+own SPA runs in the host's WebView (`webLoginUrl()` = the web app) and the finished session is
+lifted via `importWebSession(cookies, localStorage)`; (2) `webLoginUrl()` composes the source's
+own OAuth2 authorize URL (PKCE + state) — the host intercepts only `isOwnLoginRedirect(url)`
+state-matched redirects, skips loading them and calls `importWebRedirect(url, cookies)` (the
+CookieManager dump taken at intercept time) so the SPA cannot consume the single-use code. The host retries the session import on every page-finished event
+back on the service domain and on the dialog's explicit "Done" action; `false` keeps the WebView
+open. Sources with this capability also implement `AnimeFeedLoginSource` for session state, and
+the host never shows them the password dialog.
+
+## Category browse (v20 capability interface)
+
+`AnimeFeedBrowseSource` serves a public category directory (`getBrowseCategories`) and one
+video feed per category (`getCategoryFeed`), both on the v17 sticky pagination protocol. The
+host renders a category grid (preview image + name + count) and a per-category feed page.
+
+## Categorized search (v20 capability interface)
+
+`AnimeCategorizedSearchSource.getCategorizedSearch(query)` returns the search hits split into
+niches/creators/tags sections with previews. The host renders them as tabs next to the flat
+`getSearchFeed` stream; tapping a NICHE opens its category feed, a CREATOR the creator feed,
+a TAG a plain search with the tag as query.
+
+## Category subscriptions (v20 capability interface)
+
+`AnimeCategorySubscriptionSource` exposes per-account category follows: the host shows a
+follow/unfollow toggle on category feeds (mirroring the creator-follow toggle) and queries the
+followed set via `getSubscribedCategoryIds`. Login-gated: logged-out sources answer with an
+empty set / false.
+
+## Content preferences (v20 capability interface)
+
+`AnimeContentPreferencesSource` exposes the account's content-type toggles
+(`getContentPreferences` / `setContentPreferences`) for services that shape the personalized
+feed by per-account content preferences. Requires login; logged-out sources answer with an
+empty list / false. The host renders them as a switch sheet from the account hub.
+
+## Blocked tags (v20 capability interface)
+
+`AnimeBlockedTagsSource` exposes the account's blocked-tag list (`getBlockedTags` /
+`setBlockedTags`, replace-semantics). Login-gated; the host renders a tag editor sheet from
+the account hub.
+
+## Category feed ordering (v21 capability interface)
+
+`AnimeCategoryFeedOrderSource` lets a browse-capable source expose source-defined category-feed
+orders (niche hot/latest/top): the host renders `categoryFilters()` in the filter sheet while in
+NICHE mode and passes the selected `AnimeFilterList` into the four-arg `getCategoryFeed`.
+Instanceof-detected; sources without it keep the plain three-arg category feed and no filter
+sheet in NICHE mode.
 
 ## Pagination: the sticky protocol (the important part)
 
@@ -162,6 +252,10 @@ class MyFeed : AnimeFeedSource {
 
 | Version | Change |
 |---|---|
-| 18 | Optional creator-feed capability: `AnimeCreatorFeedSource.getCreatorFeed(creator, page, cursor)` (instanceof-detected, no default members added to existing interfaces). Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 18.0 as the discipline stamp. |
+| 21 | Optional capability `AnimeCategoryFeedOrderSource` (`categoryFilters()` + four-arg `getCategoryFeed`): source-defined category-feed orders rendered by the host in NICHE mode. Instanceof-detected, no default members added to existing interfaces. Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 21.0 as the discipline stamp. |
+| 20 | Optional capabilities `AnimeFeedWebLoginSource` (hosted web login via WebView session import), `AnimeFeedBrowseSource` (category directory + per-category feeds) and `AnimeCategorizedSearchSource` (sectioned search hits with previews), plus models `FeedCategory`/`FeedCategoryPage`/`SearchSuggestion`/`SearchSuggestions`. All instanceof-detected, no default members added to existing interfaces. Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 20.0 as the discipline stamp. |
+| 19+ | v19 addendum: optional search-hints capability `AnimeSearchHintsSource.getSearchHints()` (instanceof-detected, no default members added to existing interfaces); the host renders the returned tags as chips in the reels search bar. Additive: `LIB_VERSION` untouched, existing feed plugins keep working. |
+| 19 | Optional feed-source login capability `AnimeFeedLoginSource` (`login`/`isLoggedIn`/`loggedInAccount`/`logout`) and custom-feed capability `AnimeCustomFeedSource` (`getCustomFeeds`/`getCustomFeed`/`getCustomFeedTags`/`getCustomFeedDetail`/`createCustomFeed`/`updateCustomFeed`/`deleteCustomFeed`, plus `CustomFeedRef`/`CustomFeedDetail`). Both instanceof-detected, no default members added to existing interfaces. Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 19.0 as the discipline stamp. |
+| 18 | Optional creator-feed capability: `AnimeCreatorFeedSource.getCreatorFeed(creator, page, cursor)` and optional feedback capability `AnimeReelsFeedbackSource` (both instanceof-detected, no default members added to existing interfaces). Additive: existing feed plugins keep working; `LIB_VERSION_MAX` → 18.0 as the discipline stamp. |
 | 17 | Sticky cursor pagination (`FeedPage.nextCursor`, `cursor` parameters), `getSearchFeed` default, URL semantics flip (`videoUrl` base + optional `videoUrlHd`). Breaking: all feed plugins rebuild. |
 | ≤16 | Initial feed contract (page-int pagination, `videoUrlHd` required). |

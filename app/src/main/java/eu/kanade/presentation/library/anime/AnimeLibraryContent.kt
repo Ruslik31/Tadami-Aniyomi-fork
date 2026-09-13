@@ -43,7 +43,7 @@ fun AnimeLibraryContent(
     onToggleSelection: (LibraryAnime) -> Unit,
     onToggleRangeSelection: (LibraryAnime) -> Unit,
     onTogglePinned: (AnimeLibraryItem) -> Unit,
-    onRefresh: (Category?) -> Boolean,
+    onRefresh: suspend (Category?) -> Boolean,
     onGlobalSearchClicked: () -> Unit,
     getNumberOfAnimeForCategory: (Category) -> Int?,
     getDisplayMode: (Int) -> PreferenceMutableState<LibraryDisplayMode>,
@@ -57,11 +57,30 @@ fun AnimeLibraryContent(
             end = contentPadding.calculateEndPadding(LocalLayoutDirection.current),
         ),
     ) {
-        val coercedCurrentPage = remember { currentPage().coerceAtMost(categories.lastIndex) }
+        // NEW-19 (anime port of the manga fix): coerceIn(0, ...) - with an empty category list
+        // coerceAtMost(lastIndex = -1) produced initialPage = -1 and rememberPagerState crashed.
+        val coercedCurrentPage = remember { currentPage().coerceIn(0, categories.lastIndex.coerceAtLeast(0)) }
         val pagerState = rememberPagerState(coercedCurrentPage) { categories.size }
 
         val scope = rememberCoroutineScope()
         var isRefreshing by remember(pagerState.currentPage) { mutableStateOf(false) }
+
+        // B2 (port of the Aurora tab sync): keep the pager in agreement with the persisted model
+        // index. Without model->pager sync a grouping-change reset (index = 0) never moved the
+        // pager, so the toolbar title, the sort/filter sheet and pull-to-refresh targeted a
+        // different category than the one shown; the clamp write-back retires a stale persisted
+        // index after categories shrink. Both are skipped while the category list is transiently
+        // empty so the index is not reset for good.
+        val coercedModelPage = currentPage().coerceIn(0, categories.lastIndex.coerceAtLeast(0))
+        LaunchedEffect(coercedModelPage, categories.size) {
+            if (categories.isEmpty()) return@LaunchedEffect
+            if (coercedModelPage != currentPage()) {
+                onChangeCurrentPage(coercedModelPage)
+            }
+            if (coercedModelPage != pagerState.currentPage) {
+                pagerState.animateScrollToPage(coercedModelPage)
+            }
+        }
 
         if (showPageTabs && categories.size > 1) {
             LaunchedEffect(categories) {
@@ -89,9 +108,13 @@ fun AnimeLibraryContent(
         PullRefresh(
             refreshing = isRefreshing,
             onRefresh = {
-                val started = onRefresh(categories[currentPage()])
-                if (!started) return@PullRefresh
+                // I15: onRefresh is suspend (the update guard queries WorkManager, blocking) -
+                // run it off MAIN inside the scope.
                 scope.launch {
+                    // D-M8 (anime port): guard the stale page index - categories can shrink while the
+                    // pager still holds an old current page (IOOB).
+                    val started = categories.getOrNull(currentPage())?.let { onRefresh(it) } ?: false
+                    if (!started) return@launch
                     // Fake refresh status but hide it after a second as it's a long running task
                     isRefreshing = true
                     delay(1.seconds)
@@ -102,6 +125,7 @@ fun AnimeLibraryContent(
         ) {
             AnimeLibraryPager(
                 state = pagerState,
+                categories = categories,
                 contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
                 hasActiveFilters = hasActiveFilters,
                 selectedAnime = selection,
@@ -122,7 +146,9 @@ fun AnimeLibraryContent(
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage to pagerState.isScrollInProgress }
                 .collect { (page, scrolling) ->
-                    if (!scrolling) {
+                    // B3: skip transient empty-category settles (pageCount = 0 right after
+                    // returning from a pushed screen) and redundant rewrites of the same page.
+                    if (!scrolling && pagerState.pageCount > 0 && page != currentPage()) {
                         onChangeCurrentPage(page)
                     }
                 }

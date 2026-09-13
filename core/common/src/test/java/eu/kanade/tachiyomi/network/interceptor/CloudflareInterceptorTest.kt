@@ -13,10 +13,17 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.io.IOException
 
 class CloudflareInterceptorTest {
+
+    @BeforeEach
+    fun clearTracker() {
+        // The tracker is process-wide; isolate tests from each other's interactive records.
+        CloudflareInteractiveChallengeTracker.clearAll()
+    }
 
     @Test
     fun `intercept preserves pre solved cookies and delegates resolution`() {
@@ -65,6 +72,7 @@ class CloudflareInterceptorTest {
             cookieManager = cookieJar,
             defaultUserAgentProvider = { "test-agent" },
             challengeResolver = challengeResolver,
+            clock = { 0L },
         )
 
         val result = interceptor.intercept(chain, request, initialResponse)
@@ -110,6 +118,7 @@ class CloudflareInterceptorTest {
             cookieManager = cookieJar,
             defaultUserAgentProvider = { "test-agent" },
             challengeResolver = challengeResolver,
+            clock = { 0L },
         )
 
         val result = interceptor.intercept(chain, request, initialResponse)
@@ -162,6 +171,7 @@ class CloudflareInterceptorTest {
             cookieManager = cookieJar,
             defaultUserAgentProvider = { "test-agent" },
             challengeResolver = challengeResolver,
+            clock = { 0L },
         )
 
         val result = interceptor.intercept(chain, request, initialResponse)
@@ -176,6 +186,9 @@ class CloudflareInterceptorTest {
         val request = Request.Builder()
             .url("https://novel.tl/page/1")
             .build()
+        // Isolation: the tracker is process-wide; a record left by another test would route
+        // this call into the negative-cache branch (and the unmocked SystemClock on JVM).
+        CloudflareInteractiveChallengeTracker.clear(request.url.host)
 
         val initialResponse = response(
             request = request,
@@ -198,6 +211,7 @@ class CloudflareInterceptorTest {
             cookieManager = cookieJar,
             defaultUserAgentProvider = { "test-agent" },
             challengeResolver = challengeResolver,
+            clock = { 0L },
         )
 
         try {
@@ -209,6 +223,69 @@ class CloudflareInterceptorTest {
         verify(exactly = 0) { cookieJar.remove(request.url, listOf("cf_clearance"), 0) }
         verify(exactly = 1) { cookieJar.get(request.url) }
         verify(exactly = 0) { chain.proceed(request) }
+    }
+
+    @Test
+    fun `interactive failures are negative-cached per host (P3)`() {
+        val request = Request.Builder()
+            .url("https://novel.tl/page/1")
+            .build()
+        CloudflareInteractiveChallengeTracker.clear(request.url.host)
+        try {
+            negativeCacheScenario(request)
+        } finally {
+            CloudflareInteractiveChallengeTracker.clear(request.url.host)
+        }
+    }
+
+    private fun negativeCacheScenario(request: Request) {
+        val initialResponse = response(
+            request = request,
+            code = 403,
+            message = "Forbidden",
+            server = "cloudflare",
+        )
+        val cookieJar = mockk<AndroidCookieJar>()
+        every { cookieJar.get(request.url) } returns emptyList()
+        val challengeResolver = mockk<CloudflareChallengeResolver>()
+        every { challengeResolver.resolve(request, null) } throws CloudflareInteractiveChallengeException()
+        val chain = mockk<Interceptor.Chain>()
+        var now = 0L
+        val interceptor = CloudflareInterceptor(
+            context = mockk<Context>(relaxed = true),
+            cookieManager = cookieJar,
+            defaultUserAgentProvider = { "test-agent" },
+            challengeResolver = challengeResolver,
+            clock = { now },
+        )
+
+        // First failure solves (and caches the host).
+        try {
+            interceptor.intercept(chain, request, initialResponse)
+            assert(false) { "expected IOException" }
+        } catch (e: IOException) {
+            // expected
+        }
+        // Within the TTL the interceptor must fail fast without touching resolver or jar.
+        now = 5 * 60_000
+        try {
+            interceptor.intercept(chain, request, initialResponse)
+            assert(false) { "expected IOException" }
+        } catch (e: IOException) {
+            // expected
+        }
+        verify(exactly = 1) { challengeResolver.resolve(request, null) }
+        verify(exactly = 1) { cookieJar.get(request.url) }
+
+        // After the TTL the solve is attempted again.
+        now = 11 * 60_000
+        try {
+            interceptor.intercept(chain, request, initialResponse)
+            assert(false) { "expected IOException" }
+        } catch (e: IOException) {
+            // expected
+        }
+        verify(exactly = 2) { challengeResolver.resolve(request, null) }
     }
 
     private fun response(

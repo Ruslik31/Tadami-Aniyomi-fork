@@ -62,7 +62,6 @@ import eu.kanade.tachiyomi.ui.entries.anime.track.AnimeTrackInfoDialogHomeScreen
 import eu.kanade.tachiyomi.ui.entries.suggestions.toDirectEntryScreenOrNull
 import eu.kanade.tachiyomi.ui.entries.suggestions.toGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
-import eu.kanade.tachiyomi.ui.library.anime.AnimeLibraryTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -343,7 +342,9 @@ class AnimeScreen(
                 MigrateAnimeDialog(
                     oldAnime = dialog.oldAnime,
                     newAnime = dialog.newAnime,
-                    screenModel = MigrateAnimeDialogScreenModel(),
+                    // BRA-4/BRM-1: inline construction was recreated on every successState
+                    // emission (the migration itself writes this row) - see the manga site.
+                    screenModel = rememberScreenModel { MigrateAnimeDialogScreenModel() },
                     onDismissRequest = onDismissRequest,
                     onClickTitle = { navigator.push(AnimeScreen(dialog.oldAnime.id)) },
                     onClickSeasons = { navigator.push(MigrateSeasonSelectScreen(dialog.oldAnime, dialog.newAnime)) },
@@ -607,12 +608,19 @@ class AnimeScreen(
 
         when (val previousController = navigator.items[navigator.size - 2]) {
             is HomeScreen -> {
+                // C1: route through HomeScreen - it lands on the library tab and hands the query
+                // to the anime section. The old direct AnimeLibraryTab.search sent into a
+                // rendezvous channel with no receiver whenever the library tab was not composed
+                // (the RESH-B1 failure mode), dropping the query silently.
                 navigator.pop()
-                AnimeLibraryTab.search(query)
+                HomeScreen.searchLibrary(HomeScreen.LibrarySearchMedia.Anime, query)
             }
             is BrowseAnimeSourceScreen -> {
+                // RESH-B1: replace with a fresh instance carrying the query (constructor arg,
+                // the novel-screen pattern) - the removed static channel's send() could suspend
+                // with no receiver and raced duplicate collectors.
                 navigator.pop()
-                previousController.search(query)
+                navigator.replace(BrowseAnimeSourceScreen(previousController.sourceId, query))
             }
         }
     }
@@ -633,13 +641,14 @@ class AnimeScreen(
         } as? BrowseAnimeSourceScreen
 
         if (existing != null) {
+            // RESH-B1: pop to the existing browse screen and REPLACE it with a fresh instance
+            // carrying the genre as a constructor arg (its SM applies searchGenre once).
             navigator.popUntil { it == existing }
-            existing.searchGenre(genreName)
+            navigator.replace(BrowseAnimeSourceScreen(sourceId, null, genreQuery = genreName))
             return
         }
 
-        // Otherwise push fresh browse for this source (will use text query; filter activation can be improved in browse model)
-        navigator.push(BrowseAnimeSourceScreen(sourceId, genreName))
+        navigator.push(BrowseAnimeSourceScreen(sourceId, null, genreQuery = genreName))
     }
 
     private suspend fun performGenresSearch(
@@ -653,14 +662,13 @@ class AnimeScreen(
             screen is BrowseAnimeSourceScreen && screen.sourceId == sourceId
         } as? BrowseAnimeSourceScreen
         if (existing != null) {
+            // RESH-B1: see performGenreSearch - constructor args instead of the static channel.
             navigator.popUntil { it == existing }
-            existing.searchGenres(genres)
+            navigator.replace(BrowseAnimeSourceScreen(sourceId, null, genresQuery = genres))
             return
         }
 
-        val newScreen = BrowseAnimeSourceScreen(sourceId, null)
-        navigator.push(newScreen)
-        newScreen.searchGenres(genres)
+        navigator.push(BrowseAnimeSourceScreen(sourceId, null, genresQuery = genres))
     }
 
     /**

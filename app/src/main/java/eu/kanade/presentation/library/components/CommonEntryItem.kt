@@ -430,6 +430,9 @@ fun EntryListItem(
     entries: Int = 0,
     containerHeight: Int = 0,
     modifier: Modifier = Modifier,
+    // D-L: list mode was the only display mode without the pinned indicator (both grids and the
+    // Aurora cards draw PinnedBadge through their topEndBadge slot).
+    topEndBadge: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -439,7 +442,10 @@ fun EntryListItem(
                     0 -> 76.dp
                     else -> {
                         val density = LocalDensity.current
-                        with(density) { (containerHeight / entries).toDp() } - (3 / entries).dp
+                        // H11 (Q6): float division - the Int/Int division silently zeroed the
+                        // row-height correction for any entries >= 4 (season grids), while the
+                        // fixed vertical = 3.dp padding below kept adding to the row pitch.
+                        with(density) { (containerHeight / entries).toDp() } - (3f / entries).dp
                     }
                 },
             )
@@ -465,6 +471,11 @@ fun EntryListItem(
                     data = coverData,
                     errorPainter = errorPainter,
                 )
+            }
+            if (topEndBadge != null) {
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    topEndBadge()
+                }
             }
         }
         Text(

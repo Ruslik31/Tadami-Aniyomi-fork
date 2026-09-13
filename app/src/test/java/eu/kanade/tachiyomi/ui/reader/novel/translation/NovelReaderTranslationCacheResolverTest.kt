@@ -47,6 +47,45 @@ class NovelReaderTranslationCacheResolverTest {
         ) shouldBe false
     }
 
+    @Test
+    fun `cache written by an older extractor version is invalid`() {
+        // The canonical block extraction changed the index space (select -> collect): overlaying a
+        // legacy map onto the new blocks would shift translations onto wrong paragraphs, so legacy
+        // entries (extractorVersion defaults to 0) must never match and get retranslated instead.
+        NovelReaderTranslationCacheResolver.matches(
+            cached = cache(extractorVersion = 0),
+            requirements = requirements(),
+        ) shouldBe false
+    }
+
+    @Test
+    fun `cache produced under different prompt modifiers is invalid`() {
+        NovelReaderTranslationCacheResolver.matches(
+            cached = cache(promptModifiersFingerprint = "xianxia\u0000custom-directive"),
+            requirements = requirements(),
+        ) shouldBe false
+    }
+
+    @Test
+    fun `cache produced under different replace rules is invalid`() {
+        NovelReaderTranslationCacheResolver.matches(
+            cached = cache(replaceRulesFingerprint = "rule-1:true:false:false:true:0:a->b"),
+            requirements = requirements(),
+        ) shouldBe false
+    }
+
+    @Test
+    fun `adult prompt support matches the providers carrying an adult prompt`() {
+        NovelTranslationProvider.GEMINI.supportsAdultPromptMode() shouldBe true
+        NovelTranslationProvider.GEMINI_PRIVATE.supportsAdultPromptMode() shouldBe true
+        NovelTranslationProvider.DEEPSEEK.supportsAdultPromptMode() shouldBe true
+        NovelTranslationProvider.MISTRAL.supportsAdultPromptMode() shouldBe true
+        // These build prompts inline with CLASSIC texts only; ADULT_18 downgrades there.
+        NovelTranslationProvider.OPENROUTER.supportsAdultPromptMode() shouldBe false
+        NovelTranslationProvider.NVIDIA.supportsAdultPromptMode() shouldBe false
+        NovelTranslationProvider.OLLAMA_CLOUD.supportsAdultPromptMode() shouldBe false
+    }
+
     private fun requirements(
         translationProvider: NovelTranslationProvider = NovelTranslationProvider.GEMINI,
         modelId: String = "gemini-3.1-flash-lite-preview",
@@ -60,6 +99,7 @@ class NovelReaderTranslationCacheResolverTest {
             targetLang = "Russian",
             promptMode = GeminiPromptMode.ADULT_18,
             stylePreset = NovelTranslationStylePreset.PROFESSIONAL,
+            extractorVersion = NOVEL_TRANSLATION_EXTRACTOR_VERSION,
         )
     }
 
@@ -68,6 +108,9 @@ class NovelReaderTranslationCacheResolverTest {
         model: String = "gemini-3.1-flash-lite-preview",
         sourceLang: String = "English",
         targetLang: String = "Russian",
+        extractorVersion: Int = NOVEL_TRANSLATION_EXTRACTOR_VERSION,
+        promptModifiersFingerprint: String = "",
+        replaceRulesFingerprint: String = "",
     ): GeminiTranslationCacheEntry {
         return GeminiTranslationCacheEntry(
             chapterId = 1L,
@@ -78,6 +121,9 @@ class NovelReaderTranslationCacheResolverTest {
             targetLang = targetLang,
             promptMode = GeminiPromptMode.ADULT_18,
             stylePreset = NovelTranslationStylePreset.PROFESSIONAL,
+            extractorVersion = extractorVersion,
+            promptModifiersFingerprint = promptModifiersFingerprint,
+            replaceRulesFingerprint = replaceRulesFingerprint,
         )
     }
 }

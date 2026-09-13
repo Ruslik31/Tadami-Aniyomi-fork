@@ -49,7 +49,11 @@ class MangaExtensionDetailsScreenModel(
     private val preferences: SourcePreferences = Injekt.get(),
 ) : StateScreenModel<MangaExtensionDetailsScreenModel.State>(State()) {
 
-    private val _events: Channel<MangaExtensionDetailsEvent> = Channel()
+    // BEXT-5: a rendezvous channel + the screen's collector sitting BEHIND the isLoading
+    // early-return meant send(Uninstalled) hung forever when the extension never appeared in
+    // the flow (stale click / uninstall race) - the screen stuck on Loading instead of popping.
+    // BUFFERED lets the event wait for the collector (upstream mihon uses Channel(BUFFERED)).
+    private val _events: Channel<MangaExtensionDetailsEvent> = Channel(Channel.BUFFERED)
     val events: Flow<MangaExtensionDetailsEvent> = _events.receiveAsFlow()
 
     init {
@@ -113,8 +117,7 @@ class MangaExtensionDetailsScreenModel(
             .filterIsInstance<HttpSource>()
             .flatMap { listOf(it.baseUrl, it.getHomeUrl()) }
             .filter { it.isNotEmpty() }
-            .distinct()
-            .distinct()
+            .distinct() // BEXT-10: was .distinct().distinct()
 
         val cleared = urls.sumOf {
             try {

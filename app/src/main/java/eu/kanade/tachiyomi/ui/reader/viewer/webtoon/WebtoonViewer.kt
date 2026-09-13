@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.app.ActivityCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
@@ -151,7 +152,15 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
                     }
 
                     if ((dy > threshold || dy < -threshold) && activity.viewModel.state.value.menuVisible) {
-                        activity.hideMenu()
+                        // B-M1: navigator-slider jumps (moveToPage -> scrollToPositionWithOffset)
+                        // produce a huge dy and used to hide the menu in the middle of the slider
+                        // gesture. Consume the slider mark for this programmatic scroll burst,
+                        // mirroring the pager's onPageSelected guard.
+                        if (activity.isScrollingThroughPages) {
+                            activity.consumeScrollingThroughPages()
+                        } else {
+                            activity.hideMenu()
+                        }
                     }
 
                     if (dy < 0) {
@@ -264,6 +273,21 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
                     pauseAutoScroll()
                 }
             }
+        }
+
+        // A-M10: zooming back OUT resumes the auto-scroll - the zoom monitor above paused it and
+        // resumeAutoScroll() had zero call sites in the webtoon branch, so a zoom froze the
+        // auto-scroll for the rest of the chapter. Covers pinch and double-tap zoom-out (both
+        // funnel through WebtoonRecyclerView.setScaleRate). resume() is a no-op when not paused.
+        recycler.onZoomScaleChanged = { scale ->
+            if (scale <= 1f) resumeAutoScroll()
+        }
+
+        // A-M10: sync the VM state when the manager stops itself at the end of the content - the
+        // FAB/menu kept showing "playing" over a stopped scroller, and the next FAB press went to
+        // "pause" instead of start.
+        autoScrollManager.onReachedEnd = {
+            activity.viewModel.pauseAutoScroll()
         }
 
         frame.layoutParams = ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
@@ -404,6 +428,9 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         if (toChapter != null) {
             logcat { "Request preload destination chapter because we're on the transition" }
             activity.requestPreloadChapter(toChapter)
+        } else if (transition is ChapterTransition.Next) {
+            // End-of-manga transition became active: reveal the pending finale plate (if any).
+            activity.viewModel.revealPendingFinale()
         }
     }
 
@@ -413,6 +440,12 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     override fun setChapters(chapters: ViewerChapters) {
         // Setting controls the info screen display. Do not force it based on previously being on a transition item.
         val forceTransition = config.alwaysShowChapterTransition
+        // WEBTOON-ARROWS-2: a toolbar/jump switch must be detected BEFORE the adapter re-centers.
+        // isLoadingAdjacentChapter is true exactly while ReaderViewModel.loadAdjacent runs, and
+        // this method executes inline inside its state update - gesture-driven switches
+        // (loadNewChapter) and preload refreshes arrive with the flag false.
+        val isProgrammaticSwitch = adapter.currentChapter != chapters.currChapter &&
+            activity.viewModel.state.value.isLoadingAdjacentChapter
         adapter.setChapters(chapters, forceTransition)
 
         if (recycler.isGone) {
@@ -421,9 +454,29 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
             moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
             recycler.isVisible = true
         } else {
-            recycler.post {
-                onScrolled()
+            if (isProgrammaticSwitch) {
+                // WEBTOON-ARROWS-2: the toolbar switch used to rely on ReaderActivity's
+                // moveToPageIndex(0) running AFTER this rebuild - but a layout frame can slip
+                // between the two (vsync traversal outruns the queued coroutine resumption).
+                // In that frame RecyclerView re-anchored to a RETAINED page of the OLD chapter
+                // (the 2-page window the adapter keeps around curr), and the resulting - fully
+                // layout-consistent - report bounced the VM straight back via loadNewChapter.
+                // Logcat proof: "Loading adjacent X" -> onPageSelected(4/5 of OLD) ->
+                // "Setting OLD as active". Anchor to the new chapter's first page in the SAME
+                // main-thread block as the rebuild: scrollToPositionWithOffset registers the
+                // pending position before the first post-rebuild layout, so that single layout
+                // already sits on the new chapter and every scroll report is consistent.
+                val pages = chapters.currChapter.pages
+                if (pages != null) {
+                    moveToPage(pages[0])
+                }
             }
+            // WEBTOON-ARROWS (H1): was `recycler.post { onScrolled() }` - the posted runnable
+            // ran BEFORE the pending re-layout, so findLastEndVisibleItemPosition() returned a
+            // position from the OLD layout which was then indexed into the NEW adapter items.
+            // doOnLayout defers the report until after the layout pass that also applies the
+            // pending scroll position, so the reported page matches what the user sees.
+            recycler.doOnLayout { onScrolled() }
         }
 
         val page = currentPage as? ReaderPage

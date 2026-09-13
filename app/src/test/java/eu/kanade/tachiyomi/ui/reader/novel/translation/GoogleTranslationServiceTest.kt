@@ -25,6 +25,42 @@ class GoogleTranslationServiceTest {
     }
 
     @Test
+    fun `auth failures are not retried as transient`() = runTest {
+        repeat(3) { server.enqueue(MockResponse().setResponseCode(401)) }
+        val service = GoogleTranslationService(
+            client = OkHttpClient(),
+            translateUrl = server.url("/translate_a/single"),
+            userAgent = "unit-test-agent",
+        )
+
+        service.translateSingle("Hello", "en", "ru") shouldBe null
+
+        // Pre-fix all three attempts (with delays) were consumed on a permanent auth error.
+        server.requestCount shouldBe 1
+    }
+
+    @Test
+    fun `batch response surfaces rate limiting after 429 responses`() = runTest {
+        // Wrapped chunk request (3 attempts) + per-segment fallback (3 attempts), all 429.
+        repeat(8) {
+            server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", "1"))
+        }
+        val service = GoogleTranslationService(
+            client = OkHttpClient(),
+            translateUrl = server.url("/translate_a/single"),
+            userAgent = "unit-test-agent",
+        )
+
+        val response = service.translateBatch(
+            texts = listOf("Hello"),
+            params = GoogleTranslationParams(sourceLang = "en", targetLang = "ru"),
+        )
+
+        response.translatedByIndex shouldBe emptyMap()
+        response.rateLimited shouldBe true
+    }
+
+    @Test
     fun `uses get for short text translation`() = runTest {
         server.enqueue(
             MockResponse().setBody("""[[["Короткий текст","Short text",null,null,1]],null,"en"]"""),

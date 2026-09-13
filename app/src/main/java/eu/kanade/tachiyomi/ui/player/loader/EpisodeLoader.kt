@@ -250,7 +250,7 @@ class EpisodeLoader {
                     dubbingLabel = hoster.dubbingLabel,
                     sortOrder = hoster.sortOrder,
                 )
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 if (e is CancellationException) {
                     throw e
                 }

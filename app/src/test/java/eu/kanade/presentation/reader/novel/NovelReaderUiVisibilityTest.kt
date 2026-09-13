@@ -37,6 +37,7 @@ import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderAppearanceMode
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderBackgroundSource
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderBackgroundTexture
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderTapZoneAction
+import eu.kanade.tachiyomi.ui.reader.novel.tts.NovelTtsPlaybackState
 import eu.wewox.pagecurl.ExperimentalPageCurlApi
 import eu.wewox.pagecurl.config.PageCurlConfig
 import org.junit.jupiter.api.AfterEach
@@ -851,6 +852,41 @@ class NovelReaderUiVisibilityTest {
                 activeValue = null,
                 loadingValue = null,
                 initialValue = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `keep screen on honors the tts playback setting only while playing`() {
+        // The dedicated TTS setting holds the screen while speech is actually playing...
+        assertTrue(
+            resolveReaderKeepScreenOn(
+                keepScreenOn = false,
+                ttsKeepScreenOnDuringPlayback = true,
+                ttsPlaybackState = NovelTtsPlaybackState.PLAYING,
+            ),
+        )
+        // ...but not while paused (the user is not watching), and not when disabled.
+        assertFalse(
+            resolveReaderKeepScreenOn(
+                keepScreenOn = false,
+                ttsKeepScreenOnDuringPlayback = true,
+                ttsPlaybackState = NovelTtsPlaybackState.PAUSED,
+            ),
+        )
+        assertFalse(
+            resolveReaderKeepScreenOn(
+                keepScreenOn = false,
+                ttsKeepScreenOnDuringPlayback = false,
+                ttsPlaybackState = NovelTtsPlaybackState.PLAYING,
+            ),
+        )
+        // The reader-level setting keeps working independently of TTS.
+        assertTrue(
+            resolveReaderKeepScreenOn(
+                keepScreenOn = true,
+                ttsKeepScreenOnDuringPlayback = false,
+                ttsPlaybackState = NovelTtsPlaybackState.IDLE,
             ),
         )
     }
@@ -4449,8 +4485,7 @@ class NovelReaderUiVisibilityTest {
         assertEquals(
             8,
             resolveInitialPageReaderPage(
-                savedPageReaderProgress = PageReaderProgress(index = 4, totalItems = 5),
-                legacyLastSavedIndex = 0,
+                savedRawProgress = encodePageReaderProgress(index = 4, totalItems = 5),
                 pageCount = 9,
             ),
         )
@@ -4461,8 +4496,7 @@ class NovelReaderUiVisibilityTest {
         assertEquals(
             2,
             resolveInitialPageReaderPage(
-                savedPageReaderProgress = PageReaderProgress(index = 9, totalItems = 10),
-                legacyLastSavedIndex = 0,
+                savedRawProgress = encodePageReaderProgress(index = 9, totalItems = 10),
                 pageCount = 3,
             ),
         )
@@ -4473,8 +4507,7 @@ class NovelReaderUiVisibilityTest {
         assertEquals(
             6,
             resolveInitialPageReaderPage(
-                savedPageReaderProgress = PageReaderProgress(index = 0, totalItems = 1),
-                legacyLastSavedIndex = 0,
+                savedRawProgress = encodePageReaderProgress(index = 0, totalItems = 1),
                 pageCount = 7,
                 chapterHandoffTarget = NovelReaderPageReaderHandoffTarget.END,
             ),
@@ -4486,10 +4519,70 @@ class NovelReaderUiVisibilityTest {
         assertEquals(
             0,
             resolveInitialPageReaderPage(
-                savedPageReaderProgress = PageReaderProgress(index = 5, totalItems = 6),
-                legacyLastSavedIndex = 5,
+                savedRawProgress = encodePageReaderProgress(index = 5, totalItems = 6),
                 pageCount = 7,
                 chapterHandoffTarget = NovelReaderPageReaderHandoffTarget.START,
+            ),
+        )
+    }
+
+    @Test
+    fun `native scroll progress restores proportionally when reopening in page reader`() {
+        // Saved at block 120 of 300 (~40%) in native scroll; the page reader paginated the same
+        // chapter into 30 pages, so the restore must land at ~40% of the page range - never by
+        // clamping the foreign-scale block index onto the last page (which also falsely trips the
+        // 95% read threshold on the first progress report).
+        assertEquals(
+            12,
+            resolveInitialPageReaderPage(
+                savedRawProgress = encodeNativeScrollProgress(index = 120, offsetPx = 0, totalItems = 300),
+                pageCount = 30,
+            ),
+        )
+    }
+
+    @Test
+    fun `legacy no-total native scroll progress restarts page reader from the beginning`() {
+        // Without totalItems the native scale is unrecoverable; restarting at page 0 is safe,
+        // jumping to a clamped foreign-scale position is not.
+        assertEquals(
+            0,
+            resolveInitialPageReaderPage(
+                savedRawProgress = encodeNativeScrollProgress(index = 120, offsetPx = 0),
+                pageCount = 30,
+            ),
+        )
+    }
+
+    @Test
+    fun `web scroll percent restores proportionally when reopening in page reader`() {
+        assertEquals(
+            12,
+            resolveInitialPageReaderPage(
+                savedRawProgress = encodeWebScrollProgressPercent(40),
+                pageCount = 30,
+            ),
+        )
+    }
+
+    @Test
+    fun `pre-codec legacy page index is still restored as a page index`() {
+        assertEquals(
+            5,
+            resolveInitialPageReaderPage(
+                savedRawProgress = 5L,
+                pageCount = 30,
+            ),
+        )
+    }
+
+    @Test
+    fun `fresh chapter without saved progress opens the first page`() {
+        assertEquals(
+            0,
+            resolveInitialPageReaderPage(
+                savedRawProgress = 0L,
+                pageCount = 30,
             ),
         )
     }
@@ -4554,6 +4647,39 @@ class NovelReaderUiVisibilityTest {
         assertTrue(css.contains("--an-reader-first-line-indent: 2em;"))
         assertTrue(css.contains("text-align: var(--an-reader-align) !important;"))
         assertTrue(css.contains("text-indent: var(--an-reader-first-line-indent) !important;"))
+    }
+
+    @Test
+    fun `webview css paragraph spacing uses the raw dp-scale setting and clamps overshoot`() {
+        fun cssWithSpacing(spacing: Int): String = buildWebReaderCssText(
+            fontFaceCss = "",
+            paddingTop = 0,
+            paddingBottom = 0,
+            paddingHorizontal = 16,
+            fontSizePx = 16,
+            lineHeightMultiplier = 1.6f,
+            paragraphSpacingPx = spacing,
+            textAlignCss = null,
+            firstLineIndentCss = null,
+            textColorHex = "#111111",
+            backgroundHex = "#FFFFFF",
+            appearanceMode = NovelReaderAppearanceMode.THEME,
+            backgroundTexture = NovelReaderBackgroundTexture.PAPER_GRAIN,
+            oledEdgeGradient = false,
+            backgroundImageUrl = null,
+            fontFamilyName = null,
+            customCss = "",
+            textShadowCss = null,
+            forceBoldText = false,
+            forceItalicText = false,
+        )
+
+        // Call sites pass the raw dp-scale setting (CSS px == dp under the WebView viewport).
+        // A density-multiplied physical px value (e.g. 12dp at 2.75x = 33) hits the 0..32 clamp
+        // and diverges from the raw value other paths re-apply - the old spacing jump.
+        assertTrue(cssWithSpacing(12).contains("--an-reader-paragraph-spacing: 12px;"))
+        assertTrue(cssWithSpacing(12).contains("margin-bottom: 12px !important;"))
+        assertTrue(cssWithSpacing(33).contains("--an-reader-paragraph-spacing: 32px;"))
     }
 
     @Test

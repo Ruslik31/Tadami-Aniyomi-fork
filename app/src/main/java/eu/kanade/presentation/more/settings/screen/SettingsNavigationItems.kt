@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ChromeReaderMode
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.outlined.Audiotrack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.CollectionsBookmark
@@ -147,6 +148,13 @@ internal fun mainSettingsNavigationItems(): List<SettingsNavigationItem> = listO
         subtitleRes = MR.strings.pref_browse_summary,
         icon = Icons.Outlined.Explore,
         screen = SettingsBrowseScreen,
+    ),
+    SettingsNavigationItem(
+        key = "discovery",
+        titleRes = AYMR.strings.pref_discovery_title,
+        subtitleRes = AYMR.strings.pref_discovery_summary,
+        icon = Icons.Outlined.AutoAwesome,
+        screen = SettingsDiscoveryScreen,
     ),
     SettingsNavigationItem(
         key = "data_storage",

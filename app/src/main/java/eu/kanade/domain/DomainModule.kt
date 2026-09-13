@@ -1,6 +1,7 @@
 package eu.kanade.domain
 
 import android.app.Application
+import eu.kanade.domain.discovery.service.DiscoveryPreferences
 import eu.kanade.domain.download.anime.interactor.DeleteEpisodeDownload
 import eu.kanade.domain.download.manga.interactor.DeleteChapterDownload
 import eu.kanade.domain.entries.anime.interactor.AnimeRatingFetcher
@@ -75,6 +76,9 @@ import eu.kanade.domain.track.novel.interactor.TrackNovelChapter
 import eu.kanade.domain.track.service.ResolveTrackProgressSync
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.UserProfilePreferences
+import eu.kanade.tachiyomi.data.discovery.AppDiscoverySeedSources
+import eu.kanade.tachiyomi.data.discovery.DiscoveryRunner
+import eu.kanade.tachiyomi.data.discovery.DiscoverySeedSources
 import eu.kanade.tachiyomi.data.updater.AppUpdateFileManager
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.ui.player.utils.TrackSelect
@@ -130,6 +134,7 @@ import tachiyomi.data.category.anime.AnimeCategoryRepositoryImpl
 import tachiyomi.data.category.manga.MangaCategoryRepositoryImpl
 import tachiyomi.data.category.novel.NovelCategoryRepositoryImpl
 import tachiyomi.data.custombutton.CustomButtonRepositoryImpl
+import tachiyomi.data.discovery.DiscoveryRepositoryImpl
 import tachiyomi.data.entries.anime.AnimeRepositoryImpl
 import tachiyomi.data.entries.manga.MangaRepositoryImpl
 import tachiyomi.data.entries.novel.NovelRepositoryImpl
@@ -219,6 +224,7 @@ import tachiyomi.domain.custombuttons.interactor.ReorderCustomButton
 import tachiyomi.domain.custombuttons.interactor.ToggleFavoriteCustomButton
 import tachiyomi.domain.custombuttons.interactor.UpdateCustomButton
 import tachiyomi.domain.custombuttons.repository.CustomButtonRepository
+import tachiyomi.domain.discovery.repository.DiscoveryRepository
 import tachiyomi.domain.entries.anime.interactor.AnimeFetchInterval
 import tachiyomi.domain.entries.anime.interactor.GetAnime
 import tachiyomi.domain.entries.anime.interactor.GetAnimeByUrlAndSourceId
@@ -242,6 +248,7 @@ import tachiyomi.domain.entries.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.entries.manga.interactor.ResetMangaViewerFlags
 import tachiyomi.domain.entries.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.entries.manga.repository.MangaRepository
+import tachiyomi.domain.entries.novel.interactor.GetDuplicateLibraryNovel
 import tachiyomi.domain.entries.novel.interactor.GetLibraryNovel
 import tachiyomi.domain.entries.novel.interactor.GetNovel
 import tachiyomi.domain.entries.novel.interactor.GetNovelByUrlAndSourceId
@@ -379,7 +386,7 @@ class DomainModule : InjektModule {
         addFactory { ReorderMangaCategory(get()) }
         addFactory { UpdateMangaCategory(get()) }
         addFactory { HideMangaCategory(get()) }
-        addFactory { DeleteMangaCategory(get(), get(), get()) }
+        addFactory { DeleteMangaCategory(get(), get(), get(), get()) }
 
         addSingletonFactory<NovelCategoryRepository> { NovelCategoryRepositoryImpl(get()) }
         addFactory { GetNovelCategories(get()) }
@@ -537,6 +544,7 @@ class DomainModule : InjektModule {
         addFactory { GetNovel(get()) }
         addFactory { GetNovelByUrlAndSourceId(get()) }
         addFactory { GetNovelFavorites(get()) }
+        addFactory { GetDuplicateLibraryNovel(get()) }
         addFactory { GetLibraryNovel(get()) }
         addFactory { GetNovelWithChapters(get(), get()) }
         addSingletonFactory { GetNovelChapters(get()) }
@@ -615,7 +623,7 @@ class DomainModule : InjektModule {
 
         addSingletonFactory<NovelChapterRepository> { NovelChapterRepositoryImpl(get()) }
         addFactory { ShouldUpdateDbNovelChapter() }
-        addFactory { SyncNovelChaptersWithSource(get(), get(), get(), get()) }
+        addFactory { SyncNovelChaptersWithSource(get(), get(), get(), get(), get()) }
         addFactory { GetAvailableNovelScanlators(get()) }
         addFactory { GetNovelScanlatorChapterCounts(get()) }
 
@@ -638,6 +646,10 @@ class DomainModule : InjektModule {
 
         addSingletonFactory<NovelHistoryRepository> { NovelHistoryRepositoryImpl(get()) }
         addFactory { GetTotalNovelReadDuration(get()) }
+
+        addSingletonFactory<DiscoveryRepository> { DiscoveryRepositoryImpl(get()) }
+        addSingletonFactory<DiscoverySeedSources> { AppDiscoverySeedSources() }
+        addSingletonFactory<DiscoveryRunner> { DiscoveryRunner(get(), get(), get()) }
 
         addFactory { DeleteChapterDownload(get(), get()) }
 
@@ -766,6 +778,7 @@ class DomainModule : InjektModule {
         addFactory { UiPreferences(get()) }
         addFactory { UserProfilePreferences(get()) }
         addFactory { SourcePreferences(get()) }
+        addFactory { DiscoveryPreferences(get()) }
         addFactory { ResolveTrackProgressSync() }
 
         addFactory { TrackSelect(get(), get()) }

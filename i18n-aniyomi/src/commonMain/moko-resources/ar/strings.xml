@@ -1294,8 +1294,8 @@
     <string name="label_manga_extensions">ملحقات المانغا</string>
     <string name="label_anime_extensions">ملحقات الأنمي</string>
     <string name="label_novel_extensions">إضافات الروايات</string>
-    <string name="novel_repo_picker_title">اختر مصدر التثبيت</string>
-    <string name="novel_repo_picker_newest">الأحدث</string>
+    <string name="repo_picker_title">اختر مصدر التثبيت</string>
+    <string name="repo_picker_newest">الأحدث</string>
     <string name="label_migration_manga">ترحيل المانغا</string>
     <string name="label_migration_anime">ترحيل الأنمي</string>
     <string name="settings">الإعدادات</string>
@@ -1715,7 +1715,6 @@
     <string name="aurora_help">المساعدة</string>
     <string name="aurora_statistics">الإحصائيات</string>
     <string name="aurora_achievements">الإنجازات</string>
-    <string name="aurora_more">المزيد</string>
     <string name="debug_app_update_preview">معاينة تحديث التطبيق</string>
     <string name="debug_app_update_preview_summary">فتح ورقة التحديث ببيانات إصدار وهمية</string>
     <string name="debug_updated_changelog_preview">معاينة سجل التغييرات المحدث</string>

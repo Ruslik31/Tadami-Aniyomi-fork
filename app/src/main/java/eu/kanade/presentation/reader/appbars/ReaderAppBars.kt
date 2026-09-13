@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.reader.components.ChapterNavigator
+import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -87,7 +88,6 @@ private val panelFadeSpec = spring<Float>(
 @Composable
 fun ReaderAppBars(
     visible: Boolean,
-    fullscreen: Boolean,
 
     mangaTitle: String?,
     chapterTitle: String?,
@@ -148,9 +148,22 @@ fun ReaderAppBars(
     val isRtl = viewer is R2LPagerViewer
     val appHaptics = LocalAppHaptics.current
     val isDark = isSystemInDarkTheme()
+    // DECISION-12 (minimal): fully opaque bar surfaces on e-ink - the translucent Material
+    // surface shimmers over the reader background during panel animations on e-paper. The full
+    // aurora-glass chrome redesign stays a separate prototyped project; the palette itself is
+    // already inherited through the theme overlay.
+    val isEInk = AuroraTheme.colors.isEInk
     val backgroundColor = MaterialTheme.colorScheme
         .surfaceColorAtElevation(3.dp)
-        .copy(alpha = if (isDark) 0.9f else 0.95f)
+        .copy(
+            alpha = if (isEInk) {
+                1f
+            } else if (isDark) {
+                0.9f
+            } else {
+                0.95f
+            },
+        )
     val scheme = MaterialTheme.colorScheme
 
     Box(
@@ -307,11 +320,13 @@ fun ReaderAppBars(
                                     } else {
                                         Icons.Filled.KeyboardArrowDown
                                     },
-                                    contentDescription = if (isAutoScrollExpanded) {
-                                        "Collapse auto-scroll"
-                                    } else {
-                                        "Expand auto-scroll"
-                                    },
+                                    contentDescription = stringResource(
+                                        if (isAutoScrollExpanded) {
+                                            AYMR.strings.reader_auto_scroll_collapse_description
+                                        } else {
+                                            AYMR.strings.reader_auto_scroll_expand_description
+                                        },
+                                    ),
                                     tint = scheme.onSurface.copy(alpha = 0.75f),
                                 )
                             }
@@ -448,7 +463,7 @@ private fun AutoScrollControlsPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(AYMR.strings.novel_reader_auto_scroll_speed),
+                text = stringResource(AYMR.strings.reader_auto_scroll_speed),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = scheme.primary,

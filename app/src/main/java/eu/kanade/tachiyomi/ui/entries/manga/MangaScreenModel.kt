@@ -479,6 +479,8 @@ class MangaScreenModel(
                                     chapter.scanlator,
                                     manga.title,
                                     manga.source,
+                                    mangaId = manga.id,
+                                    chapterId = chapter.id,
                                 )
                             },
                             getActiveDownload = { id -> downloadManager.getQueuedDownloadOrNull(id) },
@@ -1234,6 +1236,8 @@ class MangaScreenModel(
                     chapter.scanlator,
                     manga.title,
                     manga.source,
+                    mangaId = manga.id,
+                    chapterId = chapter.id,
                 )
             }
             val downloadState = when {
@@ -1328,7 +1332,15 @@ class MangaScreenModel(
                     if (current.manga.id ==
                         state.manga.id
                     ) {
-                        current.copy(chapterSourcePreview = previewItems)
+                        // DECISION-10: show the source preview only while the DB list is empty.
+                        // Pushing it unconditionally replaced the real list (read states,
+                        // download/bookmark badges) with an all-unread dummy on EVERY manual
+                        // refresh for the whole sync duration of big titles.
+                        if (current.chapters.isEmpty()) {
+                            current.copy(chapterSourcePreview = previewItems)
+                        } else {
+                            current
+                        }
                     } else {
                         current
                     }
@@ -1383,6 +1395,10 @@ class MangaScreenModel(
                             isConfigurable = state.source is ConfigurableSource,
                             source = state.source,
                         ),
+                        // F-M5: the sync failed - drop the dummy preview, otherwise the fake
+                        // all-unread list stays on screen (the DB flow does not re-emit after a
+                        // failed sync) until the screen is reopened.
+                        chapterSourcePreview = null,
                     )
                 }
                 return
@@ -1398,7 +1414,10 @@ class MangaScreenModel(
                 snackbarHostState.showSnackbar(message = message)
             }
             val newManga = mangaRepository.getMangaById(mangaId)
-            updateSuccessState { it.copy(manga = newManga, isRefreshingData = false) }
+            // F-M5: the sync failed - drop the dummy preview (see the auth branch above); the
+            // catch used to keep it, leaving a stuck all-unread fake list whose taps could even
+            // open the reader with a negative chapter id.
+            updateSuccessState { it.copy(manga = newManga, isRefreshingData = false, chapterSourcePreview = null) }
         }
     }
 
@@ -1855,6 +1874,12 @@ class MangaScreenModel(
                 val selectedItem = get(selectedIndex)
                 if ((selectedItem.selected && selected) || (!selectedItem.selected && !selected)) return@apply
 
+                // NEW-10: during a source-preview window the rendered items are dummy chapters
+                // with negative ids; adding them to selectedChapterIds polluted the set (it
+                // outlives the preview and feeds the action-bar count and preserved selections).
+                // Selection over preview items is a no-op until the real list arrives.
+                if (item.id < 0) return@apply
+
                 val firstSelection = none { it.selected }
                 set(selectedIndex, selectedItem.copy(selected = selected))
                 selectedChapterIds.addOrRemove(item.id, selected)
@@ -2167,6 +2192,7 @@ class MangaScreenModel(
 
     companion object {
         private const val FAST_CACHE_MAX_ITEMS = 24
+        private const val CACHE_WRITE_THROTTLE_MS = 2_000L
         private val stateCache = object : java.util.LinkedHashMap<Long, State.Success>(
             FAST_CACHE_MAX_ITEMS + 1,
             1f,
@@ -2176,6 +2202,7 @@ class MangaScreenModel(
                 return size > FAST_CACHE_MAX_ITEMS
             }
         }
+        private val lastCacheWriteMs = HashMap<Long, Long>()
 
         @Synchronized
         private fun restoreStateFromCache(mangaId: Long): State.Success? {
@@ -2185,6 +2212,15 @@ class MangaScreenModel(
         @Synchronized
         private fun cacheState(state: State.Success?) {
             if (state == null) return
+            // E4: never cache a source-preview state - restoring it showed a stale dummy
+            // all-unread list on reopen (before the DB emission cleaned it).
+            if (state.chapterSourcePreview != null) return
+            // E4: throttle per-entry writes - download-progress hydration fires
+            // updateSuccessState several times a second and each call copied the whole chapter
+            // list under this lock.
+            val now = System.currentTimeMillis()
+            if (now - (lastCacheWriteMs[state.manga.id] ?: 0L) < CACHE_WRITE_THROTTLE_MS) return
+            lastCacheWriteMs[state.manga.id] = now
             val unselectedChapters = if (state.isAnySelected) {
                 state.chapters.map { if (it.selected) it.copy(selected = false) else it }
             } else {

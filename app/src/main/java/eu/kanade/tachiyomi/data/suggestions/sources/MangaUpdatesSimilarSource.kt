@@ -26,6 +26,9 @@ import uy.kohesive.injekt.api.get
 
 class MangaUpdatesSimilarSource(
     override val mediaType: SuggestionMediaType,
+    private val nsfwFilterProvider: () -> Boolean = {
+        eu.kanade.tachiyomi.data.discovery.discoveryNsfwFilterEnabled()
+    },
 ) : RecommendationPagingSource() {
 
     override val name: String = "MangaUpdates"
@@ -69,6 +72,9 @@ class MangaUpdatesSimilarSource(
                     }
                     val body = payload.toString().toRequestBody(jsonMime)
 
+                    eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.acquire(
+                        eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.Api.MANGAUPDATES,
+                    )
                     val searchResponse = client.newCall(
                         POST("https://api.mangaupdates.com/v1/series/search", body = body),
                     )
@@ -109,6 +115,9 @@ class MangaUpdatesSimilarSource(
             }
 
             val recUrl = "https://api.mangaupdates.com/v1/series/${bestMatch.record.seriesId}"
+            eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.acquire(
+                eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.Api.MANGAUPDATES,
+            )
             val detailResponse = client.newCall(GET(recUrl))
                 .awaitSuccess()
                 .parseAs<MuSeriesDetail>(json)
@@ -122,11 +131,14 @@ class MangaUpdatesSimilarSource(
                 async {
                     try {
                         val detailUrl = "https://api.mangaupdates.com/v1/series/${rec.seriesId}"
+                        eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.acquire(
+                            eu.kanade.tachiyomi.data.discovery.ExternalApiThrottle.Api.MANGAUPDATES,
+                        )
                         val recDetail = client.newCall(GET(detailUrl))
                             .awaitSuccess()
                             .parseAs<MuSeriesDetail>(json)
 
-                        if (recDetail.type in allowedTypes) {
+                        if (recDetail.type in allowedTypes && !(nsfwFilterProvider() && recDetail.adult)) {
                             SuggestionItem(
                                 title = rec.seriesName,
                                 searchQueries = listOf(rec.seriesName),

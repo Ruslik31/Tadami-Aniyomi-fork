@@ -83,37 +83,7 @@ fun TabbedDialog(
         scrimAlpha = if (supportsBlurBehind) 0f else 0.5f,
         onRevealChange = { sheetReveal = it },
     ) {
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        val revealState = rememberUpdatedState(sheetReveal)
-
-        // One-shot window chrome setup - never add/clear BLUR flags per frame (flicker source).
-        DisposableEffect(window, supportsBlurBehind) {
-            val w = window
-            if (w != null && supportsBlurBehind) {
-                w.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
-                w.setDimAmount(0f)
-                w.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                w.attributes = w.attributes.apply { blurBehindRadius = 0 }
-            }
-            onDispose {
-                if (w != null && supportsBlurBehind) {
-                    // Reset so the next dialog does not inherit a residual blur edge.
-                    w.attributes = w.attributes.apply { blurBehindRadius = 0 }
-                    w.setDimAmount(0f)
-                    w.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                }
-            }
-        }
-
-        // Progressive radius/dim, quantized to cut attribute spam / edge ghosts.
-        LaunchedEffect(window, supportsBlurBehind) {
-            val w = window ?: return@LaunchedEffect
-            if (!supportsBlurBehind) return@LaunchedEffect
-            snapshotFlow { revealState.value.coerceIn(0f, 1f) }
-                .map { reveal -> (reveal * 20f).roundToInt().coerceIn(0, 20) }
-                .distinctUntilChanged()
-                .collect { step -> applyAuroraSheetWindowFx(w, step / 20f) }
-        }
+        AuroraSheetWindowFx(sheetReveal)
 
         val scope = rememberCoroutineScope()
         val hasOverflow = tabOverflowMenuContent != null || onOverflowMenuClicked != null
@@ -214,4 +184,44 @@ fun applyAuroraSheetWindowFx(window: Window, reveal: Float) {
         window.attributes = attrs.apply { blurBehindRadius = radius }
     }
     window.setDimAmount(0.22f * glass)
+}
+
+/**
+ * Progressive window blur/dim behind an Aurora bottom sheet (haze look).
+ * Call inside [AdaptiveSheet] content so [LocalView] resolves to the dialog window.
+ */
+@Composable
+fun AuroraSheetWindowFx(sheetReveal: Float) {
+    val supportsBlurBehind = eu.kanade.presentation.util.rememberSupportsBlurBehind(AuroraTheme.colors.isEInk)
+    val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+    val revealState = rememberUpdatedState(sheetReveal)
+
+    // One-shot window chrome setup - never add/clear BLUR flags per frame (flicker source).
+    DisposableEffect(window, supportsBlurBehind) {
+        val w = window
+        if (w != null && supportsBlurBehind) {
+            w.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
+            w.setDimAmount(0f)
+            w.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            w.attributes = w.attributes.apply { blurBehindRadius = 0 }
+        }
+        onDispose {
+            if (w != null && supportsBlurBehind) {
+                // Reset so the next dialog does not inherit a residual blur edge.
+                w.attributes = w.attributes.apply { blurBehindRadius = 0 }
+                w.setDimAmount(0f)
+                w.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            }
+        }
+    }
+
+    // Progressive radius/dim, quantized to cut attribute spam / edge ghosts.
+    LaunchedEffect(window, supportsBlurBehind) {
+        val w = window ?: return@LaunchedEffect
+        if (!supportsBlurBehind) return@LaunchedEffect
+        snapshotFlow { revealState.value.coerceIn(0f, 1f) }
+            .map { reveal -> (reveal * 20f).roundToInt().coerceIn(0, 20) }
+            .distinctUntilChanged()
+            .collect { step -> applyAuroraSheetWindowFx(w, step / 20f) }
+    }
 }

@@ -9,8 +9,9 @@ import org.junit.jupiter.api.Test
 
 class AuroraPrimeOverlayTest {
 
+    // Task 13 (Q3): канон primary — лайм #B6F04C (демо-сценарий несёт его после T12).
     private val live = AuroraPrimeColors(
-        primary = Color(0xFF64FFDA),
+        primary = Color(0xFFB6F04C),
         secondary = Color(0xFF7C4DFF),
         accent = Color(0xFFFF6E9C),
         background = Color(0xFF050B14),

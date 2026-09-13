@@ -251,7 +251,7 @@ private fun auroraPrimeOverlay(base: ColorScheme, isAmoled: Boolean, isDark: Boo
     val powerSave = remember {
         (context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)?.isPowerSaveMode == true
     }
-    val live = rememberAuroraPrimeColors(payload, animated = !powerSave) ?: return base
+    val live = rememberAuroraPrimeColors(payload, animated = !powerSave)
     return applyAuroraPrimeOverlay(
         base = base,
         live = live,

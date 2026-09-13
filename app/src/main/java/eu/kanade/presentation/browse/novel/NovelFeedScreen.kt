@@ -33,6 +33,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.tachiyomi.novelsource.NovelCatalogueSource
+import eu.kanade.tachiyomi.ui.browse.feed.FEED_ERROR_BROKEN_EXTENSION
 import eu.kanade.tachiyomi.ui.browse.novel.feed.NovelFeedItemUI
 import eu.kanade.tachiyomi.ui.browse.novel.feed.NovelFeedScreenState
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -91,7 +92,9 @@ fun NovelFeedScreen(
                     contentPadding = contentPadding,
                 ) {
                     state.items?.forEach { item ->
-                        item(key = item.source.id) {
+                        // BFEED-3: keyed by feed.id - source.id duplicated keys crashed the
+                        // LazyColumn when a source had two feed rows (manga etalon).
+                        item(key = item.feed.id) {
                             FeedSourceSection(
                                 item = item,
                                 getNovelState = getNovelState,
@@ -150,6 +153,18 @@ private fun FeedSourceSection(
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )
             }
+            // BFEED-5: show the source error instead of a misleading "no results".
+            item.loadError != null -> {
+                Text(
+                    text = if (item.loadError == FEED_ERROR_BROKEN_EXTENSION) {
+                        stringResource(MR.strings.feed_error_broken_extension)
+                    } else {
+                        item.loadError
+                    },
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                )
+            }
             item.results.isEmpty() -> {
                 Text(
                     text = stringResource(MR.strings.no_results_found),
@@ -161,7 +176,8 @@ private fun FeedSourceSection(
                     contentPadding = PaddingValues(MaterialTheme.padding.small),
                     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
                 ) {
-                    items(item.results) { novel ->
+                    // BFEED-6: key the row items (see the manga screen).
+                    items(item.results, key = { it.id }) { novel ->
                         val title by getNovelState(novel)
                         Box(modifier = Modifier.width(96.dp)) {
                             EntryComfortableGridItem(

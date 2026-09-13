@@ -38,7 +38,8 @@ CREATE TABLE mangas(
     custom_description TEXT,
     custom_genre TEXT AS List<String>,
     custom_status INTEGER,
-    memo BLOB AS JsonObject NOT NULL DEFAULT '{}'
+    memo BLOB AS JsonObject NOT NULL DEFAULT '{}',
+    completed_at INTEGER
 );
 
 CREATE INDEX library_favorite_index ON mangas(favorite) WHERE favorite = 1;
@@ -165,8 +166,8 @@ WHERE favorite = 0
 AND source IN :sourceIds;
 
 insert:
-INSERT INTO mangas(source, url, artist, author, description, notes, genre, title, status, thumbnail_url, favorite, pinned, last_update, next_update, initialized, viewer, chapter_flags, cover_last_modified, date_added, update_strategy, calculate_interval, last_modified_at, version, is_syncing, rating, memo)
-VALUES (:source, :url, :artist, :author, :description, :notes, :genre, :title, :status, :thumbnailUrl, :favorite, :pinned, :lastUpdate, :nextUpdate, :initialized, :viewerFlags, :chapterFlags, :coverLastModified, :dateAdded, :updateStrategy, :calculateInterval, 0, :version, 0, :rating, :memo);
+INSERT INTO mangas(source, url, artist, author, description, notes, genre, title, status, thumbnail_url, favorite, pinned, last_update, next_update, initialized, viewer, chapter_flags, cover_last_modified, date_added, update_strategy, calculate_interval, last_modified_at, version, is_syncing, rating, memo, completed_at)
+VALUES (:source, :url, :artist, :author, :description, :notes, :genre, :title, :status, :thumbnailUrl, :favorite, :pinned, :lastUpdate, :nextUpdate, :initialized, :viewerFlags, :chapterFlags, :coverLastModified, :dateAdded, :updateStrategy, :calculateInterval, 0, :version, 0, :rating, :memo, :completedAt);
 
 update:
 UPDATE mangas SET
@@ -193,12 +194,20 @@ UPDATE mangas SET
     calculate_interval = coalesce(:calculateInterval, calculate_interval),
     version = coalesce(:version, version),
     is_syncing = coalesce(:isSyncing, is_syncing),
-    rating = coalesce(:rating, rating)
+    rating = coalesce(:rating, rating),
+    completed_at = coalesce(:completedAt, completed_at)
 WHERE _id = :mangaId;
 
 updateMemo:
 UPDATE mangas
 SET memo = :memo
+WHERE _id = :mangaId;
+
+-- E-M6: current favorite flag, read inside the update transaction to detect a REAL toggle
+-- before emitting LibraryAdded/LibraryRemoved achievement events.
+getFavoriteById:
+SELECT favorite
+FROM mangas
 WHERE _id = :mangaId;
 
 updateMetadata:
@@ -289,6 +298,18 @@ SELECT EXISTS(
 );
 
 getCompletedMangaCount:
-SELECT COUNT(*) FROM mangas
-WHERE favorite = 1
-AND status = 2;
+-- Mirrors StatsCalculations.isCompletedByUserConsumption (Statistics screen) over libraryView so
+-- achievements and statistics report the SAME "completed manga" number. Previously this was
+-- favorite + source status alone: adding an UNREAD completed series silently advanced the
+-- "complete N manga" achievement, while a fully read ONGOING series never counted.
+-- custom COMPLETED(2) always counts; otherwise the entry must be fully consumed (every
+-- non-excluded chapter read) with an effective status of COMPLETED(2) or the terminal fallbacks
+-- PUBLISHING_FINISHED(4) / CANCELLED(5) / ON_HIATUS(6).
+SELECT COUNT(*) FROM libraryView
+WHERE custom_status = 2
+    OR (
+        COALESCE(custom_status, status) IN (2, 4, 5, 6)
+        AND totalCount > 0
+        AND readCount > 0
+        AND readCount >= totalCount
+    );

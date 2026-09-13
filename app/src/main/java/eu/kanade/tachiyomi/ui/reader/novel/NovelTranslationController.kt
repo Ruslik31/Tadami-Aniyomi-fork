@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.data.translation.TranslationJob
 import eu.kanade.tachiyomi.data.translation.TranslationProgressUpdate
 import eu.kanade.tachiyomi.data.translation.TranslationQueueManager
 import eu.kanade.tachiyomi.data.translation.TranslationStatus
+import eu.kanade.tachiyomi.ui.reader.novel.replace.replaceRulesFingerprint
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.novel.setting.NovelReaderSettings
 import eu.kanade.tachiyomi.ui.reader.novel.translation.GoogleTranslationParams
@@ -105,6 +106,9 @@ internal class NovelTranslationController(
     private var hasTriggeredGeminiAutoStart: Boolean = false
     private var pendingAutoStartGeminiTranslation: Boolean = false
 
+    private val stateLock = Any()
+
+    @Volatile
     private var state: NovelTranslationState = NovelTranslationState()
 
     /** Snapshot of the translation UI state, merged into the reader state by the screen model. */
@@ -128,6 +132,7 @@ internal class NovelTranslationController(
             hasGoogleTranslationCache = google.hasGoogleTranslationCache,
             googleLogs = google.googleLogs,
             translationPhase = google.translationPhase,
+            googleRateLimited = google.isRateLimited,
         )
     }
 
@@ -155,7 +160,9 @@ internal class NovelTranslationController(
         }
         val settingsMatch = NovelReaderTranslationCacheResolver.matches(
             cached = cached,
-            requirements = settings.toTranslationCacheRequirements(),
+            requirements = settings.toTranslationCacheRequirements(
+                replaceRulesFingerprint = replaceRulesFingerprint(novelReaderPreferences.enabledReplaceRules()),
+            ),
         )
         if (!settingsMatch) {
             updateState { it.copy(hasGeminiTranslationCache = false) }
@@ -176,23 +183,30 @@ internal class NovelTranslationController(
     }
 
     private fun updateState(transform: (NovelTranslationState) -> NovelTranslationState) {
-        state = transform(state)
+        // Google onLog/onProgress callbacks arrive from up to three parallel IO chunks while the
+        // main thread updates the same state; the read-modify-write must be atomic or concurrent
+        // updates clobber each other through stale copies.
+        val snapshot = synchronized(stateLock) {
+            state = transform(state)
+            state
+        }
         host.translationApplyTranslationState(
             gemini = NovelReaderScreenModel.State.ReaderGeminiState(
-                isGeminiTranslating = state.isGeminiTranslating,
-                geminiTranslationProgress = state.geminiTranslationProgress,
-                isGeminiTranslationVisible = state.isGeminiTranslationVisible,
-                hasGeminiTranslationCache = state.hasGeminiTranslationCache,
-                geminiLogs = state.geminiLogs,
-                chapterProgress = state.chapterProgress,
+                isGeminiTranslating = snapshot.isGeminiTranslating,
+                geminiTranslationProgress = snapshot.geminiTranslationProgress,
+                isGeminiTranslationVisible = snapshot.isGeminiTranslationVisible,
+                hasGeminiTranslationCache = snapshot.hasGeminiTranslationCache,
+                geminiLogs = snapshot.geminiLogs,
+                chapterProgress = snapshot.chapterProgress,
             ),
             google = NovelReaderScreenModel.State.ReaderGoogleState(
-                isGoogleTranslating = state.isGoogleTranslating,
-                googleTranslationProgress = state.googleTranslationProgress,
-                isGoogleTranslationVisible = state.isGoogleTranslationVisible,
-                hasGoogleTranslationCache = state.hasGoogleTranslationCache,
-                googleLogs = state.googleLogs,
-                translationPhase = state.translationPhase,
+                isGoogleTranslating = snapshot.isGoogleTranslating,
+                googleTranslationProgress = snapshot.googleTranslationProgress,
+                isGoogleTranslationVisible = snapshot.isGoogleTranslationVisible,
+                hasGoogleTranslationCache = snapshot.hasGoogleTranslationCache,
+                googleLogs = snapshot.googleLogs,
+                translationPhase = snapshot.translationPhase,
+                isRateLimited = snapshot.googleRateLimited,
             ),
         )
     }
@@ -288,7 +302,9 @@ internal class NovelTranslationController(
             isGeminiSourceLanguageEnglish(settings.geminiSourceLang)
         if (!settings.geminiEnabled || !(requestedAutoStart || englishSourceAutoStart)) return
         if (!host.translationHasConfiguredProvider(settings)) return
-        if (host.translationCurrentParsedTextBlocks().isEmpty()) return
+        // Same book bypass as startGeminiTranslation: over a book the content model belongs to the
+        // entry chapter and stays empty, so it must not gate the auto-start there.
+        if (!host.translationIsBookRuntimeActive() && host.translationCurrentParsedTextBlocks().isEmpty()) return
         if (state.isGeminiTranslating || state.hasGeminiTranslationCache ||
             !host.translationHolderIsEmpty("gemini")
         ) {
@@ -452,6 +468,19 @@ internal class NovelTranslationController(
     }
 
     fun clearGeminiTranslation() {
+        clearGeminiTranslationInternal(deleteDiskCache = true)
+    }
+
+    /**
+     * Variant for the translation-kind switch dialog: hides and resets the Gemini side exactly
+     * like [clearGeminiTranslation] but keeps the chapter's disk cache - switching to Google and
+     * back must not silently throw away (paid-API) translations the user never asked to delete.
+     */
+    fun clearGeminiTranslationForSwitch() {
+        clearGeminiTranslationInternal(deleteDiskCache = false)
+    }
+
+    private fun clearGeminiTranslationInternal(deleteDiskCache: Boolean) {
         val chapterId = targetTranslationChapterId() ?: return
         if (state.isGeminiTranslating) {
             stopGeminiTranslation()
@@ -467,8 +496,10 @@ internal class NovelTranslationController(
                 hasGeminiTranslationCache = false,
             )
         }
-        NovelReaderTranslationDiskCacheStore.remove(chapterId)
-        addAiTranslationLog("🗑️ Cleared chapter cache")
+        if (deleteDiskCache) {
+            NovelReaderTranslationDiskCacheStore.remove(chapterId)
+            addAiTranslationLog("🗑️ Cleared chapter cache")
+        }
         host.translationRefreshBookModeTranslationVariant()
         val settings = host.translationReaderSettings() ?: return
         host.translationUpdateContent(settings)
@@ -569,9 +600,14 @@ internal class NovelTranslationController(
                 val results = response.translatedByIndex
                     .filterKeys { index -> index in baseTextBlocks.indices }
                     .filterValues { translated -> translated.isNotBlank() }
+                // A partial (rate-limited or lossy) run stays visible so the user sees whatever
+                // exists, but it does NOT count as a complete cache: auto-start and the dialog's
+                // Resume can then heal the gaps instead of the session cache pinning a
+                // half-translated chapter as done.
+                val isComplete = results.size >= baseTextBlocks.size
                 addGoogleLog(
-                    "Finished: translatedSegments=${results.values.count { it.isNotBlank() }}/" +
-                        "${baseTextBlocks.size}, rateLimited=false",
+                    "Finished: translatedSegments=${results.size}/" +
+                        "${baseTextBlocks.size}, rateLimited=${response.rateLimited}",
                 )
                 host.translationHolderPut("google", results)
                 googleSessionCache.put(
@@ -582,10 +618,11 @@ internal class NovelTranslationController(
                 )
                 updateState {
                     it.copy(
-                        hasGoogleTranslationCache = results.isNotEmpty(),
+                        hasGoogleTranslationCache = isComplete,
                         isGoogleTranslating = false,
                         googleTranslationProgress = 100,
                         translationPhase = TranslationPhase.IDLE,
+                        googleRateLimited = response.rateLimited && !isComplete,
                         isGoogleTranslationVisible = if (results.isNotEmpty()) {
                             true
                         } else {

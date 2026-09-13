@@ -63,10 +63,6 @@ import eu.kanade.tachiyomi.ui.browse.manga.source.browse.BrowseMangaSourceScreen
 import eu.kanade.tachiyomi.ui.category.CategoriesTab
 import eu.kanade.tachiyomi.ui.entries.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.launch
 import mihon.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.source.manga.model.StubMangaSource
@@ -86,6 +82,10 @@ data class BrowseMangaSourceScreen(
     private val listingQuery: String?,
     private val savedSearchId: Long? = null,
     private val parentScreen: cafe.adriel.voyager.core.screen.Screen? = null,
+    // RESH-B1: genre requests travel as constructor args of a fresh instance (the GlobalSearch
+    // query pattern) instead of the removed static queryEvent channel.
+    private val genreQuery: String? = null,
+    private val genresQuery: List<String>? = null,
 ) : Screen(), AssistContentScreen {
 
     private var assistUrl: String? = null
@@ -164,13 +164,21 @@ data class BrowseMangaSourceScreen(
                         source = screenModel.source,
                         displayMode = screenModel.displayMode,
                         onDisplayModeChange = { screenModel.displayMode = it },
-                        navigateUp = navigator::pop,
+                        // BRM-3: was navigator::pop - the smart navigateUp above (clears the
+                        // toolbar query first when it is a non-user listing query) was dead
+                        // code; the anime/novel toolbars use their smart variants.
+                        navigateUp = navigateUp,
                         onWebViewClick = onWebViewClick,
                         onHelpClick = onHelpClick,
                         onSettingsClick = {
                             navigator.push(MangaSourcePreferencesScreen(sourceId))
                         },
-                        onSearch = { filterQuery -> scope.launch { queryEvent.send(SearchType.Text(filterQuery)) } },
+                        onSearch = { filterQuery ->
+                            // BRM-4/RESH-B1: direct SM call (anime/novel etalon) - the static
+                            // channel round-trip could suspend with no receiver and raced the
+                            // pager screen's second collector.
+                            screenModel.search(filterQuery)
+                        },
                         useAuroraAppBarActions = false,
                     )
 
@@ -266,19 +274,26 @@ data class BrowseMangaSourceScreen(
                 onMangaClick = { manga ->
                     if (Injekt.get<SourcePreferences>().titleCarouselEnabled().get()) {
                         val snapshot = (0 until pagingManga.itemCount).mapNotNull { index -> pagingManga[index]?.id }
-                        val index = snapshot.indexOf(manga.id).coerceAtLeast(0)
-                        navigator.push(
-                            TitleCarouselScreen(
-                                type = TitleCarouselType.Manga,
-                                sourceId = screenModel.source.id,
-                                initialTitleIds = snapshot,
-                                initialIndex = index,
-                                listingQuery = state.listing.query,
-                                filtersJson = state.filters
-                                    .takeIf { it.isNotEmpty() }
-                                    ?.let { screenModel.serializeFilters(it) },
-                            ),
-                        )
+                        val index = snapshot.indexOf(manga.id)
+                        // BFEED-17: -1 used to be coerced to 0 - when the clicked title was not
+                        // in the loaded snapshot the carousel opened on an UNRELATED first
+                        // title; fall back to the plain entry screen instead.
+                        if (index < 0) {
+                            navigator.push(MangaScreen(manga.id, true))
+                        } else {
+                            navigator.push(
+                                TitleCarouselScreen(
+                                    type = TitleCarouselType.Manga,
+                                    sourceId = screenModel.source.id,
+                                    initialTitleIds = snapshot,
+                                    initialIndex = index,
+                                    listingQuery = state.listing.query,
+                                    filtersJson = state.filters
+                                        .takeIf { it.isNotEmpty() }
+                                        ?.let { screenModel.serializeFilters(it) },
+                                ),
+                            )
+                        }
                     } else {
                         navigator.push(MangaScreen(manga.id, true))
                     }
@@ -313,7 +328,9 @@ data class BrowseMangaSourceScreen(
                     onReset = screenModel::resetFilters,
                     onFilter = { screenModel.search(filters = state.filters) },
                     onUpdate = screenModel::setFilters,
-                    savedSearches = screenModel.state.value.savedSearches,
+                    // BRN-20: state.value inside composition bypasses snapshot observation -
+                    // the saved-search list could render stale; use the collected state.
+                    savedSearches = state.savedSearches,
                     onSaveSearch = screenModel::openSaveSearchDialog,
                     onOpenSavedSearch = screenModel::openSavedSearch,
                     onDeleteSavedSearch = {
@@ -339,7 +356,11 @@ data class BrowseMangaSourceScreen(
                 MigrateMangaDialog(
                     oldManga = dialog.oldManga,
                     newManga = dialog.newManga,
-                    screenModel = MigrateMangaDialogScreenModel(),
+                    // BRM-1: was constructed INLINE - every recomposition of this when-scope
+                    // (any browse state emission, rotation) recreated the SM mid-migration:
+                    // isMigrating reset to false, a second tap started a PARALLEL migration of
+                    // the same pair while the old coroutine kept running.
+                    screenModel = rememberScreenModel { MigrateMangaDialogScreenModel() },
                     onDismissRequest = onDismissRequest,
                     onClickTitle = { navigator.push(MangaScreen(dialog.oldManga.id)) },
                     onPopScreen = {
@@ -386,34 +407,15 @@ data class BrowseMangaSourceScreen(
             else -> {}
         }
 
+        // RESH-B1 (BRM-4/BGS-5): the static queryEvent Channel is gone. Its send() suspended
+        // forever when no browse screen was composed, the pager screen's isVisible(current||
+        // target) semantics allowed TWO collectors competing for one event, and a re-created
+        // collector could replay nothing (rendezvous). Genre requests are constructor args of a
+        // fresh screen instance now, applied exactly once per screen model - like listingQuery.
         LaunchedEffect(Unit) {
-            queryEvent.receiveAsFlow()
-                .collectLatest {
-                    when (it) {
-                        is SearchType.Genre -> screenModel.searchGenre(it.txt)
-                        is SearchType.Text -> screenModel.search(it.txt)
-                        is SearchType.Genres -> screenModel.searchGenres(it.txts)
-                    }
-                }
+            genreQuery?.let { screenModel.searchGenre(it) }
+            genresQuery?.let { screenModel.searchGenres(it) }
         }
-    }
-
-    suspend fun search(query: String) = queryEvent.send(SearchType.Text(query))
-    suspend fun searchGenre(name: String) = queryEvent.send(SearchType.Genre(name))
-    suspend fun searchGenres(names: List<String>) {
-        if (names.isNotEmpty()) {
-            queryEvent.send(SearchType.Genres(names))
-        }
-    }
-
-    companion object {
-        private val queryEvent = Channel<SearchType>()
-    }
-
-    sealed interface SearchType {
-        data class Text(val txt: String) : SearchType
-        data class Genre(val txt: String) : SearchType
-        data class Genres(val txts: List<String>) : SearchType
     }
 }
 

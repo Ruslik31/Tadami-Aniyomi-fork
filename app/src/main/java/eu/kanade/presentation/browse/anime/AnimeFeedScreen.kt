@@ -35,7 +35,7 @@ import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.ui.browse.anime.feed.AnimeFeedItemUI
 import eu.kanade.tachiyomi.ui.browse.anime.feed.AnimeFeedScreenState
-import eu.kanade.tachiyomi.util.system.LocaleHelper
+import eu.kanade.tachiyomi.ui.browse.feed.FEED_ERROR_BROKEN_EXTENSION
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.entries.anime.model.asAnimeCover
 import tachiyomi.i18n.MR
@@ -91,7 +91,9 @@ fun AnimeFeedScreen(
                     contentPadding = contentPadding,
                 ) {
                     state.items?.forEach { item ->
-                        item(key = item.source.id) {
+                        // BFEED-3: keyed by feed.id - source.id duplicated keys crashed the
+                        // LazyColumn when a source had two feed rows (manga etalon).
+                        item(key = item.feed.id) {
                             FeedSourceSection(
                                 item = item,
                                 getAnimeState = getAnimeState,
@@ -131,7 +133,11 @@ private fun FeedSourceSection(
                     color = AuroraTheme.colors.accent,
                 )
                 Text(
-                    text = LocaleHelper.getLocalizedDisplayName(item.source.lang),
+                    // BFEED-10: the SM builds a rich subtitle (language · listing type /
+                    // saved-search name, AYMR feed_latest/feed_popular labels) - the screen
+                    // ignored it and rendered only the raw language name, so two rows of one
+                    // source were indistinguishable.
+                    text = item.subtitle,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -150,6 +156,18 @@ private fun FeedSourceSection(
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )
             }
+            // BFEED-5: show the source error instead of a misleading "no results".
+            item.loadError != null -> {
+                Text(
+                    text = if (item.loadError == FEED_ERROR_BROKEN_EXTENSION) {
+                        stringResource(MR.strings.feed_error_broken_extension)
+                    } else {
+                        item.loadError
+                    },
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                )
+            }
             item.results.isEmpty() -> {
                 Text(
                     text = stringResource(MR.strings.no_results_found),
@@ -161,7 +179,9 @@ private fun FeedSourceSection(
                     contentPadding = PaddingValues(MaterialTheme.padding.small),
                     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
                 ) {
-                    items(item.results) { anime ->
+                    // BFEED-6: key the row items - unkeyed slots kept observing the previous
+                    // entry's flow across refreshes (see the manga screen).
+                    items(item.results, key = { it.id }) { anime ->
                         val title by getAnimeState(anime)
                         Box(modifier = Modifier.width(96.dp)) {
                             EntryComfortableGridItem(

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.novel.setting
 
 import eu.kanade.tachiyomi.data.download.novel.NovelTranslatedDownloadFormat
+import eu.kanade.tachiyomi.ui.reader.novel.NovelQuoteCardStyle
 import eu.kanade.tachiyomi.ui.reader.novel.replace.ReplaceRule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
@@ -317,6 +319,14 @@ data class NovelReaderOverride(
     val margin: Int? = null,
     val textAlign: TextAlign? = null,
     val paragraphSpacingDp: Int? = null,
+
+    /**
+     * Pre-migration per-source paragraph spacing (legacy enum name COMPACT/NORMAL/SPACIOUS),
+     * decoded from the old JSON key so the one-shot init migration can translate it into
+     * [paragraphSpacingDp]. Never written by current code; always null after migration.
+     */
+    @SerialName("paragraphSpacing")
+    val legacyParagraphSpacing: String? = null,
     val forceParagraphIndent: Boolean? = null,
     val preserveSourceTextAlignInNative: Boolean? = null,
     val fontFamily: String? = null,
@@ -459,6 +469,7 @@ class NovelReaderPreferences(
 ) {
     init {
         migrateLegacyParagraphSpacingIfNeeded()
+        migrateLegacyOverrideParagraphSpacingIfNeeded()
         migrateLegacyBackgroundSelectionIfNeeded()
         migrateLegacyPageTransitionStyleIfNeeded()
         migrateStaleEnumValuesIfNeeded()
@@ -482,11 +493,32 @@ class NovelReaderPreferences(
         preferenceStore.getInt("novel_reader_paragraph_spacing_dp", DEFAULT_PARAGRAPH_SPACING_DP)
 
     private fun migrateLegacyParagraphSpacingIfNeeded() {
-        val legacyValue = preferenceStore
-            .getString("novel_reader_paragraph_spacing", "")
-            .get()
-            .ifBlank { return }
-        paragraphSpacing().set(resolveLegacyParagraphSpacingDp(legacyValue))
+        val legacyPreference = preferenceStore.getString("novel_reader_paragraph_spacing", "")
+        val legacyValue = legacyPreference.get().ifBlank { return }
+        // One-shot: this class is an app-scoped singleton, so without deleting the legacy key the
+        // init below re-copies the stale enum value over the user's current dp setting on every
+        // process start. The isSet gate additionally protects users who already changed the dp
+        // value on a build where the key was not yet deleted.
+        if (!paragraphSpacing().isSet()) {
+            paragraphSpacing().set(resolveLegacyParagraphSpacingDp(legacyValue))
+        }
+        legacyPreference.delete()
+    }
+
+    private fun migrateLegacyOverrideParagraphSpacingIfNeeded() {
+        val overrides = sourceOverrides().get()
+        var hasChanges = false
+        val migrated = overrides.mapValues { (_, value) ->
+            val legacyValue = value.legacyParagraphSpacing ?: return@mapValues value
+            hasChanges = true
+            value.copy(
+                paragraphSpacingDp = value.paragraphSpacingDp ?: resolveLegacyParagraphSpacingDp(legacyValue),
+                legacyParagraphSpacing = null,
+            )
+        }
+        if (hasChanges) {
+            sourceOverrides().set(migrated)
+        }
     }
 
     fun forceParagraphIndent() = preferenceStore.getBoolean("novel_reader_force_paragraph_indent", true)
@@ -725,6 +757,9 @@ class NovelReaderPreferences(
     // Highlights
     fun novelHighlightLastColor() =
         preferenceStore.getLong("novel_highlight_last_color", DEFAULT_HIGHLIGHT_COLOR_ARGB)
+
+    fun quoteCardStyle() =
+        preferenceStore.getEnum("novel_quote_card_style", NovelQuoteCardStyle.CODEX_SACRA)
 
     fun novelDictionaryQuickAccess() =
         preferenceStore.getBoolean("novel_reader_dictionary_quick_access", false)
@@ -1084,6 +1119,12 @@ class NovelReaderPreferences(
                 forceBoldText = forceBoldText().get(),
                 forceItalicText = forceItalicText().get(),
                 textShadow = textShadow().get(),
+                textShadowColor = textShadowColor().get(),
+                textShadowBlur = textShadowBlur().get(),
+                textShadowX = textShadowX().get(),
+                textShadowY = textShadowY().get(),
+                pageEdgeShadow = pageEdgeShadow().get(),
+                pageEdgeShadowAlpha = pageEdgeShadowAlpha().get(),
                 theme = theme().get(),
                 backgroundColor = backgroundColor().get(),
                 textColor = textColor().get(),
@@ -1333,7 +1374,7 @@ class NovelReaderPreferences(
             override?.geminiAutoTranslateEnglishSource ?: geminiAutoTranslateEnglishSource().get(),
             geminiPrefetchNextChapterTranslation =
             override?.geminiPrefetchNextChapterTranslation ?: geminiPrefetchNextChapterTranslation().get(),
-            geminiPrivateUnlocked = geminiPrivateUnlocked().get(),
+            geminiPrivateUnlocked = override?.geminiPrivateUnlocked ?: geminiPrivateUnlocked().get(),
             geminiPrivatePythonLikeMode =
             override?.geminiPrivatePythonLikeMode ?: geminiPrivatePythonLikeMode().get(),
             translationProvider = override?.translationProvider ?: translationProvider().get(),

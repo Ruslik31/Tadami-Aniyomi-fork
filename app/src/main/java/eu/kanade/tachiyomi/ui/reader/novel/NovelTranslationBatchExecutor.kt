@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.ui.reader.novel.translation.DeepSeekTranslationServic
 import eu.kanade.tachiyomi.ui.reader.novel.translation.GeminiTranslationCacheEntry
 import eu.kanade.tachiyomi.ui.reader.novel.translation.GeminiTranslationService
 import eu.kanade.tachiyomi.ui.reader.novel.translation.MistralTranslationService
+import eu.kanade.tachiyomi.ui.reader.novel.translation.NOVEL_TRANSLATION_EXTRACTOR_VERSION
 import eu.kanade.tachiyomi.ui.reader.novel.translation.NovelReaderTranslationDiskCacheStore
 import eu.kanade.tachiyomi.ui.reader.novel.translation.NvidiaTranslationService
 import eu.kanade.tachiyomi.ui.reader.novel.translation.OllamaCloudTranslationService
@@ -25,6 +26,7 @@ import eu.kanade.tachiyomi.ui.reader.novel.translation.toOpenRouterTranslationPa
 import eu.kanade.tachiyomi.ui.reader.novel.translation.toTranslationCacheRequirements
 import eu.kanade.tachiyomi.ui.reader.novel.translation.translationCacheModelId
 import eu.kanade.tachiyomi.ui.reader.novel.translation.translationConcurrencyLimit
+import eu.kanade.tachiyomi.ui.reader.novel.translation.translationPromptModifiersFingerprint
 import eu.kanade.tachiyomi.ui.reader.novel.translation.translationRequestConfigLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +65,9 @@ internal interface NovelTranslationBatchHost {
     fun batchCoroutineScope(): CoroutineScope
 
     fun batchCacheReadChapters(): Boolean
+
+    /** Identity of the replace rules applied to source HTML before extraction (cache key part). */
+    fun batchReplaceRulesFingerprint(): String
 
     fun batchAddAiTranslationLog(message: String)
 }
@@ -190,6 +195,10 @@ internal class NovelTranslationBatchExecutor(
                         targetLang = settings.geminiTargetLang,
                         promptMode = settings.geminiPromptMode,
                         stylePreset = settings.geminiStylePreset,
+                        extractorVersion = NOVEL_TRANSLATION_EXTRACTOR_VERSION,
+                        promptModifiersFingerprint = settings.translationPromptModifiersFingerprint(),
+                        replaceRulesFingerprint = host.batchReplaceRulesFingerprint(),
+                        sourceSegmentCount = nextTextBlocks.size,
                     ),
                 )
                 host.batchAddAiTranslationLog(
@@ -210,7 +219,9 @@ internal class NovelTranslationBatchExecutor(
     ): Boolean {
         return NovelReaderTranslationDiskCacheStore.has(
             chapterId = chapterId,
-            requirements = settings.toTranslationCacheRequirements(),
+            requirements = settings.toTranslationCacheRequirements(
+                replaceRulesFingerprint = host.batchReplaceRulesFingerprint(),
+            ),
         )
     }
 

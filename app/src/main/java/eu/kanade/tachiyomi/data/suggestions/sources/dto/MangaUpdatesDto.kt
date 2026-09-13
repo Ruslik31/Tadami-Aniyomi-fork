@@ -24,6 +24,7 @@ data class MuRecord(
 @Serializable
 data class MuSeriesDetail(
     val type: String? = null,
+    val adult: Boolean = false,
     val recommendations: List<MuRecommendation> = emptyList(),
     @SerialName("category_recommendations") val categoryRecommendations: List<MuRecommendation> = emptyList(),
 )

@@ -2,20 +2,36 @@ package eu.kanade.tachiyomi.ui.reels
 
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
+import eu.kanade.tachiyomi.animesource.AnimeCategorizedSearchSource
+import eu.kanade.tachiyomi.animesource.AnimeCategorySubscriptionSource
+import eu.kanade.tachiyomi.animesource.AnimeContentPreferencesSource
 import eu.kanade.tachiyomi.animesource.AnimeCreatorFeedSource
+import eu.kanade.tachiyomi.animesource.AnimeCustomFeedSource
+import eu.kanade.tachiyomi.animesource.AnimeFeedBrowseSource
+import eu.kanade.tachiyomi.animesource.AnimeFeedLoginSource
 import eu.kanade.tachiyomi.animesource.AnimeFeedSource
+import eu.kanade.tachiyomi.animesource.AnimeFeedWebLoginSource
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.ContentPreferenceOption
+import eu.kanade.tachiyomi.animesource.model.CustomFeedDetail
+import eu.kanade.tachiyomi.animesource.model.CustomFeedRef
+import eu.kanade.tachiyomi.animesource.model.FeedCategory
+import eu.kanade.tachiyomi.animesource.model.FeedCategoryPage
 import eu.kanade.tachiyomi.animesource.model.FeedPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.SearchSuggestion
+import eu.kanade.tachiyomi.animesource.model.SearchSuggestionKind
+import eu.kanade.tachiyomi.animesource.model.SearchSuggestions
 import eu.kanade.tachiyomi.animesource.model.ShortVideoItem
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -843,11 +859,14 @@ class ReelsFeedScreenModelTest {
             offlineFavorite("off-b"),
         )
 
+        val repository = FakeReelsFavoriteRepository()
+        favorites.forEach { repository.favorites[it.videoId to it.sourceId] = it }
         val screenModel = buildModel(
             sourceId = 301L,
             manager = sourceManagerOf(),
-            initialFavorites = favorites,
-            initialPage = 1,
+            repository = repository,
+            offlinePlaylist = true,
+            initialVideoId = "off-b",
         )
         testDispatcher.scheduler.advanceUntilIdle()
 
@@ -936,18 +955,28 @@ class ReelsFeedScreenModelTest {
         repository: ReelsFavoriteRepository = FakeReelsFavoriteRepository(),
         followRepository: ReelsFollowRepository = FakeReelsFollowRepository(),
         incognito: Boolean = false,
-        initialFavorites: List<ReelsFavorite> = emptyList(),
-        initialPage: Int = 0,
+        offlinePlaylist: Boolean = false,
+        playlistSort: FavoritesSort = FavoritesSort.DateDesc,
+        initialVideoId: String? = null,
         creator: String? = null,
         followingFeed: Boolean = false,
+        customFeedId: String? = null,
+        customFeedName: String? = null,
+        nicheId: String? = null,
+        nicheName: String? = null,
         preferences: SourcePreferences = SourcePreferences(MapPreferenceStore()),
         sessionSound: ReelsSessionSoundState = ReelsSessionSoundState(),
     ) = ReelsFeedScreenModel(
         initialSourceId = sourceId,
-        initialFavorites = initialFavorites,
-        initialPage = initialPage,
+        offlinePlaylist = offlinePlaylist,
+        playlistSort = playlistSort,
+        initialVideoId = initialVideoId,
         creator = creator,
         followingFeed = followingFeed,
+        customFeedId = customFeedId,
+        customFeedName = customFeedName,
+        nicheId = nicheId,
+        nicheName = nicheName,
         sourceManager = manager,
         sourcePreferences = preferences,
         ioDispatcher = testDispatcher,
@@ -1108,16 +1137,18 @@ class ReelsFeedScreenModelTest {
             override fun getStubSources(): List<StubAnimeSource> = emptyList()
         }
 
+        val repository = FakeReelsFavoriteRepository()
+        repository.favorites[favorite.videoId to favorite.sourceId] = favorite
         val screenModel = ReelsFeedScreenModel(
             initialSourceId = 301L,
-            initialFavorites = listOf(favorite),
-            initialPage = 0,
+            offlinePlaylist = true,
+            initialVideoId = favorite.videoId,
             sourceManager = emptySourceManager,
             sourcePreferences = SourcePreferences(MapPreferenceStore()),
             ioDispatcher = testDispatcher,
             isIncognito = { false },
             sourceIconProvider = { null },
-            reelsFavoriteRepository = FakeReelsFavoriteRepository(),
+            reelsFavoriteRepository = repository,
             reelsFollowRepository = FakeReelsFollowRepository(),
         )
         testDispatcher.scheduler.advanceUntilIdle()
@@ -1371,7 +1402,7 @@ class ReelsFeedScreenModelTest {
         }
 
     @Test
-    fun `toggleFollow persists both directions, restores per source and refuses past the cap`() =
+    fun `toggleFollow persists both directions and restores per source`() =
         runTest(testDispatcher) {
             val sourceA = RecordingCreatorFeedSource(1104L) { _, _, _ -> FeedPage(emptyList(), false) }
             val sourceB = RecordingCreatorFeedSource(1105L) { _, _, _ -> FeedPage(emptyList(), false) }
@@ -1383,7 +1414,7 @@ class ReelsFeedScreenModelTest {
             )
             testDispatcher.scheduler.advanceUntilIdle()
 
-            screenModel.toggleFollow("alice") shouldBe true
+            screenModel.toggleFollow("alice")
             testDispatcher.scheduler.advanceUntilIdle()
             screenModel.state.value.followingCreators.contains("alice") shouldBe true
             follows.follows.keys shouldBe setOf(1104L to "alice")
@@ -1397,21 +1428,21 @@ class ReelsFeedScreenModelTest {
             screenModel.state.value.followingCreators.contains("alice") shouldBe true
 
             // ...and unfollowing removes the row.
-            screenModel.toggleFollow("alice") shouldBe true
+            screenModel.toggleFollow("alice")
             testDispatcher.scheduler.advanceUntilIdle()
             follows.follows.isEmpty() shouldBe true
 
-            // Soft cap: 100 rows per source, the 101st is refused without any DB write.
-            repeat(100) { index -> check(screenModel.toggleFollow("creator-$index")) }
+            // Uncapped: follows beyond the former 100-row soft cap persist like any other row.
+            repeat(100) { index -> screenModel.toggleFollow("creator-$index") }
             testDispatcher.scheduler.advanceUntilIdle()
-            screenModel.toggleFollow("over-cap") shouldBe false
-            screenModel.state.value.followingCreators.contains("over-cap") shouldBe false
-            follows.follows.size shouldBe 100
-            follows.follows.keys.none { it.second == "over-cap" } shouldBe true
+            screenModel.toggleFollow("over-cap")
+            testDispatcher.scheduler.advanceUntilIdle()
+            screenModel.state.value.followingCreators.contains("over-cap") shouldBe true
+            follows.follows.size shouldBe 101
         }
 
     @Test
-    fun `following feed k-way merges creator streams newest first`() = runTest(testDispatcher) {
+    fun `following feed shuffles merged creator streams without same-author runs`() = runTest(testDispatcher) {
         val follows = FakeReelsFollowRepository()
         follows.follows[1106L to "alice"] = ReelsFollow(1106L, "alice", Date(0))
         follows.follows[1106L to "bob"] = ReelsFollow(1106L, "bob", Date(0))
@@ -1433,7 +1464,9 @@ class ReelsFeedScreenModelTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         screenModel.state.value.mode shouldBe ReelsFeedScreenModel.FeedMode.FOLLOWING
-        screenModel.state.value.items.map { it.id } shouldBe listOf("a300", "b200", "a100")
+        // 2 alice + 1 bob: the only separable shape puts bob in the middle.
+        screenModel.state.value.items.map { it.id }.sorted() shouldBe listOf("a100", "a300", "b200")
+        screenModel.state.value.items[1].id shouldBe "b200"
         screenModel.state.value.error shouldBe null
         screenModel.state.value.canLoadMore shouldBe false
     }
@@ -1510,7 +1543,7 @@ class ReelsFeedScreenModelTest {
             )
             testDispatcher.scheduler.advanceUntilIdle()
 
-            screenModel.state.value.items.map { it.id } shouldBe listOf("a1", "b1")
+            screenModel.state.value.items.map { it.id }.sorted() shouldBe listOf("a1", "b1")
             screenModel.state.value.canLoadMore shouldBe true
 
             // Near the merged tail only alice is topped up — with its own locked cursor.
@@ -1522,7 +1555,8 @@ class ReelsFeedScreenModelTest {
                 Triple("bob", 1, null),
                 Triple("alice", 2, "ac1"),
             )
-            screenModel.state.value.items.map { it.id } shouldBe listOf("a1", "b1", "a2")
+            screenModel.state.value.items.map { it.id }.sorted() shouldBe listOf("a1", "a2", "b1")
+            screenModel.state.value.items.last().id shouldBe "a2"
             screenModel.state.value.canLoadMore shouldBe false
         }
 
@@ -1542,5 +1576,568 @@ class ReelsFeedScreenModelTest {
         screenModel.state.value.isLoading shouldBe false
         screenModel.state.value.canLoadMore shouldBe false
         source.creatorRequests.shouldBeEmpty()
+    }
+
+    @Test
+    fun `following feed never places the same author twice in a row when separable`() =
+        runTest(testDispatcher) {
+            val follows = FakeReelsFollowRepository()
+            follows.follows[1111L to "alice"] = ReelsFollow(1111L, "alice", Date(0))
+            follows.follows[1111L to "bob"] = ReelsFollow(1111L, "bob", Date(0))
+            // alice posts strictly newer reels: the pre-shuffle newest-first merge would
+            // emit aaa/bbb runs; the separated feed must interleave (3+3 of 6 is feasible).
+            val source = RecordingCreatorFeedSource(1111L) { creator, _, _ ->
+                val base = if (creator == "alice") 300L else 100L
+                FeedPage(
+                    (0 until 3).map { timedItem("$creator-${base - it * 10}", base - it * 10) },
+                    hasNextPage = false,
+                )
+            }
+            repeat(3) {
+                val screenModel = buildModel(
+                    sourceId = 1111L,
+                    manager = sourceManagerOf(source),
+                    followRepository = follows,
+                    followingFeed = true,
+                )
+                testDispatcher.scheduler.advanceUntilIdle()
+
+                val items = screenModel.state.value.items
+                items.shouldHaveSize(6)
+                // The shuffle keys on the stream creator even when items carry no author
+                // metadata: derive it from the id prefix.
+                items.zipWithNext { a, b -> a.id.substringBefore('-') to b.id.substringBefore('-') }
+                    .none { (first, second) -> first == second } shouldBe true
+            }
+        }
+
+    // ---- Contract v19: account login + custom feeds ----
+
+    private class FakeAccountSource(
+        override val id: Long,
+        override val name: String = "Account Feed $id",
+    ) : AnimeFeedSource, AnimeFeedLoginSource, AnimeCustomFeedSource {
+        override val lang: String = "all"
+
+        val loginRequests = mutableListOf<Pair<String, String>>()
+        var loginResult: Boolean = true
+        var storedEmail: String? = null
+        val feeds = mutableListOf(CustomFeedRef("f1", "Feed 1"), CustomFeedRef("f2", "Feed 2"))
+        val requestedFeedPages = mutableListOf<Pair<String, Int>>()
+        val createdFeeds = mutableListOf<Pair<String, List<String>>>()
+        var detail = CustomFeedDetail("Feed 1", listOf("Tag A"))
+
+        override suspend fun getFeed(page: Int, cursor: String?, filters: AnimeFilterList): FeedPage =
+            FeedPage(emptyList(), false)
+
+        override suspend fun login(email: String, password: String): Boolean {
+            loginRequests += email to password
+            if (loginResult) storedEmail = email
+            return loginResult
+        }
+
+        override fun isLoggedIn(): Boolean = storedEmail != null
+
+        override fun loggedInAccount(): String? = storedEmail
+
+        override suspend fun logout() {
+            storedEmail = null
+        }
+
+        override suspend fun getCustomFeeds(): List<CustomFeedRef> = feeds.toList()
+
+        override suspend fun getCustomFeed(id: String, page: Int, cursor: String?): FeedPage {
+            requestedFeedPages += id to page
+            return FeedPage(
+                videos = listOf(
+                    ShortVideoItem(
+                        id = "custom-$id-p$page",
+                        videoUrl = "https://example.com/custom-$id-p$page.mp4",
+                        posterUrl = "https://example.com/custom-$id-p$page.jpg",
+                    ),
+                ),
+                hasNextPage = false,
+            )
+        }
+
+        override suspend fun getCustomFeedTags(): List<String> = listOf("Tag A", "Tag B", "Tag C")
+
+        override suspend fun getCustomFeedDetail(id: String): CustomFeedDetail = detail
+
+        override suspend fun createCustomFeed(name: String, tags: List<String>): CustomFeedRef {
+            createdFeeds += name to tags
+            return CustomFeedRef("new-1", name)
+        }
+
+        override suspend fun updateCustomFeed(id: String, name: String, tags: List<String>): Boolean = true
+
+        override suspend fun deleteCustomFeed(id: String): Boolean = feeds.removeAll { it.id == id }
+    }
+
+    @Test
+    fun `login capability is detected and a successful login updates the account state`() = runTest(testDispatcher) {
+        val source = FakeAccountSource(2001)
+        val model = buildModel(sourceId = 2001, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isLoginCapable shouldBe true
+        model.state.value.loggedInAccount shouldBe null
+
+        model.login("a@b.c", "pw")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.loggedInAccount shouldBe "a@b.c"
+        model.state.value.loginError shouldBe null
+        model.state.value.isLoggingIn shouldBe false
+        source.loginRequests shouldBe listOf("a@b.c" to "pw")
+    }
+
+    @Test
+    fun `rejected login surfaces the generic error and stays logged out`() = runTest(testDispatcher) {
+        val source = FakeAccountSource(2002)
+        source.loginResult = false
+        val model = buildModel(sourceId = 2002, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.login("x@y.z", "bad")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.loggedInAccount shouldBe null
+        model.state.value.loginError shouldBe ReelsFeedScreenModel.LOGIN_FAILED_MESSAGE
+        model.state.value.isLoggingIn shouldBe false
+    }
+
+    @Test
+    fun `transport failure during login surfaces the exception message`() = runTest(testDispatcher) {
+        val source = object : AnimeFeedSource, AnimeFeedLoginSource {
+            override val id: Long = 2009L
+            override val name: String = "Failing Login Feed"
+            override val lang: String = "all"
+
+            override suspend fun getFeed(page: Int, cursor: String?, filters: AnimeFilterList): FeedPage =
+                FeedPage(emptyList(), false)
+
+            override suspend fun login(email: String, password: String): Boolean =
+                throw RuntimeException("network down")
+
+            override fun isLoggedIn(): Boolean = false
+            override fun loggedInAccount(): String? = null
+            override suspend fun logout() = Unit
+        }
+        val model = buildModel(sourceId = 2009, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.login("a@b.c", "pw")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.loggedInAccount shouldBe null
+        model.state.value.loginError shouldBe "network down"
+    }
+
+    // ---- Contract v20: hosted web login ----
+
+    private class FakeWebLoginSource(
+        override val id: Long,
+        override val name: String = "Web Login Feed $id",
+    ) : AnimeFeedSource, AnimeFeedLoginSource, AnimeFeedWebLoginSource {
+        override val lang: String = "all"
+
+        var storedEmail: String? = null
+        var importResult: Boolean = true
+        val importedSessions = mutableListOf<Pair<Map<String, String>, Map<String, String>>>()
+
+        override suspend fun getFeed(page: Int, cursor: String?, filters: AnimeFilterList): FeedPage =
+            FeedPage(emptyList(), false)
+
+        override suspend fun login(email: String, password: String): Boolean = false
+
+        override fun isLoggedIn(): Boolean = storedEmail != null
+
+        override fun loggedInAccount(): String? = storedEmail
+
+        override suspend fun logout() {
+            storedEmail = null
+        }
+
+        override fun webLoginUrl(): String = "https://example.invalid/"
+
+        override fun ownAuthorizeUrl(): String = "https://example.invalid/oauth2/auth?state=own"
+
+        override fun isOwnLoginRedirect(url: String): Boolean = url.contains("state=own")
+
+        override suspend fun importWebRedirect(url: String, cookies: Map<String, String>): Boolean {
+            importedSessions += emptyMap<String, String>() to mapOf("redirect" to url)
+            if (!importResult) return false
+            storedEmail = "web@example.invalid"
+            return true
+        }
+
+        override suspend fun importWebSession(
+            cookies: Map<String, String>,
+            localStorage: Map<String, String>,
+        ): Boolean {
+            importedSessions += cookies to localStorage
+            if (!importResult) return false
+            storedEmail = "web@example.invalid"
+            return true
+        }
+    }
+
+    // ---- Contract v20: category browse (NICHE mode) ----
+
+    private class FakeBrowseSource(
+        override val id: Long,
+        override val name: String = "Browse Feed $id",
+    ) : AnimeFeedSource, AnimeFeedBrowseSource, AnimeCategorySubscriptionSource {
+        override val lang: String = "all"
+
+        val categoryRequests = mutableListOf<Int>()
+        val feedRequests = mutableListOf<Pair<String, Int>>()
+        val followed = mutableSetOf<String>()
+        val subscriptionCalls = mutableListOf<Pair<String, Boolean>>()
+
+        override suspend fun getFeed(page: Int, cursor: String?, filters: AnimeFilterList): FeedPage =
+            FeedPage(emptyList(), false)
+
+        override suspend fun getBrowseCategories(page: Int, cursor: String?): FeedCategoryPage {
+            categoryRequests += page
+            return FeedCategoryPage(
+                categories = listOf(FeedCategory(id = "c$page", name = "niche$page")),
+                hasNextPage = page < 2,
+            )
+        }
+
+        override suspend fun getCategoryFeed(categoryId: String, page: Int, cursor: String?): FeedPage {
+            feedRequests += categoryId to page
+            return FeedPage(
+                videos = listOf(
+                    ShortVideoItem(
+                        id = "niche-$categoryId-p$page",
+                        videoUrl = "https://example.com/niche-$categoryId-p$page.mp4",
+                        posterUrl = "https://example.com/niche-$categoryId-p$page.jpg",
+                    ),
+                ),
+                hasNextPage = false,
+            )
+        }
+
+        override suspend fun getSubscribedCategoryIds(): List<String> = followed.toList()
+
+        override suspend fun setCategorySubscription(categoryId: String, followed: Boolean): Boolean {
+            subscriptionCalls += categoryId to followed
+            if (followed) this.followed += categoryId else this.followed -= categoryId
+            return true
+        }
+    }
+
+    // ---- Contract v20: categorized search ----
+
+    private class FakeCategorizedSource(
+        override val id: Long,
+        override val name: String = "Categorized Feed $id",
+    ) : AnimeFeedSource, AnimeCategorizedSearchSource {
+        override val lang: String = "all"
+
+        var fail = false
+        val queries = mutableListOf<String>()
+
+        override suspend fun getFeed(page: Int, cursor: String?, filters: AnimeFilterList): FeedPage =
+            FeedPage(emptyList(), false)
+
+        override suspend fun getSearchFeed(
+            page: Int,
+            cursor: String?,
+            query: String,
+            filters: AnimeFilterList,
+        ): FeedPage = FeedPage(emptyList(), false)
+
+        override suspend fun getCategorizedSearch(query: String): SearchSuggestions {
+            queries += query
+            if (fail) throw RuntimeException("search down")
+            return SearchSuggestions(
+                tags = listOf(SearchSuggestion("t1", "tag1", SearchSuggestionKind.TAG)),
+            )
+        }
+    }
+
+    @Test
+    fun `categorized search fills the suggestion tabs`() = runTest(testDispatcher) {
+        val source = FakeCategorizedSource(2301)
+        val model = buildModel(sourceId = 2301, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.search("dance")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        source.queries shouldBe listOf("dance")
+        model.state.value.searchSuggestions?.tags?.size shouldBe 1
+    }
+
+    @Test
+    fun `source without the categorized capability keeps suggestions null`() = runTest(testDispatcher) {
+        val source = FakeBrowseSource(2302)
+        val model = buildModel(sourceId = 2302, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.search("dance")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.searchSuggestions shouldBe null
+    }
+
+    @Test
+    fun `clearing the search clears the suggestions`() = runTest(testDispatcher) {
+        val source = FakeCategorizedSource(2303)
+        val model = buildModel(sourceId = 2303, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.search("dance")
+        testDispatcher.scheduler.advanceUntilIdle()
+        model.state.value.searchSuggestions shouldNotBe null
+
+        model.clearSearch()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.searchSuggestions shouldBe null
+    }
+
+    @Test
+    fun `throwing categorized capability leaves suggestions null and the flat feed alive`() = runTest(testDispatcher) {
+        val source = FakeCategorizedSource(2304)
+        source.fail = true
+        val model = buildModel(sourceId = 2304, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.search("dance")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.searchSuggestions shouldBe null
+        model.state.value.error shouldBe null
+    }
+
+    @Test
+    fun `niche mode serves the category feed with its title`() = runTest(testDispatcher) {
+        val source = FakeBrowseSource(2201)
+        val model = buildModel(
+            sourceId = 2201,
+            manager = sourceManagerOf(source),
+            nicheId = "c1",
+            nicheName = "niche one",
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.mode shouldBe ReelsFeedScreenModel.FeedMode.NICHE
+        model.state.value.nicheName shouldBe "niche one"
+        source.feedRequests shouldBe listOf("c1" to 1)
+        model.state.value.items.shouldHaveSize(1)
+    }
+
+    @Test
+    fun `niche mode loads and toggles the category follow state`() = runTest(testDispatcher) {
+        val source = FakeBrowseSource(2203)
+        source.followed += "c1"
+        val model = buildModel(
+            sourceId = 2203,
+            manager = sourceManagerOf(source),
+            nicheId = "c1",
+            nicheName = "niche one",
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isCategorySubscribable shouldBe true
+        model.state.value.isCategoryFollowed shouldBe true
+
+        model.toggleCategoryFollow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isCategoryFollowed shouldBe false
+        source.subscriptionCalls shouldBe listOf("c1" to false)
+    }
+
+    @Test
+    fun `web login import success closes the dialog and snapshots the account`() = runTest(testDispatcher) {
+        val source = FakeWebLoginSource(2101)
+        val model = buildModel(sourceId = 2101, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isWebLoginCapable shouldBe true
+        model.openLoginFlow()
+        model.state.value.isWebLoginDialogOpen shouldBe true
+        model.state.value.isLoginDialogOpen shouldBe false
+
+        // The first import arms the stage-2 upgrade (refreshable PKCE session) instead of
+        // closing; the second one closes and snapshots the account.
+        model.tryImportWebSession(mapOf("sid" to "1"), mapOf("kinde" to """{"access_token":"t"}"""))
+        testDispatcher.scheduler.advanceUntilIdle()
+        model.state.value.isWebLoginDialogOpen shouldBe true
+        model.state.value.webLoginPendingClose shouldBe true
+        model.state.value.webLoginStage2Attempt shouldBe 1
+
+        model.tryImportWebSession(mapOf("sid" to "1"), mapOf("kinde" to """{"access_token":"t"}"""))
+        testDispatcher.scheduler.advanceUntilIdle()
+        model.state.value.isWebLoginDialogOpen shouldBe false
+        model.state.value.loggedInAccount shouldBe "web@example.invalid"
+        model.state.value.webLoginHint shouldBe false
+        model.state.value.webLoginPendingClose shouldBe false
+        source.importedSessions.shouldHaveSize(2)
+    }
+
+    // ---- Contract v20: content preferences ----
+
+    private class FakePreferencesSource(
+        override val id: Long,
+        override val name: String = "Prefs Feed $id",
+    ) : AnimeFeedSource, AnimeContentPreferencesSource {
+        override val lang: String = "all"
+
+        var options = listOf(
+            ContentPreferenceOption("a", "A", true),
+            ContentPreferenceOption("b", "B", false),
+        )
+        val saved = mutableListOf<List<String>>()
+
+        override suspend fun getFeed(page: Int, cursor: String?, filters: AnimeFilterList): FeedPage =
+            FeedPage(emptyList(), false)
+
+        override suspend fun getContentPreferences(): List<ContentPreferenceOption> = options
+
+        override suspend fun setContentPreferences(enabledIds: List<String>): Boolean {
+            saved += enabledIds
+            return true
+        }
+    }
+
+    @Test
+    fun `opening the preferences sheet loads the account toggles`() = runTest(testDispatcher) {
+        val source = FakePreferencesSource(2401)
+        val model = buildModel(sourceId = 2401, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isContentPreferencesCapable shouldBe true
+        model.toggleContentPreferences(true)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isContentPreferencesLoading shouldBe false
+        model.state.value.contentPreferences?.size shouldBe 2
+    }
+
+    @Test
+    fun `saving preferences forwards the enabled set to the source`() = runTest(testDispatcher) {
+        val source = FakePreferencesSource(2402)
+        val model = buildModel(sourceId = 2402, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.saveContentPreferences(listOf("a"))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        source.saved shouldBe listOf(listOf("a"))
+        model.state.value.contentPreferencesError shouldBe null
+    }
+
+    @Test
+    fun `own pkce redirect import closes the dialog and snapshots the account`() = runTest(testDispatcher) {
+        val source = FakeWebLoginSource(2110)
+        val model = buildModel(sourceId = 2110, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.isOwnWebLoginRedirect("https://example.invalid/?code=abc&state=own") shouldBe true
+        model.isOwnWebLoginRedirect("https://example.invalid/?code=abc&state=other") shouldBe false
+        model.openLoginFlow()
+        model.tryImportWebRedirect("https://example.invalid/?code=abc&state=own", emptyMap())
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isWebLoginDialogOpen shouldBe false
+        model.state.value.loggedInAccount shouldBe "web@example.invalid"
+    }
+
+    @Test
+    fun `failed done-import bumps the stage-2 counter and keeps the dialog open`() = runTest(testDispatcher) {
+        val source = FakeWebLoginSource(2111)
+        source.importResult = false
+        val model = buildModel(sourceId = 2111, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.openLoginFlow()
+        model.tryImportWebSessionStage2(emptyMap(), emptyMap())
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isWebLoginDialogOpen shouldBe true
+        model.state.value.webLoginHint shouldBe true
+        model.state.value.webLoginStage2Attempt shouldBe 1
+    }
+
+    @Test
+    fun `web login import false keeps the dialog open with the hint`() = runTest(testDispatcher) {
+        val source = FakeWebLoginSource(2102)
+        source.importResult = false
+        val model = buildModel(sourceId = 2102, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.openLoginFlow()
+        model.tryImportWebSession(emptyMap(), emptyMap())
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isWebLoginDialogOpen shouldBe true
+        model.state.value.webLoginHint shouldBe true
+        model.state.value.loggedInAccount shouldBe null
+    }
+
+    @Test
+    fun `logout clears the account state`() = runTest(testDispatcher) {
+        val source = FakeAccountSource(2003)
+        source.storedEmail = "a@b.c"
+        val model = buildModel(sourceId = 2003, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.loggedInAccount shouldBe "a@b.c"
+
+        model.logout()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.loggedInAccount shouldBe null
+    }
+
+    @Test
+    fun `custom feed mode routes loadFeed through getCustomFeed with the feed id`() = runTest(testDispatcher) {
+        val source = FakeAccountSource(2004)
+        val model = buildModel(
+            sourceId = 2004,
+            manager = sourceManagerOf(source),
+            customFeedId = "f1",
+            customFeedName = "Feed 1",
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.mode shouldBe ReelsFeedScreenModel.FeedMode.CUSTOM
+        model.state.value.items.map { it.id } shouldBe listOf("custom-f1-p1")
+        source.requestedFeedPages shouldBe listOf("f1" to 1)
+    }
+
+    @Test
+    fun `custom feed mode on a non-capable source surfaces an error`() = runTest(testDispatcher) {
+        val source = RecordingFeedSource(2005) { FeedPage(emptyList(), false) }
+        val model = buildModel(sourceId = 2005, manager = sourceManagerOf(source), customFeedId = "f1")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.error shouldBe "Source does not support custom feeds"
+        model.state.value.items.shouldHaveSize(0)
+    }
+
+    @Test
+    fun `custom feeds picker loads the list and delete refreshes it`() = runTest(testDispatcher) {
+        val source = FakeAccountSource(2006)
+        val model = buildModel(sourceId = 2006, manager = sourceManagerOf(source))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.toggleCustomFeeds(true)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.isCustomFeedsOpen shouldBe true
+        model.state.value.customFeeds.map { it.id } shouldBe listOf("f1", "f2")
+
+        model.deleteCustomFeed("f1")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        model.state.value.customFeeds.map { it.id } shouldBe listOf("f2")
     }
 }

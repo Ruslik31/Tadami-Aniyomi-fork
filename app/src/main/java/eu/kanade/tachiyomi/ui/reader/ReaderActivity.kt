@@ -71,6 +71,7 @@ import com.tadami.aurora.R
 import com.tadami.aurora.databinding.ReaderActivityBinding
 import eu.kanade.core.util.ifMangaSourcesLoaded
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.source.manga.interactor.GetMangaIncognitoState
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.relativeDateTimeText
 import eu.kanade.presentation.reader.DisplayRefreshHost
@@ -85,9 +86,12 @@ import eu.kanade.presentation.reader.appbars.BottomBarButtonFlags
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.AutoScrollActionFab
 import eu.kanade.presentation.reader.manga.MangaSeriesInterstitialOverlay
+import eu.kanade.presentation.reader.manga.ReaderFinaleOverlay
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.core.common.Constants
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
+import eu.kanade.tachiyomi.data.discord.DiscordPresenceInfo
+import eu.kanade.tachiyomi.data.discord.DiscordPresenceManager
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -113,6 +117,7 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -190,6 +195,19 @@ class ReaderActivity : BaseActivity() {
 
     var isScrollingThroughPages = false
         private set
+
+    /**
+     * B-H2: the page-slider callback marks programmatic page moves so the viewers skip their
+     * scroll-induced hideMenu during the gesture. The mark is consumed by the first resulting
+     * page-change/scroll event; it used to never reset, so after the first slider use the pager
+     * stopped hiding the menu on swipes for the rest of the session.
+     */
+    fun consumeScrollingThroughPages() {
+        isScrollingThroughPages = false
+    }
+
+    private var presenceStartedAt: Long = 0L
+    private var presenceJob: Job? = null
 
     private fun isEInkMode(): Boolean = uiPreferences.eInkProfile().get().isEnabled
 
@@ -323,6 +341,46 @@ class ReaderActivity : BaseActivity() {
     /**
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
+    override fun onStart() {
+        super.onStart()
+        presenceStartedAt = System.currentTimeMillis()
+        observePresenceChapter()
+    }
+
+    override fun onStop() {
+        presenceJob?.cancel()
+        presenceJob = null
+        Injekt.get<DiscordPresenceManager>().clearSession(this)
+        super.onStop()
+    }
+
+    private fun observePresenceChapter() {
+        val manager = Injekt.get<DiscordPresenceManager>()
+        presenceJob = viewModel.state
+            .map { it.viewerChapters?.currChapter }
+            .distinctUntilChanged()
+            .filterNotNull()
+            .onEach { readerChapter ->
+                val manga = viewModel.manga ?: return@onEach
+                val incognito = Injekt.get<GetMangaIncognitoState>().await(manga.source)
+                if (incognito) {
+                    manager.clearSession(this)
+                } else {
+                    manager.setSession(
+                        this,
+                        DiscordPresenceInfo(
+                            mediaKind = DiscordPresenceInfo.MediaKind.MANGA,
+                            title = manga.title,
+                            primaryNumber = readerChapter.chapter.chapter_number.toDouble(),
+                            secondaryLine = readerChapter.chapter.name,
+                            startedAt = presenceStartedAt,
+                        ),
+                    )
+                }
+            }
+            .launchIn(lifecycleScope)
+    }
+
     override fun onDestroy() {
         // Allow achievement notifications when exiting reader
         eu.kanade.presentation.achievement.components.AchievementBannerManager.setInReaderOrPlayer(false)
@@ -372,6 +430,19 @@ class ReaderActivity : BaseActivity() {
      */
     override fun finish() {
         viewModel.onActivityFinish()
+        // РЕШ-16: CrtShutdownAnimation was written for the meltdown easter egg but never wired
+        // (zero call sites). With the ritual armed (meltdownStage > 0), leaving the reader now
+        // collapses the screen to a CRT dot before the real finish. The final ritual resets the
+        // stage to 0 before its own finish(), so the completed-ritual exit does not replay it.
+        if (!crtShutdownPlayed && uiPreferences.meltdownStage().get() > 0) {
+            crtShutdownPlayed = true
+            playCrtShutdownThenFinish()
+            return
+        }
+        finishNow()
+    }
+
+    private fun finishNow() {
         super.finish()
         val reduceMotion = isEInkMode()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -387,6 +458,23 @@ class ReaderActivity : BaseActivity() {
                 if (reduceMotion) 0 else R.anim.shared_axis_x_pop_exit,
             )
         }
+    }
+
+    private fun playCrtShutdownThenFinish() {
+        val crtView = androidx.compose.ui.platform.ComposeView(this)
+        crtView.layoutParams = android.view.ViewGroup.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        )
+        crtView.setContent {
+            CrtShutdownAnimation(
+                onAnimationFinished = {
+                    binding.root.removeView(crtView)
+                    finishNow()
+                },
+            )
+        }
+        binding.root.addView(crtView)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
@@ -473,7 +561,6 @@ class ReaderActivity : BaseActivity() {
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     val isHttpSource = viewModel.getSource() is HttpSource
-                    val isFullscreen by readerPreferences.fullscreen().collectAsStateWithLifecycle()
                     val flashOnPageChange by readerPreferences.flashOnPageChange().collectAsStateWithLifecycle()
 
                     val colorOverlayEnabled by readerPreferences.colorFilter().collectAsStateWithLifecycle()
@@ -571,7 +658,6 @@ class ReaderActivity : BaseActivity() {
 
                     ReaderAppBars(
                         visible = state.menuVisible,
-                        fullscreen = isFullscreen,
 
                         mangaTitle = state.manga?.title,
                         chapterTitle = state.currentChapter?.chapter?.name,
@@ -598,8 +684,12 @@ class ReaderActivity : BaseActivity() {
                             moveToPageIndex(it)
                         },
 
+                        // B-L: resolveDefault = true so the toolbar icon shows the ACTUAL mode
+                        // (matching the selection dialog's highlight); with false the toolbar
+                        // kept drawing ic_reader_default ("auto") while the dialog resolved the
+                        // real mode, and the two disagreed for series/global defaults.
                         readingMode = ReadingMode.fromPreference(
-                            viewModel.getMangaReadingMode(resolveDefault = false),
+                            viewModel.getMangaReadingMode(resolveDefault = true),
                         ),
                         onClickReadingMode = viewModel::openReadingModeSelectDialog,
                         orientation = ReaderOrientation.fromPreference(
@@ -771,37 +861,64 @@ class ReaderActivity : BaseActivity() {
                         null -> {}
                     }
 
-                    state.seriesInterstitialState?.let { seriesState ->
-                        val onContinue = seriesState.nextManga?.manga?.id?.let { nextMangaId ->
-                            seriesState.nextChapterId?.let { nextChapterId ->
-                                {
-                                    viewModel.clearSeriesInterstitial()
-                                    startActivity(
-                                        ReaderActivity.newIntent(
-                                            this@ReaderActivity,
-                                            nextMangaId,
-                                            nextChapterId,
-                                            seriesId,
-                                        ),
-                                    )
-                                    finish()
-                                }
-                            }
-                        }
-
-                        MangaSeriesInterstitialOverlay(
-                            state = seriesState,
-                            onBackToSeries = {
-                                viewModel.clearSeriesInterstitial()
+                    state.finaleState?.let { finaleState ->
+                        ReaderFinaleOverlay(
+                            state = finaleState,
+                            reducedMotion = isEInkMode(),
+                            onBackToManga = {
+                                viewModel.clearFinale()
+                                openMangaScreen()
                                 finish()
                             },
-                            onContinue = onContinue,
+                            onStay = viewModel::clearFinale,
                         )
+                    }
+
+                    if (state.finaleState == null) {
+                        state.seriesInterstitialState?.let { seriesState ->
+                            val onContinue = seriesState.nextManga?.manga?.id?.let { nextMangaId ->
+                                seriesState.nextChapterId?.let { nextChapterId ->
+                                    {
+                                        viewModel.clearSeriesInterstitial()
+                                        startActivity(
+                                            ReaderActivity.newIntent(
+                                                this@ReaderActivity,
+                                                nextMangaId,
+                                                nextChapterId,
+                                                seriesId,
+                                            ),
+                                        )
+                                        finish()
+                                    }
+                                }
+                            }
+
+                            MangaSeriesInterstitialOverlay(
+                                state = seriesState,
+                                onBackToSeries = {
+                                    viewModel.clearSeriesInterstitial()
+                                    finish()
+                                },
+                                onContinue = onContinue,
+                            )
+                        }
                     }
 
                     AutoScrollActionFab(
                         autoScrollEnabled = state.autoScrollEnabled,
                         showFab = showAutoScrollFloatingButton && !state.menuVisible,
+                        // B-A4: TalkBack was silent - both labels defaulted to null; the novel
+                        // reader passes i18n labels for the same FAB.
+                        contentDescription = composeStringResource(
+                            if (state.autoScrollEnabled) {
+                                AYMR.strings.reader_auto_scroll_pause_description
+                            } else {
+                                AYMR.strings.reader_auto_scroll_play_description
+                            },
+                        ),
+                        longClickLabel = composeStringResource(
+                            AYMR.strings.reader_auto_scroll_settings_description,
+                        ),
                         onClick = { viewModel.toggleAutoScroll() },
                         onLongClick = {
                             setMenuVisibility(true)
@@ -1001,8 +1118,12 @@ class ReaderActivity : BaseActivity() {
      */
     private fun loadNextChapter() {
         lifecycleScope.launch {
-            viewModel.loadNextChapter()
-            moveToPageIndex(0)
+            // WEBTOON-ARROWS (H2): re-anchor ONLY when the switch actually happened - the
+            // unconditional moveToPageIndex(0) used to scroll the CURRENT chapter to its start
+            // whenever the load silently no-op'd (no next chapter / swallowed error).
+            if (viewModel.loadNextChapter()) {
+                moveToPageIndex(0)
+            }
         }
     }
 
@@ -1012,8 +1133,10 @@ class ReaderActivity : BaseActivity() {
      */
     private fun loadPreviousChapter() {
         lifecycleScope.launch {
-            viewModel.loadPreviousChapter()
-            moveToPageIndex(0)
+            // WEBTOON-ARROWS (H2): see loadNextChapter.
+            if (viewModel.loadPreviousChapter()) {
+                moveToPageIndex(0)
+            }
         }
     }
 
@@ -1417,6 +1540,7 @@ class ReaderActivity : BaseActivity() {
     private var meltdownLastActivatedMs = 0L
     private val meltdownSwipeState = mutableStateOf(0)
     private var meltdownEscalationView: android.view.View? = null
+    private var crtShutdownPlayed = false
 
     fun onMeltdownTransitionActivated() {
         // Throttle: count at most once per 800 ms so WebtoonViewer scroll events

@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.ui.home
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.discovery.model.DiscoveryMediaType
+import tachiyomi.domain.discovery.model.DiscoveryRowType
 
 class HomeHubFilteredContentTest {
 
@@ -43,6 +45,34 @@ class HomeHubFilteredContentTest {
         result.history.map { it.entryId } shouldBe listOf(2L)
         result.recommendations.map { it.entryId } shouldBe listOf(4L)
         result.isFiltering shouldBe true
+    }
+
+    @Test
+    fun `resolveHomeHubFilteredContent filters discovery by title`() {
+        val result = resolveHomeHubFilteredContent(
+            hero = null,
+            history = emptyList(),
+            recommendations = emptyList(),
+            discovery = listOf(
+                discoveryItem("MATCH Alpha"),
+                discoveryItem("Beta"),
+            ),
+            query = "match",
+        )
+        result.discovery.map { it.title } shouldBe listOf("MATCH Alpha")
+    }
+
+    private fun discoveryItem(title: String): HomeHubDiscoveryItem {
+        return HomeHubDiscoveryItem(
+            title = title,
+            cleanTitle = title.lowercase(),
+            coverUrl = null,
+            seedTitle = null,
+            reasonPayload = null,
+            provider = "test",
+            rowType = DiscoveryRowType.LIKE,
+            mediaType = DiscoveryMediaType.NOVEL,
+        )
     }
 
     private fun history(entryId: Long, title: String): HomeHubHistory {

@@ -73,6 +73,20 @@ object CloudflareChallengeDetector {
     }
 
     /**
+     * P7: JS-проба наличия виджета человеческой верификации (Turnstile и т.п.) - общий
+     * источник для фонового резолвера и ручного WebView-экрана.
+     */
+    val interactiveWidgetProbeJs: String = """
+        (function() {
+            try {
+                return document.querySelector('.cf-turnstile, [data-sitekey], iframe[src*="challenges.cloudflare.com"]') != null;
+            } catch (_) {
+                return false;
+            }
+        })();
+    """.trimIndent()
+
+    /**
      * Полная классификация ответа. `bodyPeek` — первые килобайты тела
      * (маркеры challenge всегда вверху документа).
      */

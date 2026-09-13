@@ -37,8 +37,8 @@ data class AuroraPrimeColors(
 )
 
 /**
- * Живая палитра AURORA_PRIME. null — тема ещё не разблокирована.
- * Если в payload нет themeMaterial — вернёт статичные цвета (как раньше).
+ * Живая палитра AURORA_PRIME. Всегда non-null: без payload или без
+ * themeMaterial — статичная палитра (fallback на AuroraPublicPalette).
  *
  * @param animated передай false (например, при энергосбережении) —
  *   получишь статичную палитру без тикера и сенсора.
@@ -47,7 +47,7 @@ data class AuroraPrimeColors(
 fun rememberAuroraPrimeColors(
     payload: AuroraPayload?,
     animated: Boolean = true,
-): AuroraPrimeColors? {
+): AuroraPrimeColors {
     val themeColors = payload?.themeColors
 
     fun hex(key: String): Color? = themeColors?.get(key)

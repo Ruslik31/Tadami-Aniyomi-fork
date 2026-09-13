@@ -20,6 +20,7 @@ data class RestoreOptions(
     val achievements: Boolean = true,
     val stats: Boolean = true,
     val reelsFavorites: Boolean = true,
+    val discoveryData: Boolean = true,
     /**
      * Explicit user statement that a markerless, Mihon shaped file is an old Tadami sister export.
      *
@@ -52,6 +53,7 @@ data class RestoreOptions(
         restoreNovel,
         legacySisterFallback,
         reelsFavorites,
+        discoveryData,
     )
 
     fun canRestore(): Boolean {
@@ -65,7 +67,8 @@ data class RestoreOptions(
             extensions ||
             achievements ||
             stats ||
-            reelsFavorites
+            reelsFavorites ||
+            discoveryData
     }
 
     companion object {
@@ -102,6 +105,11 @@ data class RestoreOptions(
                 label = MR.strings.reels_favorites_title,
                 getter = RestoreOptions::reelsFavorites,
                 setter = { options, enabled -> options.copy(reelsFavorites = enabled) },
+            ),
+            Entry(
+                label = AYMR.strings.backup_discovery_data,
+                getter = RestoreOptions::discoveryData,
+                setter = { options, enabled -> options.copy(discoveryData = enabled) },
             ),
             Entry(
                 label = MR.strings.app_settings,
@@ -155,6 +163,7 @@ data class RestoreOptions(
             restoreNovel = array.getOrNull(11) ?: true,
             legacySisterFallback = array.getOrNull(12) ?: false,
             reelsFavorites = array.getOrNull(13) ?: true,
+            discoveryData = array.getOrNull(14) ?: true,
         )
     }
 

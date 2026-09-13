@@ -151,6 +151,7 @@ class AnimeRepositoryImpl(
                         episodeFlags = toInsert.episodeFlags,
                         coverLastModified = toInsert.coverLastModified,
                         backgroundLastModified = toInsert.backgroundLastModified,
+                        completedAt = toInsert.completedAt,
                         dateAdded = toInsert.dateAdded,
                         updateStrategy = toInsert.updateStrategy,
                         version = toInsert.version,
@@ -204,6 +205,7 @@ class AnimeRepositoryImpl(
                         seasonFlags = updated.seasonFlags,
                         seasonNumber = updated.seasonNumber,
                         seasonSourceOrder = updated.seasonSourceOrder,
+                        completedAt = updated.completedAt,
                     )
                     updated
                 } else if (autoFavorite && !local.favorite) {
@@ -240,6 +242,7 @@ class AnimeRepositoryImpl(
                         seasonFlags = updated.seasonFlags,
                         seasonNumber = updated.seasonNumber,
                         seasonSourceOrder = updated.seasonSourceOrder,
+                        completedAt = updated.completedAt,
                     )
                     updated
                 } else {
@@ -282,6 +285,7 @@ class AnimeRepositoryImpl(
                             seasonFlags = updated.seasonFlags,
                             seasonNumber = updated.seasonNumber,
                             seasonSourceOrder = updated.seasonSourceOrder,
+                            completedAt = updated.completedAt,
                         )
                         updated
                     } else {
@@ -316,6 +320,7 @@ class AnimeRepositoryImpl(
                 episodeFlags = anime.episodeFlags,
                 coverLastModified = anime.coverLastModified,
                 backgroundLastModified = anime.backgroundLastModified,
+                completedAt = anime.completedAt,
                 dateAdded = anime.dateAdded,
                 updateStrategy = anime.updateStrategy,
                 version = anime.version,
@@ -408,8 +413,15 @@ class AnimeRepositoryImpl(
     }
 
     private suspend fun partialUpdateAnime(vararg animeUpdates: AnimeUpdate) {
+        // E-M6 (anime mirror): emit only REAL favorite flips, after the transaction commits.
+        val pendingEvents = mutableListOf<AchievementEvent>()
         handler.await(inTransaction = true) { db ->
             animeUpdates.forEach { value ->
+                val previousFavorite = if (value.favorite != null) {
+                    db.animesQueries.getFavoriteById(value.id).executeAsOneOrNull()
+                } else {
+                    null
+                }
                 db.animesQueries.update(
                     source = value.source,
                     url = value.url,
@@ -442,18 +454,20 @@ class AnimeRepositoryImpl(
                     seasonFlags = value.seasonFlags,
                     seasonNumber = value.seasonNumber,
                     seasonSourceOrder = value.seasonSourceOrder,
+                    completedAt = value.completedAt,
                 )
 
-                // Emit achievement event if favorite status changed
                 value.favorite?.let { isFavorite ->
-                    val event = if (isFavorite) {
-                        AchievementEvent.LibraryAdded(value.id, AchievementCategory.ANIME)
-                    } else {
-                        AchievementEvent.LibraryRemoved(value.id, AchievementCategory.ANIME)
+                    if (previousFavorite != null && previousFavorite != isFavorite) {
+                        pendingEvents += if (isFavorite) {
+                            AchievementEvent.LibraryAdded(value.id, AchievementCategory.ANIME)
+                        } else {
+                            AchievementEvent.LibraryRemoved(value.id, AchievementCategory.ANIME)
+                        }
                     }
-                    eventBus.tryEmit(event)
                 }
             }
         }
+        pendingEvents.forEach { eventBus.tryEmit(it) }
     }
 }

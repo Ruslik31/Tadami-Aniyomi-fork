@@ -1,5 +1,6 @@
 package eu.kanade.domain.items.novelchapter.interactor
 
+import eu.kanade.domain.entries.novel.interactor.GetNovelExcludedScanlators
 import eu.kanade.tachiyomi.novelsource.NovelSource
 import eu.kanade.tachiyomi.novelsource.model.SNovelChapter
 import io.kotest.matchers.shouldBe
@@ -34,6 +35,7 @@ class SyncNovelChaptersWithSourceTest {
             shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
             updateNovel = updateNovel,
             libraryPreferences = preferences,
+            getNovelExcludedScanlators = noExcludedScanlators(),
         )
 
         assertThrows<NoChaptersException> {
@@ -45,6 +47,28 @@ class SyncNovelChaptersWithSourceTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun `does not throw when local source returns no chapters`() = runTest {
+        val repository = FakeNovelChapterRepository()
+        val updateNovel = mockk<eu.kanade.domain.entries.novel.interactor.UpdateNovel>(relaxed = true)
+        val preferences = mockk<LibraryPreferences>(relaxed = true)
+        val interactor = SyncNovelChaptersWithSource(
+            novelChapterRepository = repository,
+            shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
+            updateNovel = updateNovel,
+            libraryPreferences = preferences,
+            getNovelExcludedScanlators = noExcludedScanlators(),
+        )
+
+        val localSource = FakeNovelSource(id = 0L)
+        val result = interactor.await(
+            rawSourceChapters = emptyList(),
+            novel = Novel.create().copy(id = 1L, source = 0L),
+            source = localSource,
+        )
+        result shouldBe emptyList()
     }
 
     @Test
@@ -65,6 +89,7 @@ class SyncNovelChaptersWithSourceTest {
                 shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
                 updateNovel = updateNovel,
                 libraryPreferences = preferences,
+                getNovelExcludedScanlators = noExcludedScanlators(),
             )
 
             val novel = Novel.create().copy(id = 10L, title = "Novel")
@@ -109,6 +134,7 @@ class SyncNovelChaptersWithSourceTest {
                 shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
                 updateNovel = updateNovel,
                 libraryPreferences = preferences,
+                getNovelExcludedScanlators = noExcludedScanlators(),
             )
 
             val novel = Novel.create().copy(id = 10L, title = "Novel")
@@ -161,6 +187,7 @@ class SyncNovelChaptersWithSourceTest {
                 shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
                 updateNovel = updateNovel,
                 libraryPreferences = preferences,
+                getNovelExcludedScanlators = noExcludedScanlators(),
             )
 
             val novel = Novel.create().copy(id = 10L, title = "Novel")
@@ -213,6 +240,7 @@ class SyncNovelChaptersWithSourceTest {
                 shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
                 updateNovel = updateNovel,
                 libraryPreferences = preferences,
+                getNovelExcludedScanlators = noExcludedScanlators(),
             )
 
             val novel = Novel.create().copy(id = 10L, title = "Novel")
@@ -236,8 +264,118 @@ class SyncNovelChaptersWithSourceTest {
         }
     }
 
-    private class FakeNovelSource : NovelSource {
-        override val id = 1L
+    @Test
+    fun `new chapters from excluded scanlators are filtered from the sync result`() {
+        runTest {
+            val repository = FakeNovelChapterRepository()
+            val updateNovel = mockk<eu.kanade.domain.entries.novel.interactor.UpdateNovel>()
+            val preferences = mockk<LibraryPreferences>()
+            val duplicatePref = mockk<Preference<Set<String>>>()
+            val excludedScanlators = mockk<GetNovelExcludedScanlators>()
+
+            every { duplicatePref.get() } returns emptySet()
+            every { preferences.markDuplicateReadChapterAsRead() } returns duplicatePref
+            coEvery { updateNovel.await(any()) } returns true
+            coEvery { updateNovel.awaitUpdateFetchInterval(any(), any(), any()) } returns true
+            coEvery { excludedScanlators.await(10L) } returns setOf("BadGroup")
+
+            val interactor = SyncNovelChaptersWithSource(
+                novelChapterRepository = repository,
+                shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
+                updateNovel = updateNovel,
+                libraryPreferences = preferences,
+                getNovelExcludedScanlators = excludedScanlators,
+            )
+
+            val novel = Novel.create().copy(id = 10L, title = "Novel")
+            val excludedChapter = SNovelChapter.create().apply {
+                url = "/chapter-excluded"
+                name = "Chapter 1"
+                chapter_number = 1f
+                scanlator = "BadGroup"
+            }
+            val keptChapter = SNovelChapter.create().apply {
+                url = "/chapter-kept"
+                name = "Chapter 2"
+                chapter_number = 2f
+                scanlator = "GoodGroup"
+            }
+
+            val result = interactor.await(
+                rawSourceChapters = listOf(excludedChapter, keptChapter),
+                novel = novel,
+                source = FakeNovelSource(),
+            )
+
+            // The excluded chapter still lands in the DB; only the surfaced new-chapter list
+            // (update notifications, auto-download) is filtered, matching the manga sync.
+            result.map { it.url } shouldBe listOf("/chapter-kept")
+            repository.addedChapters.size shouldBe 2
+        }
+    }
+
+    @Test
+    fun `no-change sync refreshes a stale next update when given a real fetch window`() {
+        runTest {
+            val existingChapter = NovelChapter.create().copy(
+                id = 1L,
+                novelId = 10L,
+                url = "/chapter-1",
+                name = "Chapter 1",
+                chapterNumber = 1.0,
+                sourceOrder = 0L,
+            )
+            val repository = FakeNovelChapterRepository().apply {
+                chapters = listOf(existingChapter)
+            }
+            val updateNovel = mockk<eu.kanade.domain.entries.novel.interactor.UpdateNovel>()
+            val preferences = mockk<LibraryPreferences>()
+            val duplicatePref = mockk<Preference<Set<String>>>()
+
+            every { duplicatePref.get() } returns emptySet()
+            every { preferences.markDuplicateReadChapterAsRead() } returns duplicatePref
+            coEvery { updateNovel.await(any()) } returns true
+            coEvery { updateNovel.awaitUpdateFetchInterval(any(), any(), any()) } returns true
+
+            val interactor = SyncNovelChaptersWithSource(
+                novelChapterRepository = repository,
+                shouldUpdateDbNovelChapter = ShouldUpdateDbNovelChapter(),
+                updateNovel = updateNovel,
+                libraryPreferences = preferences,
+                getNovelExcludedScanlators = noExcludedScanlators(),
+            )
+
+            // A scheduled novel whose next_update slipped into the past without chapter changes
+            // must be rescheduled by the no-change path - this is what the library job's real
+            // fetch window enables (the old (0,0) sentinel made the guard dead).
+            val novel = Novel.create().copy(id = 10L, title = "Novel", fetchInterval = 7, nextUpdate = 1_000L)
+            val sChapter = SNovelChapter.create().apply {
+                url = "/chapter-1"
+                name = "Chapter 1"
+                date_upload = 0L
+                chapter_number = 1f
+            }
+
+            val result = interactor.await(
+                rawSourceChapters = listOf(sChapter),
+                novel = novel,
+                source = FakeNovelSource(),
+                manualFetch = false,
+                fetchWindow = Pair(2_000L, 9_000L),
+            )
+
+            result shouldBe emptyList()
+            coVerify { updateNovel.awaitUpdateFetchInterval(novel, any(), Pair(2_000L, 9_000L)) }
+        }
+    }
+
+    private fun noExcludedScanlators(): GetNovelExcludedScanlators = mockk {
+        coEvery { await(any()) } returns emptySet()
+    }
+
+    private class FakeNovelSource(
+        override val id: Long = 1L,
+    ) : NovelSource {
         override val name = "Test"
     }
 

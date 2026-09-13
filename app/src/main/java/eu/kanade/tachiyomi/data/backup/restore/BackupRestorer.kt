@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.AnimeExtensionRepoResto
 import eu.kanade.tachiyomi.data.backup.restore.restorers.AnimeExtensionStoreRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.AnimeRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CustomButtonRestorer
+import eu.kanade.tachiyomi.data.backup.restore.restorers.DiscoveryRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.ExtensionsRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.FeedRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaCategoriesRestorer
@@ -80,6 +81,7 @@ class BackupRestorer(
     private val novelSeriesRestorer: NovelSeriesRestorer = NovelSeriesRestorer(),
     private val feedRestorer: FeedRestorer = FeedRestorer(),
     private val reelsFavoritesRestorer: ReelsFavoritesRestorer = ReelsFavoritesRestorer(),
+    private val discoveryRestorer: DiscoveryRestorer = DiscoveryRestorer(),
     private val extensionsRestorer: ExtensionsRestorer = ExtensionsRestorer(context),
     private val achievementRestorer: AchievementRestorer = AchievementRestorer(),
 ) {
@@ -330,6 +332,16 @@ class BackupRestorer(
             // Restore reels favorites when the user kept the option enabled
             if (options.reelsFavorites && backup.backupReelsFavorites.isNotEmpty()) {
                 reelsFavoritesRestorer.restoreReelsFavorites(backup.backupReelsFavorites)
+            }
+
+            // Restore discovery «Для тебя» (hidden titles + tag blacklist), idempotent merge
+            if (options.discoveryData &&
+                (backup.backupDiscoveryHidden.isNotEmpty() || backup.backupDiscoveryBlacklistTags.isNotEmpty())
+            ) {
+                discoveryRestorer.restoreDiscovery(
+                    backup.backupDiscoveryHidden,
+                    backup.backupDiscoveryBlacklistTags,
+                )
             }
 
             // Restore achievements if option enabled

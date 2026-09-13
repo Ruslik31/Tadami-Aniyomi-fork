@@ -304,6 +304,62 @@ class BrowseNovelSourceScreenModelTest {
     }
 
     @Test
+    fun `searchGenre bumps filterVersion so a repeated genre search re-runs`() {
+        runBlocking {
+            val source = FakeNovelCatalogueSourceWithFilters(
+                id = 1L,
+                name = "Novel",
+                lang = "en",
+                filters = NovelFilterList(
+                    object : NovelFilter.Select<String>(
+                        name = "Sort",
+                        values = arrayOf("Popular", "Latest"),
+                        state = 0,
+                    ) {},
+                ),
+            )
+            val sourceManager = FakeNovelSourceManager(source)
+            val prefs = SourcePreferences(FakePreferenceStore())
+            val networkToLocal = NetworkToLocalNovel(FakeNovelRepository(insertId = 1L))
+            val getRemoteNovel = GetRemoteNovel(repository = FakeNovelSourceRepository())
+
+            val screenModel = track(
+                BrowseNovelSourceScreenModel(
+                    sourceId = 1L,
+                    listingQuery = GetRemoteNovel.QUERY_POPULAR,
+                    sourceManager = sourceManager,
+                    getRemoteNovel = getRemoteNovel,
+                    sourcePreferences = prefs,
+                    getNovelByUrlAndSourceId = GetNovelByUrlAndSourceId(FakeNovelRepository()),
+                    networkToLocalNovel = networkToLocal,
+                ),
+            )
+
+            repeat(20) {
+                if (screenModel.state.value.filters.isNotEmpty()) return@repeat
+                delay(10)
+            }
+
+            // Without a filterVersion bump a second genre search produced an identical-looking
+            // state and the results list never re-ran.
+            val beforeVersion = screenModel.state.value.filterVersion
+            screenModel.searchGenre("Latest")
+            repeat(20) {
+                if (screenModel.state.value.filterVersion != beforeVersion) return@repeat
+                delay(10)
+            }
+            screenModel.state.value.filterVersion shouldBe beforeVersion + 1
+
+            screenModel.searchGenre("Popular")
+            repeat(20) {
+                if (screenModel.state.value.filterVersion != beforeVersion + 1) return@repeat
+                delay(10)
+            }
+            screenModel.state.value.filterVersion shouldBe beforeVersion + 2
+        }
+    }
+
+    @Test
     fun `applyFilters switches latest listing to blank search without exposing internal query`() {
         val source = FakeNovelCatalogueSource(id = 1L, name = "Novel", lang = "en")
         val sourceManager = FakeNovelSourceManager(source)
@@ -683,33 +739,8 @@ class BrowseNovelSourceScreenModelTest {
         result shouldNotBe null
     }
 
-    @Test
-    fun `SavedSearch filterable is false when there are no saved searches`() {
-        val state = BrowseNovelSourceScreenModel.State(
-            listing = BrowseNovelSourceScreenModel.Listing.Popular,
-        )
-
-        state.filterable shouldBe false
-    }
-
-    @Test
-    fun `SavedSearch filterable is true when saved searches exist`() {
-        val state = BrowseNovelSourceScreenModel.State(
-            listing = BrowseNovelSourceScreenModel.Listing.Popular,
-            savedSearches = persistentListOf(
-                SavedSearch(
-                    id = 1L,
-                    source = 42L,
-                    sourceType = SourceType.NOVEL,
-                    name = "saved",
-                    query = "q",
-                    filtersJson = null,
-                ) to false,
-            ),
-        )
-
-        state.filterable shouldBe true
-    }
+    // РЕШ-B5: the two `State.filterable` tests were removed along with the field - it had
+    // zero production readers (dead derived state).
 
     @Test
     fun `novel saved search filters roundtrip`() {

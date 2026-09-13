@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import tachiyomi.data.handlers.retryOnceOnStaleCursorWindow
 import tachiyomi.mi.data.AnimeDatabase as AnimeDb
 
 class AndroidAnimeDatabaseHandler(
@@ -31,47 +32,51 @@ class AndroidAnimeDatabaseHandler(
         inTransaction: Boolean,
         block: suspend (AnimeDb) -> Query<T>,
     ): List<T> {
-        return dispatch(inTransaction) { block(db).executeAsList() }
+        return retryOnceOnStaleCursorWindow { dispatch(inTransaction) { block(db).executeAsList() } }
     }
 
     override suspend fun <T : Any> awaitOne(
         inTransaction: Boolean,
         block: suspend (AnimeDb) -> Query<T>,
     ): T {
-        return dispatch(inTransaction) { block(db).executeAsOne() }
+        return retryOnceOnStaleCursorWindow { dispatch(inTransaction) { block(db).executeAsOne() } }
     }
 
     override suspend fun <T : Any> awaitOneExecutable(
         inTransaction: Boolean,
         block: suspend (AnimeDb) -> ExecutableQuery<T>,
     ): T {
-        return dispatch(inTransaction) { block(db).executeAsOne() }
+        return retryOnceOnStaleCursorWindow { dispatch(inTransaction) { block(db).executeAsOne() } }
     }
 
     override suspend fun <T : Any> awaitOneOrNull(
         inTransaction: Boolean,
         block: suspend (AnimeDb) -> Query<T>,
     ): T? {
-        return dispatch(inTransaction) { block(db).executeAsOneOrNull() }
+        return retryOnceOnStaleCursorWindow {
+            dispatch(inTransaction) { block(db).executeAsOneOrNull() }
+        }
     }
 
     override suspend fun <T : Any> awaitOneOrNullExecutable(
         inTransaction: Boolean,
         block: suspend (AnimeDb) -> ExecutableQuery<T>,
     ): T? {
-        return dispatch(inTransaction) { block(db).executeAsOneOrNull() }
+        return retryOnceOnStaleCursorWindow {
+            dispatch(inTransaction) { block(db).executeAsOneOrNull() }
+        }
     }
 
     override fun <T : Any> subscribeToList(block: (AnimeDb) -> Query<T>): Flow<List<T>> {
-        return block(db).asFlow().mapToList(queryDispatcher)
+        return block(db).asFlow().mapToList(queryDispatcher).retryOnceOnStaleCursorWindow()
     }
 
     override fun <T : Any> subscribeToOne(block: (AnimeDb) -> Query<T>): Flow<T> {
-        return block(db).asFlow().mapToOne(queryDispatcher)
+        return block(db).asFlow().mapToOne(queryDispatcher).retryOnceOnStaleCursorWindow()
     }
 
     override fun <T : Any> subscribeToOneOrNull(block: (AnimeDb) -> Query<T>): Flow<T?> {
-        return block(db).asFlow().mapToOneOrNull(queryDispatcher)
+        return block(db).asFlow().mapToOneOrNull(queryDispatcher).retryOnceOnStaleCursorWindow()
     }
 
     override fun <T : Any> subscribeToPagingSource(

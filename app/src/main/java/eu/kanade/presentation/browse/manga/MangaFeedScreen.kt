@@ -33,6 +33,7 @@ import eu.kanade.presentation.theme.AuroraTheme
 import eu.kanade.presentation.theme.aurora.adaptive.auroraCenteredMaxWidth
 import eu.kanade.presentation.theme.aurora.adaptive.rememberAuroraAdaptiveSpec
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.ui.browse.feed.FEED_ERROR_BROKEN_EXTENSION
 import eu.kanade.tachiyomi.ui.browse.manga.feed.MangaFeedItemUI
 import eu.kanade.tachiyomi.ui.browse.manga.feed.MangaFeedScreenState
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -91,7 +92,10 @@ fun MangaFeedScreen(
                     contentPadding = contentPadding,
                 ) {
                     state.items?.forEach { item ->
-                        item(key = item.source.id) {
+                        // BFEED-3: keyed by source.id - two feed rows of one source (legacy v40
+                        // schema had no unique constraint; double-tap Add could insert a dup)
+                        // crashed the LazyColumn with a duplicate key on EVERY tab open.
+                        item(key = item.feed.id) {
                             FeedSourceSection(
                                 item = item,
                                 getMangaState = getMangaState,
@@ -150,6 +154,19 @@ private fun FeedSourceSection(
                     modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                 )
             }
+            // BFEED-5: a failed load is no longer indistinguishable from "no results" -
+            // show the source error (pull-to-refresh retries).
+            item.loadError != null -> {
+                Text(
+                    text = if (item.loadError == FEED_ERROR_BROKEN_EXTENSION) {
+                        stringResource(MR.strings.feed_error_broken_extension)
+                    } else {
+                        item.loadError
+                    },
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                )
+            }
             item.results.isEmpty() -> {
                 Text(
                     text = stringResource(MR.strings.no_results_found),
@@ -161,7 +178,9 @@ private fun FeedSourceSection(
                     contentPadding = PaddingValues(MaterialTheme.padding.small),
                     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
                 ) {
-                    items(item.results) { manga ->
+                    // BFEED-6: unkeyed items reused composition slots across refreshes -
+                    // produceState(getMangaState) kept observing the PREVIOUS manga's flow.
+                    items(item.results, key = { it.id }) { manga ->
                         val title by getMangaState(manga)
                         Box(modifier = Modifier.width(96.dp)) {
                             EntryComfortableGridItem(

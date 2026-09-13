@@ -69,6 +69,14 @@ class NovelRepositoryImpl(
         return handler.subscribeToList { db -> db.novelsQueries.getFavoriteBySourceId(sourceId, NovelMapper::mapNovel) }
     }
 
+    override suspend fun getDuplicateLibraryNovel(id: Long, title: String): List<Novel> {
+        // BRN-11: the SQL already existed (novels.sq getDuplicateLibraryNovel) - wired up
+        // (manga etalon MangaRepositoryImpl:72-76).
+        return handler.awaitList { db ->
+            db.novelsQueries.getDuplicateLibraryNovel(title, id, NovelMapper::mapNovel)
+        }
+    }
+
     override suspend fun insertNovel(novel: Novel): Long? {
         return handler.awaitOneOrNullExecutable(inTransaction = true) { db ->
             db.novelsQueries.insert(
@@ -93,6 +101,7 @@ class NovelRepositoryImpl(
                 dateAdded = novel.dateAdded,
                 updateStrategy = novel.updateStrategy,
                 version = novel.version,
+                completedAt = novel.completedAt,
             )
             db.novelsQueries.selectLastInsertedRowId()
         }
@@ -133,6 +142,7 @@ class NovelRepositoryImpl(
                         dateAdded = toInsert.dateAdded,
                         updateStrategy = toInsert.updateStrategy,
                         version = toInsert.version,
+                        completedAt = toInsert.completedAt,
                     )
                     val insertedId = db.novelsQueries.selectLastInsertedRowId().executeAsOne()
                     toInsert.copy(id = insertedId)
@@ -170,6 +180,7 @@ class NovelRepositoryImpl(
                         updateStrategy = MangaUpdateStrategyColumnAdapter.encode(updated.updateStrategy),
                         version = updated.version,
                         isSyncing = 0,
+                        completedAt = updated.completedAt,
                     )
                     updated
                 } else if (autoFavorite && !local.favorite) {
@@ -198,6 +209,7 @@ class NovelRepositoryImpl(
                         updateStrategy = MangaUpdateStrategyColumnAdapter.encode(updated.updateStrategy),
                         version = updated.version,
                         isSyncing = 0,
+                        completedAt = updated.completedAt,
                     )
                     updated
                 } else {
@@ -232,6 +244,7 @@ class NovelRepositoryImpl(
                             updateStrategy = MangaUpdateStrategyColumnAdapter.encode(updated.updateStrategy),
                             version = updated.version,
                             isSyncing = 0,
+                            completedAt = updated.completedAt,
                         )
                         updated
                     } else {
@@ -306,8 +319,15 @@ class NovelRepositoryImpl(
     }
 
     private suspend fun partialUpdateNovel(vararg novelUpdates: NovelUpdate) {
+        // E-M6 (novel mirror): emit only REAL favorite flips, after the transaction commits.
+        val pendingEvents = mutableListOf<AchievementEvent>()
         handler.await(inTransaction = true) { db ->
             novelUpdates.forEach { value ->
+                val previousFavorite = if (value.favorite != null) {
+                    db.novelsQueries.getFavoriteById(value.id).executeAsOneOrNull()
+                } else {
+                    null
+                }
                 db.novelsQueries.update(
                     source = value.source,
                     url = value.url,
@@ -332,17 +352,20 @@ class NovelRepositoryImpl(
                     updateStrategy = value.updateStrategy?.let(MangaUpdateStrategyColumnAdapter::encode),
                     version = value.version,
                     isSyncing = 0,
+                    completedAt = value.completedAt,
                 )
 
                 value.favorite?.let { isFavorite ->
-                    val event = if (isFavorite) {
-                        AchievementEvent.LibraryAdded(value.id, AchievementCategory.NOVEL)
-                    } else {
-                        AchievementEvent.LibraryRemoved(value.id, AchievementCategory.NOVEL)
+                    if (previousFavorite != null && previousFavorite != isFavorite) {
+                        pendingEvents += if (isFavorite) {
+                            AchievementEvent.LibraryAdded(value.id, AchievementCategory.NOVEL)
+                        } else {
+                            AchievementEvent.LibraryRemoved(value.id, AchievementCategory.NOVEL)
+                        }
                     }
-                    eventBus.tryEmit(event)
                 }
             }
         }
+        pendingEvents.forEach { eventBus.tryEmit(it) }
     }
 }

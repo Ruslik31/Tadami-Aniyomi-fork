@@ -8,10 +8,12 @@ import eu.kanade.domain.entries.manga.model.getComicInfo
 import eu.kanade.domain.items.chapter.model.toSChapter
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.download.DownloadNetworkStatus
 import eu.kanade.tachiyomi.data.download.engine.DownloadCompletionTracker
 import eu.kanade.tachiyomi.data.download.engine.DownloadSection
 import eu.kanade.tachiyomi.data.download.engine.DownloadTelemetryEmitter
 import eu.kanade.tachiyomi.data.download.manga.model.MangaDownload
+import eu.kanade.tachiyomi.data.download.toDownloadNetworkStatus
 import eu.kanade.tachiyomi.data.library.manga.MangaLibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.source.UnmeteredSource
@@ -20,6 +22,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -139,7 +142,9 @@ class MangaDownloader(
 
     init {
         launchNow {
-            val chapters = async { store.restore() }
+            // restore() blocks on per-item DB lookups (runBlocking inside); keep that off the
+            // main thread - the downloader is constructed eagerly at app start.
+            val chapters = async(Dispatchers.IO) { store.restore() }
             addAllToQueue(chapters.await())
         }
     }
@@ -150,7 +155,21 @@ class MangaDownloader(
      *
      * @return true if the downloader is started, false otherwise.
      */
+    @Synchronized
     fun start(): Boolean {
+        // Network gate: startDownloads() and its callers (queue UI, entry/updates screens, the
+        // engine facade) kick the downloader in-process, bypassing MangaDownloadJob whose
+        // WIFI/CONNECTED constraints are the only network policy on the worker path. With
+        // "download only over Wi-Fi" on a metered network the job stays ENQUEUED - so its
+        // pauseForNetwork never runs - while an ungated start() consumed mobile data; offline it
+        // produced a burst of per-chapter ERRORs. The worker calls start() again once its
+        // constraints are met, so gating here loses nothing.
+        val networkStatus = context.activeNetworkState()
+            .toDownloadNetworkStatus(downloadPreferences.downloadOnlyOverWifi().get())
+        if (networkStatus != DownloadNetworkStatus.Available) {
+            return false
+        }
+
         clearCompletedDownloads()
         if (isRunning || queueState.value.isEmpty()) {
             return false
@@ -315,8 +334,11 @@ class MangaDownloader(
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = chapters.asSequence()
+            // C-L: deduplicate the input batch itself - queueState is only updated after the
+            // whole list is mapped, so duplicates within one call both passed the enqueue filter.
+            .distinctBy { it.id }
             // Filter out those already downloaded.
-            .filter { provider.findChapterDir(it.name, it.scanlator, manga.title, source) == null }
+            .filter { provider.findChapterDir(it.name, it.scanlator, manga.title, manga.id, it.id, source) == null }
             // Add chapters to queue from the start.
             .sortedByDescending { it.sourceOrder }
             // Filter out those already enqueued.
@@ -357,22 +379,40 @@ class MangaDownloader(
      * @param download the chapter to be downloaded.
      */
     private suspend fun downloadChapter(download: MangaDownload) {
-        val mangaDir = provider.getMangaDir(download.manga.title, download.source)
+        val mangaDir: UniFile
+        val chapterDirname: String
+        val tmpDir: UniFile
+        try {
+            mangaDir = provider.getMangaDir(download.manga.title, download.manga.id, download.source)
 
-        val availSpace = DiskUtil.getAvailableStorageSpace(context, mangaDir)
-        if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
-            download.status = MangaDownload.State.ERROR
-            notifier.onError(
-                context.stringResource(AYMR.strings.download_insufficient_space),
+            val availSpace = DiskUtil.getAvailableStorageSpace(context, mangaDir)
+            if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
+                download.status = MangaDownload.State.ERROR
+                notifier.onError(
+                    context.stringResource(AYMR.strings.download_insufficient_space),
+                    download.chapter.name,
+                    download.manga.title,
+                    download.manga.id,
+                )
+                return
+            }
+
+            chapterDirname = provider.getChapterDirName(
                 download.chapter.name,
-                download.manga.title,
-                download.manga.id,
+                download.chapter.scanlator,
+                download.chapter.id,
             )
+            tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            // SAF failures in the preamble (unwritable root, getMangaDir throw, null
+            // createDirectory behind the !!) used to escape to the scheduler's catch, which
+            // stop()s the ENTIRE queue. Isolate them to this chapter instead.
+            logcat(LogPriority.ERROR, error)
+            download.status = MangaDownload.State.ERROR
+            notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
             return
         }
-
-        val chapterDirname = provider.getChapterDirName(download.chapter.name, download.chapter.scanlator)
-        val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
 
         try {
             // If the page list already exists, start from the file
@@ -552,7 +592,7 @@ class MangaDownloader(
             }
 
             // When the page is ready, set page path, progress (just in case) and status
-            splitTallImageIfNeeded(page, tmpDir)
+            splitTallImageIfNeeded(page, tmpDir, digitCount)
             page.uri = file.uri
             page.progress = 100
             page.status = Page.State.READY
@@ -652,11 +692,16 @@ class MangaDownloader(
         return ImageUtil.getExtensionFromMimeType(mime) { file.openInputStream() }
     }
 
-    private fun splitTallImageIfNeeded(page: Page, tmpDir: UniFile) {
+    private fun splitTallImageIfNeeded(page: Page, tmpDir: UniFile, digitCount: Int) {
         if (!downloadPreferences.splitTallImages().get()) return
 
         try {
-            val filenamePrefix = "%03d".format(Locale.ENGLISH, page.number)
+            // NEW-14: the page prefix MUST use the same digit count as saveTo ("%03d" hardcoded
+            // here vs digitCount>=4 for >999-page chapters): the prefix of page 5 ("005") did not
+            // match its own file ("0005.jpg") but DID match page 50's ("0050.jpg") - the split
+            // ran on a foreign page, produced "005__*" files and desynced isDownloadSuccessful
+            // into a permanent chapter ERROR.
+            val filenamePrefix = "%0${digitCount}d".format(Locale.ENGLISH, page.number)
             val imageFile = tmpDir.listFiles()?.firstOrNull { it.name.orEmpty().startsWith(filenamePrefix) }
                 ?: error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
 
@@ -686,7 +731,7 @@ class MangaDownloader(
             return false
         }
         // Ensure that the chapter folder has all the pages
-        val downloadedImagesCount = tmpDir.listFiles().orEmpty().count {
+        val countedFiles = tmpDir.listFiles().orEmpty().filter {
             val fileName = it.name.orEmpty()
             when {
                 fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
@@ -696,7 +741,17 @@ class MangaDownloader(
                 else -> true
             }
         }
-        return downloadedImagesCount == downloadPageCount
+        if (countedFiles.size != downloadPageCount) {
+            return false
+        }
+        // C-M10: the count is not the content - an HTML error page served with HTTP 200 used to
+        // be saved as "001.jpg", pass the name-based count and keep the chapter "downloaded"
+        // forever. Validate the magic bytes of every counted file instead.
+        return countedFiles.all { file ->
+            runCatching {
+                file.openInputStream().use { ImageUtil.findImageType(it) != null }
+            }.getOrDefault(false)
+        }
     }
 
     /**
@@ -712,6 +767,13 @@ class MangaDownloader(
             tmpDir.listFiles()?.forEach { file ->
                 writer.write(file)
             }
+        }
+        // C-M2: raw/SAF rename silently REPLACES an existing file (POSIX semantics): a colliding
+        // dirname destroyed an already-downloaded chapter. With id-suffixed names (DECISION-6)
+        // collisions are practically gone; refuse instead of clobbering if the target exists.
+        if (mangaDir.findFile("$dirname.cbz") != null) {
+            zip.delete()
+            error("Target archive already exists: $dirname.cbz")
         }
         zip.renameToOrCopy("$dirname.cbz")
         tmpDir.delete()
@@ -815,6 +877,7 @@ class MangaDownloader(
         }
     }
 
+    @Synchronized
     fun updateQueue(downloads: List<MangaDownload>) {
         val wasRunning = isRunning
 

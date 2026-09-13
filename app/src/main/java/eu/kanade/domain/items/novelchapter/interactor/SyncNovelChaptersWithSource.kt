@@ -1,5 +1,6 @@
 package eu.kanade.domain.items.novelchapter.interactor
 
+import eu.kanade.domain.entries.novel.interactor.GetNovelExcludedScanlators
 import eu.kanade.domain.entries.novel.interactor.UpdateNovel
 import eu.kanade.domain.items.novelchapter.model.copyFromSNovelChapter
 import eu.kanade.tachiyomi.novelsource.NovelSource
@@ -14,6 +15,7 @@ import tachiyomi.domain.items.novelchapter.model.NovelChapter
 import tachiyomi.domain.items.novelchapter.model.toNovelChapterUpdate
 import tachiyomi.domain.items.novelchapter.repository.NovelChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.source.local.entries.novel.isLocal
 import java.time.Instant
 import java.time.ZonedDateTime
 
@@ -22,6 +24,7 @@ class SyncNovelChaptersWithSource(
     private val shouldUpdateDbNovelChapter: ShouldUpdateDbNovelChapter,
     private val updateNovel: UpdateNovel,
     private val libraryPreferences: LibraryPreferences,
+    private val getNovelExcludedScanlators: GetNovelExcludedScanlators,
 ) {
 
     /**
@@ -41,7 +44,7 @@ class SyncNovelChaptersWithSource(
         retainMissingChapters: Boolean = false,
         sourceOrderOffset: Long = 0L,
     ): List<NovelChapter> {
-        if (rawSourceChapters.isEmpty()) {
+        if (rawSourceChapters.isEmpty() && !source.isLocal()) {
             throw NoChaptersException()
         }
 
@@ -198,6 +201,10 @@ class SyncNovelChaptersWithSource(
             ),
         )
 
-        return updatedToAdd.filterNot { it.url in changedOrDuplicateReadUrls }
+        val excludedScanlators = getNovelExcludedScanlators.await(novel.id)
+
+        return updatedToAdd.filterNot {
+            it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators
+        }
     }
 }
